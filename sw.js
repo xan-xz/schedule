@@ -1,0 +1,5 @@
+const CACHE='uniflow-beta-v2-1';
+const ASSETS=['./','./beta/app.mjs','./beta/styles.css','./beta/core.mjs','./beta/demo.mjs','./beta/seed.json','./manifest.webmanifest','./icon.svg'];
+self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
+self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('uniflow-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
+self.addEventListener('fetch',event=>{const request=event.request,url=new URL(request.url);if(request.method!=='GET'||url.origin!==self.location.origin)return;const isAsset=ASSETS.some(p=>new URL(p,self.registration.scope).pathname===url.pathname);if(!isAsset)return;event.respondWith(fetch(request).then(response=>{if(response.ok){const copy=response.clone();caches.open(CACHE).then(cache=>cache.put(request,copy))}return response}).catch(async()=>await caches.match(request,{ignoreSearch:true})||new Response('Нет сети',{status:503})));});
