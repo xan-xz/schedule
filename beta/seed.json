@@ -1,12 +1,194 @@
 {
   "groups": [
     {
+      "id": "g-25-01",
+      "name": "06-057-25-01",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Программная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-02",
+      "name": "06-057-25-02",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Программная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-03",
+      "name": "06-057-25-03",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Программная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-04",
+      "name": "06-057-25-04",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Программная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-05",
+      "name": "06-057-25-05",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Программная инженерия",
+      "language": "ru"
+    },
+    {
+      "id": "g-25-06",
+      "name": "06-057-25-06",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Программная инженерия",
+      "language": "ru"
+    },
+    {
+      "id": "g-25-07",
+      "name": "06-057-25-07",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Программная инженерия",
+      "language": "ru"
+    },
+    {
+      "id": "g-25-08",
+      "name": "06-057-25-08",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "DevOps",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-09",
+      "name": "06-057-25-09",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "DevOps",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-10",
+      "name": "06-057-25-10",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "DevOps",
+      "language": "ru"
+    },
+    {
       "id": "g-main",
       "name": "06-057-25-11",
       "subgroups": [
         "А",
         "Б"
-      ]
+      ],
+      "specialty": "Компьютерная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-12",
+      "name": "06-057-25-12",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Компьютерная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-13",
+      "name": "06-057-25-13",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Компьютерная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-14",
+      "name": "06-057-25-14",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Компьютерная инженерия",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-15",
+      "name": "06-057-25-15",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Компьютерная инженерия",
+      "language": "ru"
+    },
+    {
+      "id": "g-25-16",
+      "name": "06-057-25-16",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Компьютерная инженерия",
+      "language": "ru"
+    },
+    {
+      "id": "g-25-17",
+      "name": "06-057-25-17",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Бизнес-Информатика",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-18",
+      "name": "06-057-25-18",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Бизнес-Информатика",
+      "language": "kk"
+    },
+    {
+      "id": "g-25-19",
+      "name": "06-057-25-19",
+      "subgroups": [
+        "А",
+        "Б"
+      ],
+      "specialty": "Бизнес-Информатика",
+      "language": "ru"
     }
   ],
   "teachers": [],
