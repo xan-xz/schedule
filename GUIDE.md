@@ -1,14 +1,14 @@
 # UniFlow beta 2.0 — инструкция
 
-Сайт: https://xan-xz.github.io/schedule/
+Сайт: https://xan-xz.github.io/schedule/beta/
 
 ## 1. Попробовать систему без риска
 
 Открой одну из ссылок:
 
-- Студент: https://xan-xz.github.io/schedule/?demo=student
-- Преподаватель: https://xan-xz.github.io/schedule/?demo=teacher
-- Администратор: https://xan-xz.github.io/schedule/?demo=admin
+- Студент: https://xan-xz.github.io/schedule/beta/?demo=student
+- Преподаватель: https://xan-xz.github.io/schedule/beta/?demo=teacher
+- Администратор: https://xan-xz.github.io/schedule/beta/?demo=admin
 
 Демо — отдельная песочница с вымышленными участниками. Пароль не нужен. Её изменения сохраняются в этом браузере и не отправляются в настоящую базу. Открой несколько вкладок: изменения демо синхронизируются между ними. «Сбросить пример» возвращает исходный пример.
 
