@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "UniFlow — расписание",
+  "short_name": "UniFlow",
+  "description": "Текущая пара, аудитория, задания и учебная неделя — даже без сети.",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f4fa",
+  "theme_color": "#7957d5",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
