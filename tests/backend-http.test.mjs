@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handle } from "../backend/uniflow-api.mjs";
-import { handle as legacyHandle } from "../backend/admin.mjs";
+import {
+  handle as legacyHandle,
+  LEGACY_WRITES_ENABLED,
+} from "../backend/admin.mjs";
 import { hashPassword, sha } from "../backend/security.mjs";
 const token = "a".repeat(64);
 const state = () => ({
@@ -305,5 +308,73 @@ test("import cannot orphan existing role accounts", async (t) => {
   assert.equal(
     calls.some((c) => c.path === "rpc/uf_commit"),
     false,
+  );
+});
+
+test("archived legacy editor rejects authenticated saves before any timetable write", async (t) => {
+  const { calls } = backend(t);
+  assert.equal(LEGACY_WRITES_ENABLED, false);
+  const response = await legacyHandle(
+    request({ action: "save", token, revision: 3, data: { old: "draft" } }),
+  );
+  assert.equal(response.status, 410);
+  assert.equal(
+    (await response.json()).error,
+    "Редактор переехал в UniFlow. Обнови страницу: https://xan-xz.github.io/schedule/manage/",
+  );
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].path, /^schedule_sessions\?/);
+  assert.equal(
+    calls.some((call) => call.method !== "GET"),
+    false,
+  );
+  assert.equal(
+    calls.some((call) => call.path.startsWith("group_schedule")),
+    false,
+  );
+});
+
+test("archived legacy editor still verifies a session before explaining save cutover", async (t) => {
+  const { calls } = backend(t, { expired: true });
+  const response = await legacyHandle(
+    request({ action: "save", token, revision: 3, data: {} }),
+  );
+  assert.equal(response.status, 401);
+  assert.equal(
+    calls.some((call) => call.method !== "GET"),
+    false,
+  );
+});
+
+test("archive policy preserves legacy login limiter and hashed session issuance", async (t) => {
+  const password = "test-fixture-legacy",
+    salt = "0".repeat(32);
+  const password_hash = await hashPassword(password, salt);
+  const { calls } = backend(t, { settings: { salt, password_hash } });
+  const response = await legacyHandle(request({ action: "login", password }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.match(body.token, /^[a-f0-9]{64}$/);
+  assert.equal(calls[0].path, "rpc/uf_login_attempt");
+  const issued = calls.find((call) => call.path === "rpc/uf_create_session");
+  assert.equal(issued.payload.p_legacy, true);
+  assert.equal(issued.payload.p_token_hash, await sha(body.token));
+  assert.equal(
+    calls.some((call) => call.path.startsWith("group_schedule")),
+    false,
+  );
+});
+
+test("archive policy preserves logout of the current legacy session", async (t) => {
+  const { calls } = backend(t);
+  const response = await legacyHandle(request({ action: "logout", token }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true });
+  const writes = calls.filter((call) => call.method !== "GET");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].method, "DELETE");
+  assert.equal(
+    writes[0].path,
+    "schedule_sessions?token_hash=eq." + (await sha(token)),
   );
 });
