@@ -1,4 +1,5 @@
 import { cp, mkdir, readdir, readFile, writeFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -46,6 +47,46 @@ await writeFile(resolve(target, ".nojekyll"), "");
 const root = await readFile(resolve(target, "index.html"), "utf8");
 if (channel === "beta" && root !== (await readFile("index.html", "utf8")))
   throw new Error("Beta build changed the legacy root.");
+
+// Installed clients cache the shell first. A change to any published asset must
+// therefore change the worker bytes, even when sw.js itself was not edited.
+async function publicFiles(directory, prefix = "") {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const name = prefix + entry.name;
+    if (entry.isDirectory())
+      files.push(
+        ...(await publicFiles(resolve(directory, entry.name), name + "/")),
+      );
+    else if (
+      entry.isFile() &&
+      entry.name !== "sw.js" &&
+      entry.name !== ".nojekyll"
+    )
+      files.push(name);
+  }
+  return files;
+}
+const digest = createHash("sha256");
+for (const file of (await publicFiles(target)).sort()) {
+  const content = await readFile(resolve(target, file));
+  digest.update(file).update("\0").update(String(content.length)).update("\0");
+  digest.update(content);
+}
+const workerVersion = "v3-" + digest.digest("hex").slice(0, 16);
+for (const file of channel === "production"
+  ? ["beta/sw.js", "sw.js"]
+  : ["beta/sw.js"]) {
+  const path = resolve(target, file);
+  const worker = await readFile(path, "utf8");
+  const declaration = /^const VERSION\s*=\s*['"][^'"\r\n]+['"];$/m;
+  if (!declaration.test(worker))
+    throw new Error(`Missing cache version declaration in ${file}.`);
+  await writeFile(
+    path,
+    worker.replace(declaration, `const VERSION = '${workerVersion}';`),
+  );
+}
 console.log(
   `Built ${channel} candidate in dist. Server handlers, SQL and development dependencies are excluded; only the pure shared model is public.`,
 );
