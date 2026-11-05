@@ -1,0 +1,54 @@
+name: Verify UniFlow
+on:
+  pull_request:
+  push:
+    branches: [main, "codex/**"]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run build
+      - run: npm run budget
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Lighthouse mobile budgets
+        run: |
+          node scripts/serve.mjs --port 4173 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID"' EXIT
+          for attempt in $(seq 1 50); do
+            if curl -fsS -o /dev/null http://127.0.0.1:4173/schedule/beta/; then break; fi
+            sleep 0.2
+          done
+          LH_OUTPUT=/tmp/uniflow.lighthouse.json npm run perf
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-mobile-report
+          path: /tmp/uniflow.lighthouse.json
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-test-results
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-site-candidate
+          path: dist/
+          include-hidden-files: true

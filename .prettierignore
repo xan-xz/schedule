@@ -1,0 +1,8 @@
+node_modules/
+dist/
+beta/seed.json
+beta/demo.mjs
+beta/core.mjs
+beta/conflicts.mjs
+/index.html
+test-results/

@@ -1,0 +1,25 @@
+# Участие в разработке
+
+Нужен Node.js 22.19+ и npm. `npm ci`, затем `npm run dev`. Откройте `http://127.0.0.1:4173/schedule/beta/?demo=student`.
+
+## Перед pull request
+
+1. Создайте отдельную ветку; один небольшой логический набор изменений — один коммит. Не переписывайте опубликованную историю.
+2. Выполните `npm run lint`, `npm run format:check`, `npm test`, `npm run build`, `npm run budget`.
+3. Установите браузер `npx playwright install chromium`; выполните `npm run test:e2e`. Локальный Chrome можно выбрать через `PW_CHANNEL=chrome`.
+4. Проверьте телефон 360×800, 390×844 и desktop, офлайн, клавиатуру и контраст. Не подменяйте browser QA только успешной сборкой.
+5. С запущенным preview выполните `npm run perf`. Для установленного Chrome задайте `CHROME_PATH`; JSON сохраняется во временный каталог, путь печатается. Lighthouse запускается с профилем 4G / CPU×4. Внешний WebPageTest — отдельная проверка.
+
+Тесты e2e используют demo и изолированные фикстуры. Никогда не вводите реальные пароли и не изменяйте боевое расписание из тестов. Токены, персональные данные и `.env` не коммитятся.
+
+## Область автоматических проверок
+
+ESLint проверяет новый student-код, tooling и тесты. Старые модули `core.mjs`, `demo.mjs`, `conflicts.mjs`, серверные legacy-модули и профессиональный интерфейс проверяются на синтаксис; их полномасштабное переформатирование намеренно не смешивается с объединением продукта. Новые проверки безопасности backend обязательны в unit-тестах.
+
+Prettier проверяет поддерживаемые student/staff HTML/CSS/JS, серверные модули, все тесты, tooling и конфигурацию. Старый корневой HTML, исходные demo/conflicts/seed и импортированные данные исключены, чтобы не менять прежнюю страницу и данные. ESLint проверяет новые safe-dom/tools; legacy staff app проходит parse checks и e2e. Строгий TypeScript не используется: проект сохраняет vanilla JavaScript; ESLint, parse checks, pure-function tests и browser tests — его обязательные проверки.
+
+## Публикация
+
+`npm run build` создаёт `dist`, сохраняет прежнюю главную и размещает новый продукт в `/beta/`. CI публикует только artifact. GitHub Actions workflow **Publish reviewed Pages candidate** запускается вручную: канал beta сохраняет главную, production требует отдельного подтверждения решения о данных. В Settings → Pages должен быть выбран источник GitHub Actions; настройки репозитория автоматически не меняются.
+
+Команда production-упаковки: `node scripts/build.mjs --channel production --data-decision-reviewed`. Флаг удостоверяет принятое владельцем решение из `docs/MERGE_PLAN.md`; он не выполняет миграцию базы. До разрешения расхождений источников production не публикуется. SQL/Edge Functions развёртываются отдельно и требуют серверного доступа.

@@ -1,0 +1,309 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { handle } from "../backend/uniflow-api.mjs";
+import { handle as legacyHandle } from "../backend/admin.mjs";
+import { hashPassword, sha } from "../backend/security.mjs";
+const token = "a".repeat(64);
+const state = () => ({
+  revision: 7,
+  data: {
+    groups: [{ id: "g", name: "Group", subgroups: ["А", "Б"] }],
+    teachers: [{ id: "t1", name: "Teacher", subjects: ["s"] }],
+    subjects: [{ id: "s", name: "Subject" }],
+    rooms: [{ id: "r", name: "101", capacity: 30 }],
+    lessons: [
+      {
+        id: "l",
+        day: 0,
+        week: "all",
+        start: "09:00",
+        end: "09:50",
+        groupId: "g",
+        subgroup: "all",
+        subjectId: "s",
+        teacherId: "t1",
+        roomId: "r",
+        type: "Lecture",
+      },
+    ],
+    exceptions: [],
+    tasks: [],
+    announcements: [],
+    requests: [],
+    attendance: [],
+    history: [],
+  },
+});
+const request = (body) =>
+  new Request("https://edge.invalid/uniflow-api", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+function backend(t, options = {}) {
+  const calls = [];
+  const row = state();
+  const oldDeno = globalThis.Deno;
+  globalThis.Deno = {
+    env: {
+      get: (n) =>
+        n === "SUPABASE_URL"
+          ? "https://test.invalid"
+          : n === "SUPABASE_SERVICE_ROLE_KEY"
+            ? "server-only-test-key"
+            : undefined,
+    },
+  };
+  t.after(() => {
+    if (oldDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = oldDeno;
+  });
+  t.mock.method(globalThis, "fetch", async (url, init = {}) => {
+    const path = String(url).split("/rest/v1/")[1];
+    const payload = init.body ? JSON.parse(init.body) : null;
+    calls.push({ path, method: init.method || "GET", payload });
+    if (options.respond) {
+      const custom = await options.respond(path, payload, init);
+      if (custom) return custom;
+    }
+    let result = [];
+    if (path.startsWith("uf_platform?")) result = [row];
+    else if (path.startsWith("uf_sessions?") && init.method !== "DELETE")
+      result = options.expired ? [] : [{ user_id: options.userId || "admin" }];
+    else if (path.startsWith("schedule_sessions?") && init.method !== "DELETE")
+      result = options.expired ? [] : [{ expires_at: "2099-01-01T00:00:00Z" }];
+    else if (path === "rpc/uf_login_attempt")
+      result = options.allowLogin !== false;
+    else if (path === "rpc/uf_create_session") result = true;
+    else if (path.startsWith("schedule_settings?"))
+      result = options.settings ? [options.settings] : [];
+    else if (path.startsWith("uf_accounts?id="))
+      result = [
+        {
+          id: "account-t",
+          role: "teacher",
+          teacher_id: options.teacherId || "t1",
+          name: "Teacher",
+          active: true,
+        },
+      ];
+    else if (path === "rpc/uf_commit")
+      result = { data: payload.p_data, revision: row.revision + 1 };
+    return new Response(result === null ? "" : JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+  return { calls, row };
+}
+test("HTTP guest cannot impersonate admin or write with no token", async (t) => {
+  const { calls } = backend(t);
+  const res = await handle(
+    request({
+      action: "mutate",
+      role: "admin",
+      user: { role: "admin" },
+      revision: 7,
+      op: "lesson.delete",
+      payload: { id: "l" },
+    }),
+  );
+  assert.equal(res.status, 401);
+  assert.equal(calls.length, 0);
+});
+test("HTTP teacher can cancel own lesson but cross-teacher attempt fails", async (t) => {
+  const { calls } = backend(t, { userId: "account-t", teacherId: "other" });
+  const res = await handle(
+    request({
+      action: "mutate",
+      token,
+      revision: 7,
+      op: "exception.save",
+      payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
+    }),
+  );
+  assert.equal(res.status, 403);
+  assert.equal(
+    calls.some((c) => c.path === "rpc/uf_commit"),
+    false,
+  );
+});
+test("HTTP public all subgroup is preserved and returns no session/account lists", async (t) => {
+  backend(t);
+  const res = await handle(
+    request({ action: "state", groupId: "g", subgroup: "all" }),
+  );
+  const body = await res.json();
+  assert.equal(body.user.subgroup, "all");
+  assert.deepEqual(body.users, []);
+  assert.deepEqual(body.versions, []);
+});
+test("HTTP stale revisions fail before save, and a commit race maps to 409", async (t) => {
+  const { calls } = backend(t, {
+    respond: (path) =>
+      path === "rpc/uf_commit"
+        ? new Response('{"message":"version_conflict"}', { status: 400 })
+        : null,
+  });
+  const stale = await handle(
+    request({
+      action: "mutate",
+      token,
+      revision: 6,
+      op: "exception.save",
+      payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
+    }),
+  );
+  assert.equal(stale.status, 409);
+  assert.equal(
+    calls.some((c) => c.path === "rpc/uf_commit"),
+    false,
+  );
+  const race = await handle(
+    request({
+      action: "mutate",
+      token,
+      revision: 7,
+      op: "exception.save",
+      payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
+    }),
+  );
+  assert.equal(race.status, 409);
+});
+test("HTTP expired sessions cannot mutate and do not reach commit", async (t) => {
+  const { calls } = backend(t, { expired: true });
+  const res = await handle(
+    request({
+      action: "mutate",
+      token,
+      revision: 7,
+      op: "lesson.delete",
+      payload: { id: "l" },
+    }),
+  );
+  assert.equal(res.status, 401);
+  assert.equal(
+    calls.some((c) => c.path === "rpc/uf_commit"),
+    false,
+  );
+});
+test("logout.all uses one transactional revocation for both admin session stores", async (t) => {
+  const { calls } = backend(t);
+  assert.equal(
+    (await handle(request({ action: "logout.all", token }))).status,
+    200,
+  );
+  assert.deepEqual(
+    calls.find((c) => c.path === "rpc/uf_revoke_sessions").payload,
+    { p_user_id: "admin" },
+  );
+  assert.equal(
+    (await legacyHandle(request({ action: "logout.all", token }))).status,
+    200,
+  );
+  assert.equal(
+    calls.filter((c) => c.path === "rpc/uf_revoke_sessions").length,
+    2,
+  );
+});
+test("password rotation is atomic and never sends plaintext new password to the database", async (t) => {
+  const current = "test-fixture-current",
+    next = "test-fixture-replacement",
+    salt = "0".repeat(32);
+  const settings = { salt, password_hash: await hashPassword(current, salt) };
+  const { calls } = backend(t, { settings });
+  const res = await handle(
+    request({
+      action: "password.change",
+      token,
+      currentPassword: current,
+      password: next,
+    }),
+  );
+  assert.equal(res.status, 200);
+  const call = calls.find((c) => c.path === "rpc/uf_change_password");
+  assert.equal(call.payload.p_user_id, "admin");
+  assert.match(call.payload.p_hash, /^[a-f0-9]{64}$/);
+  assert.equal(
+    call.payload.p_hash,
+    await hashPassword(next, call.payload.p_salt),
+  );
+  assert.equal(JSON.stringify(calls).includes(next), false);
+});
+test("login reserves atomic limiter slot and stores only token hash via race-safe RPC", async (t) => {
+  const pass = "test-fixture-current",
+    salt = "0".repeat(32),
+    password_hash = await hashPassword(pass, salt);
+  const { calls } = backend(t, { settings: { salt, password_hash } });
+  const res = await handle(
+    request({ action: "login", username: "admin", password: pass }),
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.match(body.token, /^[a-f0-9]{64}$/);
+  const created = calls.find((c) => c.path === "rpc/uf_create_session");
+  assert.equal(created.payload.p_token_hash, await sha(body.token));
+  assert.equal(created.payload.p_expected_hash, password_hash);
+  assert.equal(created.payload.p_legacy, false);
+  assert.match(calls[0].payload.p_ip_hash, /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(calls).includes(body.token), false);
+});
+test("limited login returns 429 after delay without reading credentials", async (t) => {
+  const { calls } = backend(t, { allowLogin: false });
+  const start = performance.now();
+  const res = await handle(
+    request({
+      action: "login",
+      username: "admin",
+      password: "test-fixture-wrong",
+    }),
+  );
+  assert.equal(res.status, 429);
+  assert.ok(performance.now() - start >= 400);
+  assert.deepEqual(
+    calls.map((c) => c.path),
+    ["rpc/uf_login_attempt"],
+  );
+});
+test("unknown accounts do not issue a session and share generic login error", async (t) => {
+  const { calls } = backend(t);
+  const res = await handle(
+    request({
+      action: "login",
+      username: "unknown",
+      password: "test-fixture-wrong",
+    }),
+  );
+  assert.equal(res.status, 401);
+  assert.equal(
+    calls.some((c) => c.path === "rpc/uf_create_session"),
+    false,
+  );
+  assert.match((await res.json()).error, /Неверный логин или пароль/);
+});
+test("import cannot orphan existing role accounts", async (t) => {
+  const { row, calls } = backend(t, {
+    respond: (path) =>
+      path === "uf_accounts?select=role,group_id,subgroup,teacher_id"
+        ? new Response(
+            JSON.stringify([
+              { role: "student", group_id: "missing", subgroup: "А" },
+            ]),
+          )
+        : null,
+  });
+  const res = await handle(
+    request({
+      action: "mutate",
+      token,
+      revision: 7,
+      op: "import",
+      payload: { data: row.data },
+    }),
+  );
+  assert.equal(res.status, 400);
+  assert.equal(
+    calls.some((c) => c.path === "rpc/uf_commit"),
+    false,
+  );
+});
