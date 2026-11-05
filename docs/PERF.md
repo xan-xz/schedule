@@ -52,3 +52,20 @@ Baseline размеров gzip: beta app 25,125 Б; core 5,208 Б; demo 2,617 Б
 Raw JSON baseline и последнего кандидата сохранены среди deliverables `outputs/performance/`; `summary.json` содержит категории/метрики. Снимки UI — `outputs/screenshots/`. Их нет в публичном Pages artifact.
 
 Цель initial JS/CSS и Lighthouse выполнена лабораторно. Цель первого содержательного экрана <1 с на физическом среднем телефоне **не доказана**: FCP~0.75 с, но LCP~1.36 с. Критерий ≤2 с соблюдён в этой симуляции. Реальные 4G, iOS, WebPageTest/Moto G4 и полевые percentiles требуют отдельного измерения. Первый визит без сети невозможен; offline проверяется после успешной установки service worker.
+
+
+## Опубликованные адреса: проверка после rollout
+
+Тот же Lighthouse13.6.0, Chrome Windows360×800, 4G/CPU×4; по одному актуальному запуску на каждом адресе без API mocks. Не выбирать лучшее значение из многократных прогонов.
+
+| Метрика | Новая опубликованная beta | Новая опубликованная главная |
+|---|---:|---:|
+| Performance / Accessibility / Best Practices / SEO | 100 / 100 / 100 / 100 | 100 / 100 / 100 / 100 |
+| FCP | 984мс | 1046мс |
+| LCP | 1139мс | 1224мс |
+| Speed Index | 1399мс | 1419мс |
+| TBT / CLS | 0 / 0 | 0 / 0 |
+
+Старая главная LCP2048мс → новая1224мс; её Accessibility95 →100. Старая beta LCP2094мс → новая1139мс; Accessibility91 →100. Начальный собственный JS34,015Б+внешний SDK →20,823Б без CDN; CSS5468 →3056Б gzip. FCP главной995 →1046мс: ускорение LCP не означает ускорения каждого показателя. Цель <1с не заявляется выполненной.
+
+Живой guest API успешно ответил в реальном браузере, сохранив revision5/19групп/524занятия. Первый meaningful current/next и аудитория видны без тапа. Offline проверен после готовности worker; аккаунты/пароли/посещаемость в снимок не попали. JSON-отчёты `published-beta.lighthouse.json`, `published-main.lighthouse.json`, `summary.json` переданы среди outputs/performance. Снимок опубликованной главной — outputs/screenshots/published-main-390.png.

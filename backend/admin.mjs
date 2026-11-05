@@ -6,6 +6,10 @@ import {
   delayFailure,
   revokeSessions,
 } from "./security.mjs";
+// Cutover policy: the unified editor writes uf_platform. Keep the legacy table
+// readable, but never let an old open tab claim it published to all students.
+// A coordinated rollback may set this to true and redeploy this function.
+export const LEGACY_WRITES_ENABLED = false;
 const GROUP = "06-057-25-11";
 const origin = "https://xan-xz.github.io";
 const cors = {
@@ -124,6 +128,14 @@ export async function handle(req) {
     }
     if (body.action !== "save")
       return reply({ error: "Неизвестное действие" }, 400);
+    if (!LEGACY_WRITES_ENABLED)
+      return reply(
+        {
+          error:
+            "Редактор переехал в UniFlow. Обнови страницу: https://xan-xz.github.io/schedule/manage/",
+        },
+        410,
+      );
     if (
       !Number.isSafeInteger(body.revision) ||
       body.revision < 1 ||
