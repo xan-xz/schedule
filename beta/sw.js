@@ -1,6 +1,8 @@
-/* Scope is beta only. Authenticated POST responses are intentionally never cached. */
-const VERSION = 'uniflow-beta-v1';
-const STATIC = `${VERSION}-static`;
+/* Each deployed scope owns its cache. Authenticated POST responses are never cached. */
+const SCOPE = new URL(self.registration.scope);
+const PREFIX = `uniflow:${encodeURIComponent(SCOPE.pathname)}:`;
+const VERSION = 'v2';
+const STATIC = `${PREFIX}${VERSION}-static`;
 const FILES = [
   './', './index.html', './app.mjs', './styles.css',
   './lib/dom.mjs', './lib/client.mjs', './lib/i18n.mjs',
@@ -23,7 +25,7 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.filter(key => key.startsWith('uniflow-beta-') && key !== STATIC).map(key => caches.delete(key)));
+    await Promise.all(keys.filter(key => key.startsWith(PREFIX) && key !== STATIC).map(key => caches.delete(key)));
     await self.clients.claim();
   })());
 });
@@ -38,10 +40,13 @@ self.addEventListener('fetch', event => {
   const sharedModel = new URL('../backend/core.mjs', self.registration.scope).href;
   if (request.method !== 'GET' || url.origin !== self.location.origin
     || (!url.href.startsWith(self.registration.scope) && url.href !== sharedModel)) return;
+  const relative = url.pathname.slice(SCOPE.pathname.length);
+  // A root-scope installation must not take over the independently deployed
+  // /beta/ alias or staff workspace. Those documents and assets use the network
+  // or their own more specific worker.
+  if (url.href !== sharedModel && relative.includes('/') && !['lib', 'icons'].includes(relative.split('/')[0])) return;
   if (request.mode === 'navigate') {
-    // Staff has its own document and online-only authorization. Never replace it
-    // with the student shell when navigating from an already controlled page.
-    if (url.pathname.startsWith(new URL('manage/', self.registration.scope).pathname)) return;
+    if (url.pathname !== SCOPE.pathname && url.pathname !== new URL('index.html', SCOPE).pathname) return;
     event.respondWith((async () => {
       const cache = await caches.open(STATIC);
       // Cache-first shell opens instantly; worker byte changes govern application updates.
