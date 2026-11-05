@@ -5,3 +5,5 @@
 @media(min-width:760px){.top{padding-top:40px}main{padding-top:12px}.bottom{max-width:720px;margin:auto;border-left:1px solid var(--line);border-right:1px solid var(--line);border-radius:12px 12px 0 0}.hero{padding:28px}.hero h2{font-size:1.7rem}.hero .room-number{font-size:3rem}}
 @media(prefers-reduced-motion:no-preference){button,a{transition:background-color .12s,border-color .12s}}@media print{.bottom,.statusbar,.top,.toolbar,.days,.segmented,.toast,.update,button{display:none!important}:root{--bg:#fff;--ink:#000;--muted:#333}main{padding:0;max-width:none}.day{break-inside:avoid}.day h2{position:static}body{background:white}}
 .bottom{min-height:calc(65px + env(safe-area-inset-bottom))}.skeleton{height:calc(100svh - 110px);min-height:400px}
+.toolbar{flex-wrap:wrap}.toolbar button{min-width:0;flex:1 1 110px;overflow-wrap:anywhere}.bottom button{min-width:0;overflow-wrap:anywhere}.lesson-body,h1,h2,h3,p{overflow-wrap:anywhere}
+.task-row select{align-self:start}

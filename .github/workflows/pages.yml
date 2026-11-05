@@ -45,6 +45,12 @@ jobs:
             npm run build
           fi
       - run: npm run budget
+      - name: Verify production artifact routes and offline shell
+        if: inputs.channel == 'production'
+        env:
+          RELEASE_CHANNEL: production
+          PW_SERVER_ROOT: dist
+        run: npx playwright test tests/e2e/release.spec.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { resolve, extname, sep } from "node:path";
+import { gzipSync } from "node:zlib";
 
 const args = process.argv.slice(2);
 const value = (flag, fallback) =>
@@ -35,11 +36,18 @@ const server = createServer(async (req, res) => {
       return;
     }
     if ((await stat(file)).isDirectory()) file = resolve(file, "index.html");
-    const body = await readFile(file);
+    let body = await readFile(file);
+    const compress =
+      /\bgzip\b/.test(req.headers["accept-encoding"] || "") &&
+      /\.(html|m?js|css|json|webmanifest|svg)$/.test(file);
+    if (compress) body = gzipSync(body);
     res.writeHead(200, {
       "Content-Type": mime[extname(file)] || "application/octet-stream",
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
+      Vary: "Accept-Encoding",
+      "Content-Length": body.length,
+      ...(compress ? { "Content-Encoding": "gzip" } : {}),
     });
     res.end(body);
   } catch {

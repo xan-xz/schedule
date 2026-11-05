@@ -35,6 +35,12 @@ if (channel === "production") {
     corePath,
     core.replaceAll("../backend/core.mjs", "./backend/core.mjs"),
   );
+  const workerPath = resolve(target, "sw.js");
+  const worker = await readFile(workerPath, "utf8");
+  await writeFile(
+    workerPath,
+    worker.replaceAll("../backend/core.mjs", "./backend/core.mjs"),
+  );
 }
 await writeFile(resolve(target, ".nojekyll"), "");
 const root = await readFile(resolve(target, "index.html"), "utf8");

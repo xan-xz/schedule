@@ -17,4 +17,38 @@ Browser plugin не установлен; применяется Playwright с C
 
 Прохождение тестов не доказывает развёртывание Edge Function, соответствие активной production RLS SQL-файлам или слияние двух источников расписания. Для этих операций нужны серверный доступ, бэкап и принятое владельцем решение о приоритете данных. Push при закрытом приложении, iOS install/permissions и внешняя ICS-подписка требуют отдельных интеграционных проверок; ограничения перечисляются в SECURITY/архитектурной документации.
 
-Финальные результаты кандидата добавляются только после выполнения команд. Не заменять «не проверено» предполагаемым успехом.
+## Выполнено для кандидата
+
+6 ноября 2026 (UTC+5): Chrome через Playwright, 360×800, 390×844 и 1280×900; device timezone Pacific/Honolulu, фиксированное время fixture 09:00 Asia/Almaty.
+
+| Проверка | Результат |
+|---|---|
+| ESLint + parse checks | Pass |
+| Prettier tooling/config/e2e | Pass |
+| Unit / HTTP / CSV / calendar / SW | **66/66 pass** |
+| Source e2e | **42/42 pass**; 6 production-only тестов запускаются отдельно |
+| Built production artifact e2e | **6/6 pass** |
+| Initial JS / CSS gzip | **18,898 Б / 2,816 Б**, бюджеты соблюдены |
+| npm audit (включая dev) | 0 уязвимостей |
+| Lighthouse demo candidate | **100 / 100 / 100 / 100**, CLS0; условия в PERF.md |
+
+E2E подтвердили: текущая/следующая аудитория на первом экране; четыре вкладки и dark без Axe WCAG A/AA нарушений; offline reload из cache/IndexedDB; собственные задания и статусы после перезагрузки; подгруппа, тема, en и возврат к ним; demo без production POST; ввод XSS отображается буквальным текстом и не создаёт HTML; skip link с клавиатуры и 200% шрифт; student SW не подменяет staff-страницу.
+
+Staff: неправильный пароль получает 401 от изолированной фикстуры; в demo разовая отмена остаётся черновиком до публикации, показывается в предпросмотре, публикуется и откатывается через историю; копирование в тот же день отклоняется; вредоносный заголовок задания остаётся текстом в compatibility renderer. Реальные административные пароли/записи e2e не использовали.
+
+ICS: ссылка подписки содержит только group/subgroup/reminder, без token/apikey/password; demo предлагает скачивание и не показывает live-подписку. Built production тесты проверили корень, beta aliases, demo query, root offline и ленивую staff-страницу. Unit-тесты service worker проверили отдельные cache scopes и запрет перехвата чужих маршрутов.
+
+Исправлены найденные проблемы: исторические конфликты блокировали отмену не связанной пары; SW отдавал student shell для staff URL; при 200% шрифте toolbar раздувал mobile layout до 511px и скрывал нижнюю навигацию; statusbar/skeleton вызывали CLS; select статуса растягивался до высоты задания. Повторные проверки выше прошли после исправлений.
+
+Дизайн проверен отдельным сравнением концепта и скриншотов, ledger — DESIGN.md. Автоматическая проверка Axe не заменяет ручной VoiceOver/TalkBack. Полная staff accessibility, Safari/iOS, закрытые push и физические мобильные устройства не объявляются проверенными.
+
+## Команды production artifact smoke
+
+После принятого владельцем решения об источнике:
+
+```sh
+node scripts/build.mjs --channel production --data-decision-reviewed
+RELEASE_CHANNEL=production PW_SERVER_ROOT=dist npm run test:e2e -- tests/e2e/release.spec.mjs
+```
+
+В Windows переменные задаются через `$env:RELEASE_CHANNEL='production'; $env:PW_SERVER_ROOT='dist'`. При использовании установленного Chrome дополнительно `$env:PW_CHANNEL='chrome'`. Production smoke использует отдельный порт 4175, source — 4173; результаты разделены, чтобы не переиспользовать неверный dev server.
