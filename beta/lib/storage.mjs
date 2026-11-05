@@ -10,10 +10,12 @@ function database() {
   if (!opening) opening = new Promise(resolve => {
     let request;
     try { request = indexedDB.open(DB, 1); } catch { resolve(null); return; }
+    let timedOut = false;
+    const timeout = setTimeout(() => { timedOut = true; resolve(null); }, 800);
     request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
+    request.onsuccess = () => { clearTimeout(timeout); if (timedOut) request.result.close(); else resolve(request.result); };
+    request.onerror = () => { clearTimeout(timeout); resolve(null); };
+    request.onblocked = () => { clearTimeout(timeout); timedOut = true; resolve(null); };
   });
   return opening;
 }
@@ -47,11 +49,15 @@ export async function get(key, fallback = null) {
 export async function set(key, value) {
   const result = await operation('readwrite', store => store.put(value, key));
   memory.set(key, value);
+  let persisted = result.ok;
   try {
     if (result.ok) globalThis.localStorage?.removeItem(PREFIX + key);
-    else globalThis.localStorage?.setItem(PREFIX + key, JSON.stringify(value));
+    else if (globalThis.localStorage) {
+      globalThis.localStorage.setItem(PREFIX + key, JSON.stringify(value));
+      persisted = true;
+    }
   } catch { /* A denied persistent store never prevents use of the app. */ }
-  return result.ok;
+  return persisted;
 }
 
 export async function del(key) {

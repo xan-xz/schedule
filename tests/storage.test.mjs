@@ -20,7 +20,7 @@ test('fallback stores only own prefixed keys and clear preserves unrelated app d
     key: index => [...saved.keys()][index],
     get length() { return saved.size; },
   };
-  await set('preferences', { subgroup: 'А' });
+  assert.equal(await set('preferences', { subgroup: 'А' }), true);
   assert.ok(saved.has('uf.public.v1.preferences'));
   assert.deepEqual(await get('preferences'), { subgroup: 'А' });
   await clear();
@@ -31,7 +31,7 @@ test('fallback stores only own prefixed keys and clear preserves unrelated app d
 
 test('quota errors fall back to memory and corrupt stored JSON does not crash', async () => {
   globalThis.localStorage = { getItem: () => '{bad json', setItem: () => { throw new Error('quota'); }, removeItem: () => {} };
-  await set('tasks', ['personal']);
+  assert.equal(await set('tasks', ['personal']), false);
   assert.deepEqual(await get('tasks'), ['personal']);
   assert.equal((await get('corrupt', [])).length, 0);
   delete globalThis.localStorage;

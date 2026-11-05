@@ -39,6 +39,9 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || url.origin !== self.location.origin
     || (!url.href.startsWith(self.registration.scope) && url.href !== sharedModel)) return;
   if (request.mode === 'navigate') {
+    // Staff has its own document and online-only authorization. Never replace it
+    // with the student shell when navigating from an already controlled page.
+    if (url.pathname.startsWith(new URL('manage/', self.registration.scope).pathname)) return;
     event.respondWith((async () => {
       const cache = await caches.open(STATIC);
       // Cache-first shell opens instantly; worker byte changes govern application updates.

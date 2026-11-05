@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { localDate, addDays, dayOf, monday, isoWeek, instant, lessonsForDate, timeline } from '../beta/lib/time.mjs';
+import { localDate, addDays, dayOf, monday, isoWeek, instant, lessonsForDate, timeline, validDate } from '../beta/lib/time.mjs';
 
 function fixture(extra = {}) {
   return { lessons: [
@@ -23,6 +23,13 @@ test('date arithmetic and ISO parity cross month/year/leap boundaries', () => {
   assert.equal(monday('2027-01-03'), '2026-12-28');
   assert.equal(isoWeek('2027-01-03'), 53);
   assert.equal(isoWeek('2027-01-04'), 1);
+});
+
+test('date query validation rejects normalized invalid days and malformed dates', () => {
+  assert.equal(validDate('2026-02-30'), false);
+  assert.equal(validDate('2026-99-10'), false);
+  assert.equal(validDate('2024-02-29'), true);
+  assert.equal(validDate(null), false);
 });
 
 test('subgroup scope includes shared lessons; both includes every subgroup', () => {

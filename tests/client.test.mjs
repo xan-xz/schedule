@@ -1,0 +1,66 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { getSnapshot, saveSnapshot, publicState, snapshotKey } from '../beta/lib/client.mjs';
+import { get, clear } from '../beta/lib/storage.mjs';
+
+const base = () => ({
+  groups: [{ id: 'g', subgroups: ['А', 'Б'] }], lessons: [], teachers: [], subjects: [], rooms: [], exceptions: [],
+  tasks: [
+    { id: 'a', groupId: 'g', subgroup: 'А' },
+    { id: 'b', groupId: 'g', subgroup: 'Б' },
+    { id: 'shared', groupId: 'g', subgroup: 'all' },
+    { id: 'other', groupId: 'other', subgroup: 'А' },
+  ],
+  announcements: [
+    { id: 'group', groupId: 'g', teacherId: 't', roles: ['student'] },
+    { id: 'other', groupId: 'other', roles: ['student'] },
+    { id: 'staff', groupId: 'g', roles: ['admin'] },
+    { id: 'teacher', teacherId: 't', roles: ['student', 'teacher'] },
+    { id: 'global', roles: ['student'] },
+  ],
+  accounts: [{ password_hash: 'must-not-persist' }],
+  attendance: [{ studentId: 'private' }], requests: [{ reason: 'private' }], history: [{ actor: 'private' }],
+});
+
+test('public snapshots enforce group/subgroup scope and remove privileged collections at storage boundary', async () => {
+  await clear();
+  const settings = { groupId: 'g', subgroup: 'А' };
+  await saveSnapshot(settings, { data: base(), revision: 2, updatedAt: '2026-11-06T00:00:00Z', source: 'live', token: 'must-not-persist', users: ['private'] });
+  const raw = await get(snapshotKey(settings));
+  assert.deepEqual(raw.data.tasks.map(item => item.id), ['a', 'shared']);
+  assert.deepEqual(raw.data.announcements.map(item => item.id), ['group', 'global']);
+  for (const key of ['attendance', 'requests', 'history']) assert.deepEqual(raw.data[key], []);
+  assert.equal(raw.data.accounts, undefined);
+  assert.equal(raw.token, undefined);
+  assert.equal(raw.users, undefined);
+  assert.equal((await getSnapshot({ groupId: 'other', subgroup: 'А' })), null);
+});
+
+test('all-subgroups compatibility merges A/B tasks without duplicate shared tasks', async () => {
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    const subgroup = body.subgroup === 'Б' ? 'Б' : 'А';
+    const data = base();
+    data.tasks = data.tasks.filter(task => task.groupId === 'g' && ['all', subgroup].includes(task.subgroup));
+    return { ok: true, json: async () => ({ data, revision: 4, user: { role: 'guest', subgroup } }) };
+  };
+  try {
+    const state = await publicState('g', 'all');
+    assert.deepEqual(state.data.tasks.map(item => item.id).sort(), ['a', 'b', 'shared']);
+    assert.deepEqual(calls.map(call => call.subgroup), ['all', 'Б']);
+    assert.ok(calls.every(call => call.action === 'state' && !call.token));
+    assert.equal(state.source, 'live');
+  } finally { globalThis.fetch = original; }
+});
+
+test('a failed subgroup request never persists a partial all-subgroup snapshot', async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    return body.subgroup === 'Б' ? { ok: false, status: 503 } : { ok: true, json: async () => ({ data: base(), revision: 4, user: { subgroup: 'А' } }) };
+  };
+  try { await assert.rejects(publicState('g', 'all'), /state 503/); }
+  finally { globalThis.fetch = original; }
+});
