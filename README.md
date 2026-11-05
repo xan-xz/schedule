@@ -9,7 +9,7 @@ Mobile-first расписание и личные задания. Четыре �
 
 ## Запуск и проверки
 
-Node.js ≥22.13, npm. Runtime приложения — нативные ES modules без фреймворка и CDN.
+Node.js ≥22.19, npm. Runtime приложения — нативные ES modules без фреймворка и CDN.
 
 ```sh
 npm ci
