@@ -1,6 +1,6 @@
--- PREPARED ONLY. Not applied to the hosted project.
+-- Applied 2026-11-06 (Asia/Qyzylorda), migration version 20261105213809.
 -- Additive upgrade: apply in a reviewed migration before deploying the new Edge Functions.
--- Generate a migration with `supabase migration new security_sessions` using the installed CLI.
+-- Created with `supabase migration new security_sessions`; see docs/BACKEND_RELEASE.md.
 -- Existing timetable rows, hashes, sessions, and history are not overwritten.
 begin;
 create or replace function public.uf_login_attempt(p_ip_hash text, p_account_hash text)

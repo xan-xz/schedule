@@ -1,7 +1,7 @@
 import { addDays, lessonsForDate, localDate } from './time.mjs';
 
 export function icsEscape(value) {
-  return String(value ?? '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/\r\n|\r|\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
 }
 
 /** RFC 5545 folds at 75 UTF-8 octets, never in the middle of a code point. */
