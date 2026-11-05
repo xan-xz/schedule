@@ -1,0 +1,66 @@
+// Keys, not translated labels, are used in state and business logic.
+const ru = {
+  today:'Сегодня',week:'Неделя',tasks:'Задания',more:'Ещё',now:'Сейчас',free:'Сейчас свободно',
+  next:'Дальше',room:'Аудитория',noRoom:'Аудитория уточняется',remaining:'Осталось {n} мин',
+  inMinutes:'Через {n} мин',changes:'Изменения',deadlines:'Ближайшие сроки',noDeadlines:'В ближайшие 48 часов дедлайнов нет.',
+  noLessons:'На этот день занятий нет.',nextDay:'Ближайшая пара',gap:'Окно · {n} мин',cancelled:'Отменено',
+  changed:'Изменено',group:'Группа',subgroup:'Подгруппа',both:'Обе',language:'Язык',theme:'Тема',
+  system:'Системная',light:'Светлая',dark:'Тёмная',format:'Формат времени',h24:'24 часа',h12:'12 часов',
+  calendar:'Экспорт календаря',semester:'Семестр · 16 недель',notifications:'Напоминания',off:'Выключены',
+  reminder:'За сколько минут',install:'Установить на экран',installHelp:'В меню браузера выбери «На главный экран» или «Установить приложение».',
+  about:'О приложении',aboutText:'Учебная неделя без лишней суеты. Время — Алматы, UTC+5. Публичное расписание; личные задания остаются на этом устройстве.',
+  bug:'Сообщить об ошибке',staff:'Вход для преподавателя и администратора',demo:'Демо · {role}',
+  student:'Студент',teacher:'Преподаватель',admin:'Администратор',live:'Настоящее расписание',
+  snapshot:'Снимок выпуска · {date}',updated:'Обновлено {date}',offline:'Офлайн',retry:'Обновить',
+  update:'Доступно обновление',reload:'Обновить приложение',personal:'Личное задание',add:'Добавить',
+  title:'Что нужно сделать',subject:'Предмет',due:'Срок',allSubjects:'Все предметы',noSubject:'Без предмета',
+  new:'Новое',progress:'В работе',done:'Сдано',overdue:'Просрочено',personalOnly:'Личное · только на этом устройстве',
+  groupTask:'От преподавателя',emptyTasks:'Заданий пока нет. Добавь личное — оно останется только у тебя.',
+  delete:'Удалить',close:'Закрыть',save:'Сохранить',previous:'Предыдущая',following:'Следующая',
+  currentWeek:'К сегодня',odd:'Нечётная неделя',even:'Чётная неделя',searchGroup:'Найти группу',
+  noGroups:'Группа не найдена.',error:'Не удалось обновить. Показываем последнюю сохранённую версию.',
+  noData:'Расписание пока недоступно. Подключись к сети и обнови страницу.',
+  cancel:'Отмена',roomChange:'Аудитория',timeChange:'Время',subjectChange:'Предмет',teacherChange:'Преподаватель',
+  changedAt:'Изменение от {date}',announcements:'Объявления',complete:'Отметить сданным',
+  notificationHelp:'Пока приложение открыто. При закрытом приложении используй календарь: в .ics включены напоминания.',
+  notificationDenied:'Браузер не разрешил уведомления. Используй экспорт календаря.',
+  subscriptionHelp:'Автообновляемая подписка ещё не подключена. Скачанный .ics — снимок; после изменений экспортируй его заново.',
+  storageWarning:'Браузер ограничил хранилище. Данные могут не сохраниться после закрытия.',
+  preview:'Предпросмотр студента',manage:'Управление',resetDemo:'Сбросить демо',resetConfirm:'Сбросить только локальную демо-песочницу?',status:'Статус',
+};
+const kk = {
+  today:'Бүгін',week:'Апта',tasks:'Тапсырмалар',more:'Тағы',now:'Қазір',free:'Қазір сабақ жоқ',
+  next:'Келесі',room:'Аудитория',noRoom:'Аудитория нақтылануда',remaining:'{n} минут қалды',
+  inMinutes:'{n} минуттан кейін',changes:'Өзгерістер',deadlines:'Жақын мерзімдер',noDeadlines:'Алдағы 48 сағатта тапсыру мерзімдері жоқ.',
+  noLessons:'Бұл күні сабақ жоқ.',nextDay:'Ең жақын сабақ',gap:'Бос аралық · {n} минут',cancelled:'Сабақ болмайды',
+  changed:'Өзгертілді',group:'Топ',subgroup:'Шағын топ',both:'Екеуі де',language:'Тіл',theme:'Көрініс',
+  system:'Жүйелік',light:'Ашық',dark:'Күңгірт',format:'Уақыт пішімі',h24:'24 сағат',h12:'12 сағат',
+  calendar:'Күнтізбені экспорттау',semester:'Семестр · 16 апта',notifications:'Еске салулар',off:'Өшірулі',
+  reminder:'Неше минут бұрын',install:'Басты экранға орнату',installHelp:'Браузер мәзірінен «Басты экранға қосу» немесе «Қолданбаны орнату» тармағын таңда.',
+  about:'Қолданба туралы',aboutText:'Оқу аптасы артық әуресіз. Уақыт — Алматы, UTC+5. Сабақ кестесі ашық; жеке тапсырмалар осы құрылғыда қалады.',
+  bug:'Қате туралы хабарлау',staff:'Оқытушы мен әкімшіге кіру',demo:'Демо · {role}',
+  student:'Студент',teacher:'Оқытушы',admin:'Әкімші',live:'Нақты сабақ кестесі',
+  snapshot:'Шығарылымдағы көшірме · {date}',updated:'Жаңартылды: {date}',offline:'Желі жоқ',retry:'Жаңарту',
+  update:'Жаңарту қолжетімді',reload:'Қолданбаны жаңарту',personal:'Жеке тапсырма',add:'Қосу',
+  title:'Не істеу керек',subject:'Пән',due:'Тапсыру мерзімі',allSubjects:'Барлық пәндер',noSubject:'Пәнсіз',
+  new:'Жаңа',progress:'Орындалуда',done:'Тапсырылды',overdue:'Мерзімі өтті',personalOnly:'Жеке · тек осы құрылғыда',
+  groupTask:'Оқытушыдан',emptyTasks:'Әзірге тапсырма жоқ. Жеке тапсырма қос — оны тек өзің көресің.',
+  delete:'Жою',close:'Жабу',save:'Сақтау',previous:'Алдыңғы',following:'Келесі',
+  currentWeek:'Бүгінге оралу',odd:'Тақ апта',even:'Жұп апта',searchGroup:'Топты табу',
+  noGroups:'Топ табылмады.',error:'Жаңарту мүмкін болмады. Соңғы сақталған нұсқа көрсетіліп тұр.',
+  noData:'Сабақ кестесі әзірге қолжетімсіз. Желіге қосылып, бетті жаңарт.',
+  cancel:'Болдырмау',roomChange:'Аудитория',timeChange:'Уақыт',subjectChange:'Пән',teacherChange:'Оқытушы',
+  changedAt:'Өзгертілген уақыт: {date}',announcements:'Хабарландырулар',complete:'Тапсырылды деп белгілеу',
+  notificationHelp:'Қолданба ашық кезде жұмыс істейді. Жабық кезде күнтізбені пайдалан: .ics файлына еске салулар қосылған.',
+  notificationDenied:'Браузер хабарландыруларға рұқсат бермеді. Күнтізбені экспорттауды пайдалан.',
+  subscriptionHelp:'Автоматты жаңартылатын жазылым әлі қосылмаған. Жүктелген .ics — көшірме; өзгерістерден кейін қайта экспортта.',
+  storageWarning:'Браузер сақтау орнын шектеді. Қолданба жабылғаннан кейін деректер сақталмауы мүмкін.',
+  preview:'Студент көрінісін алдын ала қарау',manage:'Басқару',resetDemo:'Демоны қалпына келтіру',resetConfirm:'Тек осы құрылғыдағы демо деректерін бастапқы күйге қайтару керек пе?',status:'Күйі',
+};
+const en = {today:'Today',week:'Week',tasks:'Tasks',more:'More',now:'Now',free:'Free right now',next:'Up next',room:'Room',noRoom:'Room to be confirmed',remaining:'{n} min left',inMinutes:'In {n} min',changes:'Changes',deadlines:'Upcoming deadlines',noDeadlines:'No deadlines in the next 48 hours.',noLessons:'No classes on this day.',nextDay:'Next class',gap:'Break · {n} min',cancelled:'Cancelled',changed:'Changed',group:'Group',subgroup:'Subgroup',both:'Both',language:'Language',theme:'Theme',system:'System',light:'Light',dark:'Dark',format:'Time format',h24:'24-hour',h12:'12-hour',calendar:'Export calendar',semester:'Semester · 16 weeks',notifications:'Reminders',off:'Off',reminder:'Minutes before class',install:'Add to home screen',installHelp:'Use your browser menu to install this app or add it to your home screen.',about:'About',aboutText:'Your study week, simplified. All times are in Almaty, UTC+5. Personal tasks stay on this device.',bug:'Report an issue',staff:'Teacher and administrator sign in',demo:'Demo · {role}',student:'Student',teacher:'Teacher',admin:'Administrator',live:'Live timetable',snapshot:'Release snapshot · {date}',updated:'Updated {date}',offline:'Offline',retry:'Refresh',update:'An update is available',reload:'Update app',personal:'Personal task',add:'Add',title:'What needs doing',subject:'Subject',due:'Due',allSubjects:'All subjects',noSubject:'No subject',new:'New',progress:'In progress',done:'Submitted',overdue:'Overdue',personalOnly:'Personal · on this device only',groupTask:'From your teacher',emptyTasks:'No tasks yet. Add a personal task; only you can see it.',delete:'Delete',close:'Close',save:'Save',previous:'Previous',following:'Next',currentWeek:'Today',odd:'Odd week',even:'Even week',searchGroup:'Find a group',noGroups:'No matching group.',error:'Could not refresh. Showing the latest saved version.',noData:'The timetable is unavailable. Connect to the internet and refresh.',cancel:'Cancellation',roomChange:'Room',timeChange:'Time',subjectChange:'Subject',teacherChange:'Teacher',changedAt:'Changed {date}',announcements:'Announcements',complete:'Mark submitted',notificationHelp:'Reminders work while the app is open. For reminders while closed, use calendar export with alarms.',notificationDenied:'Notifications were not allowed. Use calendar export instead.',subscriptionHelp:'An updating subscription is not connected yet. This .ics download is a snapshot; export it again after timetable changes.',storageWarning:'Browser storage is restricted. Your changes may not survive closing.',preview:'Student preview',manage:'Manage',resetDemo:'Reset demo',resetConfirm:'Reset the local demo sandbox only?',status:'Status'};
+export const dictionaries = {ru,kk,en};
+export const localeFor = lang => ({ru:'ru-RU',kk:'kk-KZ',en:'en-GB'}[lang] || 'ru-RU');
+export function translator(lang='ru') {
+  const dictionary = dictionaries[lang] || ru;
+  return (key,args={}) => (dictionary[key] || ru[key] || key).replace(/\{(\w+)\}/g,(_,k)=>String(args[k]??''));
+}
