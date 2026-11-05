@@ -316,3 +316,39 @@ test("calendar subscription contains only public scope and demo offers downloads
     ),
   ).toBeVisible();
 });
+
+test("legacy completion IDs migrate once and newer progress wins on later loads", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem(
+      "uf.tasks.live.guest",
+      JSON.stringify(["shared-task"]),
+    ),
+  );
+  await mockState(page);
+  await page.goto("/schedule/beta/");
+  await expect(
+    page.getByText("Алгоритмы", { exact: true }).first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Задания", exact: true }).click();
+  const status = page.getByRole("combobox", {
+    name: "Решить задачи по алгоритмам · Статус",
+    exact: true,
+  });
+  await expect(status).toHaveValue("done");
+  await status.selectOption("new");
+  await page.reload();
+  await page.getByRole("button", { name: "Задания", exact: true }).click();
+  await expect(
+    page.getByRole("combobox", {
+      name: "Решить задачи по алгоритмам · Статус",
+      exact: true,
+    }),
+  ).toHaveValue("new");
+  expect(
+    await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("uf.tasks.live.guest")),
+    ),
+  ).toEqual(["shared-task"]);
+});

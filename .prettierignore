@@ -1,10 +1,8 @@
 node_modules/
 dist/
-beta/manage/
 beta/seed.json
 beta/demo.mjs
 beta/core.mjs
 beta/conflicts.mjs
-backend/
-index.html
+/index.html
 test-results/

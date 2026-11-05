@@ -150,3 +150,53 @@ test("staff assignment title stays text through escaped template rendering", asy
   expect(await page.evaluate(() => globalThis.xssExecuted)).toBeUndefined();
   expect(requests).toEqual([]);
 });
+
+test("moving a date keeps a student notice on the source day and shows the lesson on its target day", async ({
+  page,
+}) => {
+  const requests = await mockState(page);
+  await page.goto("/schedule/beta/manage/?demo=admin");
+  await page.locator('[data-page="schedule"]').click();
+  await page
+    .getByRole("button", { name: "Создать черновик", exact: true })
+    .click();
+  await page.locator('[data-action="exception"]').first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Новая дата", { exact: true }).fill("2026-11-08");
+  await dialog
+    .getByLabel("Причина / комментарий", { exact: true })
+    .fill("Одно занятие перенесено на воскресенье");
+  await dialog
+    .getByRole("button", { name: "Применить на дату", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  await page.getByRole("button", { name: "Опубликовать", exact: true }).click();
+  await expect(
+    page.getByText(
+      "Черновик опубликован. Предыдущая версия доступна в истории.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await page.goto("/schedule/beta/?demo=student");
+  await expect(
+    page.getByRole("heading", { name: "Изменения", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Одно занятие перенесено на воскресенье", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/6 нояб.*→.*8 нояб/)).toBeVisible();
+  await page.getByRole("button", { name: "Неделя", exact: true }).click();
+  await expect(
+    page.locator("#day-2026-11-08").getByRole("heading", {
+      name: "Алгоритмдер және деректер құрылымы",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator("#day-2026-11-06").getByRole("heading", {
+      name: "Алгоритмдер және деректер құрылымы",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  expect(requests).toEqual([]);
+});

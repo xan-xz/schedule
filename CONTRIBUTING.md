@@ -16,7 +16,7 @@
 
 ESLint проверяет новый student-код, tooling и тесты. Старые модули `core.mjs`, `demo.mjs`, `conflicts.mjs`, серверные legacy-модули и профессиональный интерфейс проверяются на синтаксис; их полномасштабное переформатирование намеренно не смешивается с объединением продукта. Новые проверки безопасности backend обязательны в unit-тестах.
 
-Prettier проверяет tooling, конфигурацию и e2e. Форматирование старых JSON/HTML и импортированных данных отключено, чтобы не скрывать содержательные правки. Строгий TypeScript не используется: проект сохраняет vanilla JavaScript; ESLint, parse checks, pure-function tests и browser tests — его обязательные проверки.
+Prettier проверяет поддерживаемые student/staff HTML/CSS/JS, серверные модули, все тесты, tooling и конфигурацию. Старый корневой HTML, исходные demo/conflicts/seed и импортированные данные исключены, чтобы не менять прежнюю страницу и данные. ESLint проверяет новые safe-dom/tools; legacy staff app проходит parse checks и e2e. Строгий TypeScript не используется: проект сохраняет vanilla JavaScript; ESLint, parse checks, pure-function tests и browser tests — его обязательные проверки.
 
 ## Публикация
 
