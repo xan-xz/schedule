@@ -118,6 +118,19 @@ export function lessonsForDate(data, date, scope = {}) {
   return result.sort((a, b) => a.startAt - b.startAt || a.id.localeCompare(b.id));
 }
 
+/** Change notices include a moved-away source without making it a real lesson. */
+export function changesForDate(data, date, scope = {}) {
+  const changes = lessonsForDate(data, date, scope).filter(item => item.exception);
+  const contexts = new Map();
+  for (const override of data.exceptions || data.overrides || []) {
+    if (override.status !== 'moved' || override.date !== date || !override.targetDate || override.targetDate === date) continue;
+    const lesson = (data.lessons || []).find(item => item.id === override.lessonId);
+    if (!lesson || !inScope(lesson, scope) || !scheduled(lesson, date, data, contexts)) continue;
+    changes.push({ ...occurrence(lesson, date, override), movedAway: true });
+  }
+  return changes.sort((a, b) => String(b.exception.updatedAt || b.exception.createdAt || '').localeCompare(String(a.exception.updatedAt || a.exception.createdAt || '')) || a.startAt - b.startAt);
+}
+
 /** Current/next and gaps use half-open intervals: start included, end excluded. */
 export function timeline(data, scope = {}, now = new Date()) {
   const at = now.getTime();

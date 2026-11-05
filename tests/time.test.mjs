@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { localDate, addDays, dayOf, monday, isoWeek, instant, lessonsForDate, timeline, validDate } from '../beta/lib/time.mjs';
+import { localDate, addDays, dayOf, monday, isoWeek, instant, lessonsForDate, timeline, validDate, changesForDate } from '../beta/lib/time.mjs';
 
 function fixture(extra = {}) {
   return { lessons: [
@@ -93,6 +93,33 @@ test('moved occurrence changes date/room/teacher and preserves original source f
   assert.equal(moved.original.start, '09:00');
   assert.equal(moved.roomId, '300');
   assert.equal(lessonsForDate(data, '2026-11-10', { teacherId: 't2' }).length, 1);
+});
+
+test('source-day changes show moved-away lessons without reintroducing them into current/next', () => {
+  const data = fixture({ exceptions: [{ lessonId: 'a', date: '2026-11-09', targetDate: '2026-11-10', status: 'moved', start: '14:00', end: '15:00', roomId: '300', updatedAt: '2026-11-06T00:00:00Z' }] });
+  const [notice] = changesForDate(data, '2026-11-09', scope);
+  assert.equal(notice.id, 'a');
+  assert.equal(notice.movedAway, true);
+  assert.equal(notice.original.date, '2026-11-09');
+  assert.equal(notice.date, '2026-11-10');
+  assert.equal(notice.original.start, '09:00');
+  assert.equal(notice.start, '14:00');
+  const line = timeline(data, scope, new Date('2026-11-09T04:30:00Z'));
+  assert.equal(line.current, null);
+  assert.equal(line.next.id, 'common');
+  assert.equal(line.today.some(item => item.id === 'a'), false);
+  assert.deepEqual(changesForDate(data, '2026-11-09', { groupId: 'g', subgroup: 'Б' }), []);
+  assert.deepEqual(changesForDate(data, '2026-11-09', { groupId: 'other' }), []);
+  assert.equal(changesForDate(data, '2026-11-10', scope).length, 1);
+  assert.equal(changesForDate(data, '2026-11-10', scope)[0].movedAway, undefined);
+});
+
+test('same-day changes are listed once and moved-away notices retain original teacher scope', () => {
+  const data = fixture({ lessons: [{ ...fixture().lessons[0], teacherId: 'original-teacher' }], exceptions: [{ lessonId: 'a', date: '2026-11-09', targetDate: '2026-11-10', status: 'moved', teacherId: 'new-teacher' }] });
+  assert.equal(changesForDate(data, '2026-11-09', { teacherId: 'original-teacher' }).length, 1);
+  assert.equal(changesForDate(data, '2026-11-10', { teacherId: 'new-teacher' }).length, 1);
+  const sameDay = fixture({ exceptions: [{ lessonId: 'a', date: '2026-11-09', status: 'moved', roomId: '300' }] });
+  assert.equal(changesForDate(sameDay, '2026-11-09', scope).length, 1);
 });
 
 test('empty schedule yields explicit nulls without invalid progress', () => {

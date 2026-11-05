@@ -1,7 +1,7 @@
 import {el,button,field,select,download} from './lib/dom.mjs';
 import {translator,localeFor} from './lib/i18n.mjs';
 import {initialSettings,writePreference,publicState,getSnapshot,saveSnapshot,releaseSnapshot,demoSnapshot} from './lib/client.mjs';
-import {localDate,addDays,monday,isoWeek,lessonsForDate,timeline,validDate} from './lib/time.mjs';
+import {localDate,addDays,monday,isoWeek,lessonsForDate,timeline,validDate,changesForDate} from './lib/time.mjs';
 import * as storage from './lib/storage.mjs';
 
 const $=id=>document.getElementById(id);
@@ -92,7 +92,7 @@ function renderToday(){
   const key=current?.id+':'+current?.startDate;
   if(previousCurrent!==key){$('announcement').textContent=current?t('now')+': '+name('subjects',current.subjectId)+' · '+name('rooms',current.roomId,t('noRoom')):t('free');previousCurrent=key;}
   const fragment=[el('p',{class:'date-line'},niceDate(line.date,true)),hero];
-  const changes=line.today.filter(l=>l.exception);
+  const changes=changesForDate(data(),line.date,scope());
   if(changes.length)fragment.push(section(t('changes'),...changes.map(l=>el('article',{class:'change'},el('h3',{},name('subjects',l.subjectId)),el('p',{},changeText(l)),l.exception.note?el('p',{class:'muted'},l.exception.note):null,(l.exception.updatedAt||l.exception.createdAt)?el('small',{},t('changedAt',{date:niceStamp(l.exception.updatedAt||l.exception.createdAt)})):null))));
   const nextList=line.today.filter(l=>!l.cancelled&&l.startAt>Date.now()).slice(0,3);
   const list=el('ul',{class:'rows'});
