@@ -1,6 +1,6 @@
 # Участие в разработке
 
-Нужен Node.js 22.13+ и npm. `npm ci`, затем `npm run dev`. Откройте `http://127.0.0.1:4173/schedule/beta/?demo=student`.
+Нужен Node.js 22.19+ и npm. `npm ci`, затем `npm run dev`. Откройте `http://127.0.0.1:4173/schedule/beta/?demo=student`.
 
 ## Перед pull request
 
