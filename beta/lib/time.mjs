@@ -46,9 +46,10 @@ function holiday(data, date, groupId) {
     && date >= item.start && date <= item.end);
 }
 
-function scheduled(lesson, date, data) {
-  const parity = isoWeek(date) % 2 ? 'odd' : 'even';
-  return lesson.day === dayOf(date) && (!lesson.week || lesson.week === 'all' || lesson.week === parity)
+function scheduled(lesson, date, data, contexts) {
+  if (!contexts.has(date)) contexts.set(date, { day: dayOf(date), parity: isoWeek(date) % 2 ? 'odd' : 'even' });
+  const { day, parity } = contexts.get(date);
+  return lesson.day === day && (!lesson.week || lesson.week === 'all' || lesson.week === parity)
     && date >= (lesson.validFrom || data.validFrom || '0000-01-01')
     && date <= (lesson.validUntil || data.validUntil || '9999-12-31')
     && !holiday(data, date, lesson.groupId);
@@ -80,18 +81,29 @@ function occurrence(lesson, sourceDate, override) {
 export function lessonsForDate(data, date, scope = {}) {
   const result = [];
   const exceptions = data.exceptions || data.overrides || [];
+  const contexts = new Map();
+  const byLesson = new Map();
+  for (const item of exceptions) {
+    if (!byLesson.has(item.lessonId)) byLesson.set(item.lessonId, []);
+    byLesson.get(item.lessonId).push(item);
+  }
   for (const lesson of data.lessons || []) {
-    if (scheduled(lesson, date, data)) {
-      const override = exceptions.find(item => item.lessonId === lesson.id && item.date === date);
+    // Group assignment cannot change in a per-date override; filter before date arithmetic.
+    if (!scope.teacherId && scope.groupId && lesson.groupId !== scope.groupId) continue;
+    if (!scope.teacherId && scope.subgroup && scope.subgroup !== 'all' && lesson.subgroup !== 'all' && lesson.subgroup !== scope.subgroup) continue;
+    const overrides = byLesson.get(lesson.id) || [];
+    if (scope.teacherId && lesson.teacherId !== scope.teacherId && !overrides.some(item => item.teacherId === scope.teacherId)) continue;
+    if (scheduled(lesson, date, data, contexts)) {
+      const override = overrides.find(item => item.date === date);
       if (!override?.targetDate || override.targetDate === date || override.status !== 'moved') {
         const item = occurrence(lesson, date, override);
         if (inScope(item, scope)) result.push(item);
       }
     }
-    for (const override of exceptions) {
+    for (const override of overrides) {
       if (override.lessonId !== lesson.id || override.status !== 'moved' || override.targetDate !== date || override.date === date) continue;
       // The original occurrence must exist, even when its target has another weekday/parity.
-      if (scheduled(lesson, override.date, data) && !holiday(data, date, lesson.groupId)) {
+      if (scheduled(lesson, override.date, data, contexts) && !holiday(data, date, lesson.groupId)) {
         const item = occurrence(lesson, override.date, override);
         if (inScope(item, scope)) result.push(item);
       }
