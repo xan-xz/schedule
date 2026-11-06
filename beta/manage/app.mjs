@@ -2531,6 +2531,7 @@ function enhanceWorkspace() {
         domButton("Копировать неделю", () => bulkForm("week"), {
           class: "btn",
         }),
+        domButton("Шаблоны", () => templateManager(), { class: "btn" }),
         domButton("Импорт CSV", csvImport, { class: "btn" }),
         domButton("Экспорт CSV", csvExport, { class: "btn" }),
       ),
@@ -2547,6 +2548,291 @@ function startDraft() {
     revision: S.revision,
   };
   render();
+}
+function templateField(label, control) {
+  const id = "template-field-" + uid();
+  control.id = id;
+  return dom(
+    "div",
+    { class: "form-label section-space" },
+    dom("label", { for: id }, label),
+    control,
+  );
+}
+function showTemplateDialog(title, body) {
+  const dialog = $("modal");
+  dialog.setAttribute("aria-labelledby", "template-title");
+  dialog.addEventListener(
+    "close",
+    () => dialog.removeAttribute("aria-labelledby"),
+    { once: true },
+  );
+  dialog.replaceChildren(
+    dom(
+      "div",
+      { class: "dialog-head" },
+      dom("h2", { id: "template-title" }, title),
+      domButton("Закрыть", closeModal, { class: "btn" }),
+    ),
+    body,
+  );
+  if (!dialog.open) dialog.showModal();
+}
+async function templateManager() {
+  if (!isAdmin()) return;
+  try {
+    const tools = await import("./templates.mjs");
+    const templates = tools.loadTemplates(S.mode);
+    const body = dom(
+      "div",
+      {},
+      dom(
+        "p",
+        { class: "notice-info" },
+        "Шаблоны сохраняются только в этом браузере, отдельно для демо и настоящего сайта. Сохраняются регулярные пары, тип недели и сроки действия; разовые изменения не включаются. Применение добавляет занятия в черновик и проверяет пересечения; существующие пары не заменяются.",
+      ),
+      domButton("Сохранить новый шаблон", () => templateSaveForm(tools), {
+        class: "btn primary section-space",
+      }),
+    );
+    if (!templates.length)
+      body.append(
+        dom("p", { class: "empty" }, "Сохранённых шаблонов пока нет."),
+      );
+    for (const template of templates) {
+      const item = dom(
+        "article",
+        { class: "notice", "aria-label": template.name },
+        dom("p", {}, dom("strong", {}, template.name)),
+        dom(
+          "p",
+          {},
+          (template.kind === "day" ? "День" : "Неделя") +
+            " · " +
+            template.sourceGroupName +
+            " · " +
+            (template.sourceSubgroup === "all"
+              ? "обе подгруппы"
+              : template.sourceSubgroup) +
+            " · занятий: " +
+            template.lessons.length,
+        ),
+        dom(
+          "div",
+          { class: "row section-space" },
+          domButton("Применить", () => templateApplyForm(tools, template), {
+            class: "btn",
+            "aria-label": "Применить шаблон " + template.name,
+          }),
+          domButton(
+            "Переименовать",
+            () => templateRenameForm(tools, template),
+            {
+              class: "btn",
+              "aria-label": "Переименовать шаблон " + template.name,
+            },
+          ),
+          domButton("Удалить", () => templateDeleteForm(tools, template), {
+            class: "btn danger",
+            "aria-label": "Удалить шаблон " + template.name,
+          }),
+        ),
+      );
+      body.append(item);
+    }
+    showTemplateDialog("Шаблоны расписания", body);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+function templateSaveForm(tools) {
+  if (!isAdmin()) return;
+  const title = dom("input", {
+    required: true,
+    maxlength: 80,
+    autocomplete: "off",
+  });
+  const kind = domSelect(
+    [
+      ["day", "Выбранный день"],
+      ["week", "Вся регулярная неделя"],
+    ],
+    "day",
+    () => {},
+  );
+  const error = dom("p", { class: "form-error", role: "alert" });
+  const form = dom(
+    "form",
+    {},
+    dom(
+      "p",
+      {},
+      name("groups", S.groupId) +
+        " · " +
+        (S.subgroup === "all" ? "обе подгруппы" : S.subgroup) +
+        " · " +
+        niceDate(S.date),
+    ),
+    templateField("Название шаблона", title),
+    templateField("Сохранить", kind),
+    dom(
+      "div",
+      { class: "row section-space" },
+      dom(
+        "button",
+        { type: "submit", class: "btn primary" },
+        "Сохранить шаблон",
+      ),
+      domButton("Назад к шаблонам", () => templateManager(), { class: "btn" }),
+    ),
+    error,
+  );
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      const template = tools.createTemplate(
+        draft?.data || (S.mode === "demo" ? S.demoFull : S.data),
+        {
+          name: title.value,
+          kind: kind.value,
+          groupId: S.groupId,
+          subgroup: S.subgroup,
+          day: dayOf(S.date),
+        },
+      );
+      tools.saveTemplate(S.mode, template);
+      void templateManager();
+      toast("Шаблон сохранён на этом устройстве. Расписание не изменилось.");
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  });
+  showTemplateDialog("Новый шаблон", form);
+  title.focus();
+}
+function templateApplyForm(tools, template) {
+  if (!isAdmin()) return;
+  const day = domSelect(
+    DAYS.map((label, i) => [String(i), label]),
+    String(dayOf(S.date)),
+    () => {},
+  );
+  const error = dom("p", { class: "form-error", role: "alert" });
+  const form = dom(
+    "form",
+    {},
+    dom(
+      "p",
+      {},
+      "«" +
+        template.name +
+        "» → " +
+        name("groups", S.groupId) +
+        " · " +
+        (S.subgroup === "all" ? "обе подгруппы" : S.subgroup),
+    ),
+    dom(
+      "p",
+      { class: "notice-info section-space" },
+      "Будут добавлены новые пары. Существующие не заменятся. При любом пересечении весь шаблон будет отклонён. Публикация выполняется отдельно после предпросмотра.",
+    ),
+    template.kind === "day" ? templateField("День назначения", day) : null,
+    dom(
+      "div",
+      { class: "row section-space" },
+      dom(
+        "button",
+        { type: "submit", class: "btn primary" },
+        "Добавить в черновик",
+      ),
+      domButton("Назад к шаблонам", () => templateManager(), { class: "btn" }),
+    ),
+    error,
+  );
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      // Validate against the complete current draft before creating/modifying it.
+      const result = tools.applyTemplate(
+        draft?.data || (S.mode === "demo" ? S.demoFull : S.data),
+        template,
+        { groupId: S.groupId, subgroup: S.subgroup, toDay: Number(day.value) },
+      );
+      if (!draft) startDraft();
+      draft.data = result;
+      S.data = visible(draft.data, S.user);
+      closeModal();
+      render();
+      toast("Шаблон добавлен в черновик. Проверь и опубликуй изменения.");
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  });
+  showTemplateDialog("Применить шаблон", form);
+}
+function templateRenameForm(tools, template) {
+  if (!isAdmin()) return;
+  const title = dom("input", {
+    required: true,
+    maxlength: 80,
+    value: template.name,
+  });
+  const error = dom("p", { class: "form-error", role: "alert" });
+  const form = dom(
+    "form",
+    {},
+    templateField("Новое название", title),
+    dom(
+      "div",
+      { class: "row section-space" },
+      dom("button", { type: "submit", class: "btn primary" }, "Переименовать"),
+      domButton("Назад к шаблонам", () => templateManager(), { class: "btn" }),
+    ),
+    error,
+  );
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      tools.renameTemplate(S.mode, template.id, title.value);
+      void templateManager();
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  });
+  showTemplateDialog("Переименовать шаблон", form);
+  title.focus();
+}
+function templateDeleteForm(tools, template) {
+  if (!isAdmin()) return;
+  const error = dom("p", { class: "form-error", role: "alert" });
+  const form = dom(
+    "form",
+    {},
+    dom(
+      "p",
+      {},
+      "Удалить «" +
+        template.name +
+        "» только из хранилища шаблонов? Пары, черновик и общее расписание не изменятся.",
+    ),
+    dom(
+      "div",
+      { class: "row section-space" },
+      dom("button", { type: "submit", class: "btn danger" }, "Удалить шаблон"),
+      domButton("Назад к шаблонам", () => templateManager(), { class: "btn" }),
+    ),
+    error,
+  );
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    try {
+      tools.deleteTemplate(S.mode, template.id);
+      void templateManager();
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  });
+  showTemplateDialog("Удалить шаблон", form);
 }
 function discardDraft() {
   if (!draft) return;
