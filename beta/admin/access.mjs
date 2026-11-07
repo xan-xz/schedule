@@ -129,6 +129,8 @@ export function renderOwnerAccess(
         }
       } catch (error) {
         if (disposed || view !== ownView) return;
+        if (challenge && Date.parse(challenge.expiresAt) <= Date.now())
+          clearSecrets();
         errorMessage(error);
         if (error.code === "RATE_LIMITED" && error.retryAfterSeconds) {
           rateLimited = true;
@@ -167,8 +169,10 @@ export function renderOwnerAccess(
     challenge = { id: response.challengeId, expiresAt: response.expiresAt };
   }
   function challengeId() {
-    if (!challenge || Date.parse(challenge.expiresAt) <= Date.now())
+    if (!challenge || Date.parse(challenge.expiresAt) <= Date.now()) {
+      clearSecrets();
       throw new OwnerAccessError("FLOW_CONFLICT");
+    }
     return challenge.id;
   }
   function expiry() {
@@ -253,12 +257,15 @@ export function renderOwnerAccess(
             fields.password = password.node.value;
             password.node.value = "";
           }
-          email.node.value = factor.node.value = "";
+          // The server keeps a consumed email proof on this challenge while
+          // TOTP is retried. Keep its input in memory until success or reset.
+          factor.node.value = "";
           const response = await call(
             recovery ? "recovery.verify" : "login.verify",
             fields,
           );
           if (disposed) return;
+          email.node.value = "";
           if (recovery) {
             keepChallenge(response);
             showEnrollment(response.enrollment, true);

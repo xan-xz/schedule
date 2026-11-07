@@ -73,9 +73,28 @@ export const fixture = {
 
 export async function mockState(
   page,
-  { time = new Date("2026-11-06T04:00:00Z"), ticking = false } = {},
+  {
+    time = new Date("2026-11-06T04:00:00Z"),
+    ticking = false,
+    savedChoice = true,
+  } = {},
 ) {
   const requests = [];
+  if (savedChoice)
+    await page.addInitScript(() => {
+      try {
+        if (
+          !localStorage.getItem("uf.group") &&
+          !localStorage.getItem("uf.settings.v1") &&
+          !localStorage.getItem("uf.student.choice.v1")
+        ) {
+          localStorage.setItem("uf.group", JSON.stringify("g-main"));
+          localStorage.setItem("uf.subgroup", JSON.stringify("А"));
+        }
+      } catch {
+        /* Restricted-storage scenarios deliberately keep this unavailable. */
+      }
+    });
   if (ticking) await page.clock.install({ time });
   else await page.clock.setFixedTime(time);
   await page.route(

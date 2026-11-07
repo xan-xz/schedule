@@ -174,6 +174,61 @@ async function beginLogin(page) {
   ).toBeVisible();
 }
 
+test("a failed TOTP or unavailable retry keeps email proof without sending another letter", async ({
+  page,
+}) => {
+  let attempts = 0;
+  const { calls, errors } = await fixture(page, {
+    handler: async (body) => {
+      if (body.action !== "login.verify") return;
+      attempts++;
+      if (attempts === 1)
+        return { status: 401, body: { code: "INVALID_PROOF" } };
+      if (attempts === 2) return { status: 503, body: { code: "UNAVAILABLE" } };
+    },
+  });
+  await page.goto(path);
+  await beginLogin(page);
+  const email = page.getByLabel("Код или ссылка из письма");
+  const totp = page.getByLabel("Код из приложения", { exact: true });
+  await email.fill("123456");
+  await totp.fill("000000");
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Не удалось подтвердить данные",
+  );
+  await expect(email).toHaveValue("123456");
+  await expect(totp).toHaveValue("");
+  await totp.fill("654321");
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Сервис входа сейчас недоступен",
+  );
+  await expect(email).toHaveValue("123456");
+  await expect(totp).toHaveValue("");
+  await totp.fill("654321");
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Вход подтверждён" }),
+  ).toBeVisible();
+  expect(calls.filter((call) => call.action === "login.begin")).toHaveLength(1);
+  expect(calls.filter((call) => call.action === "setup.request")).toHaveLength(
+    0,
+  );
+  const proofs = calls.filter((call) => call.action === "login.verify");
+  expect(proofs).toHaveLength(3);
+  expect(proofs.every((call) => call.emailCode === "123456")).toBe(true);
+  await expect(page.getByLabel("Код или ссылка из письма")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => ({
+      local: { ...localStorage },
+      session: { ...sessionStorage },
+    })),
+  ).toEqual({ local: {}, session: {} });
+  expect(errors).toEqual([]);
+  await audit(page);
+});
+
 test("password + owner email proof + TOTP logs in, logout-all clears memory, nothing persists", async ({
   page,
 }) => {

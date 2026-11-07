@@ -342,6 +342,54 @@ Object.assign(en, {
   subscriptionDemo:
     "Demo supports .ics downloads. Subscriptions use the live timetable only.",
 });
+Object.assign(ru, {
+  onboardingTitle: "Выбери свою группу",
+  onboardingHelp:
+    "Выбор сохранится на этом устройстве. Потом группу можно изменить в «Ещё».",
+  saveGroup: "Сохранить и открыть расписание",
+  groupUnavailable:
+    "Сохранённая группа больше недоступна. Выбери другую; личные задания прежней группы сохранены.",
+  subgroupUnavailable: "Подгруппы изменились. Подтверди свой выбор.",
+  inviteTitle: "Открыть группу из ссылки?",
+  inviteHelp: "Текущий выбор: {group}. Смена группы не удалит личные задания.",
+  keepGroup: "Оставить текущую группу",
+  invalidInvite: "Группа по ссылке не найдена. Выбери группу из списка.",
+  onboardingOffline:
+    "Выбираешь из сохранённого списка. Когда появится сеть, расписание обновится.",
+});
+Object.assign(kk, {
+  onboardingTitle: "Өз тобыңды таңда",
+  onboardingHelp:
+    "Таңдау осы құрылғыда сақталады. Топты кейін «Тағы» бөлімінен өзгертуге болады.",
+  saveGroup: "Сақтап, кестені ашу",
+  groupUnavailable:
+    "Сақталған топ енді қолжетімсіз. Басқа топты таңда; бұрынғы топтың жеке тапсырмалары сақталды.",
+  subgroupUnavailable: "Шағын топтар өзгерді. Таңдауыңды раста.",
+  inviteTitle: "Сілтемедегі топты ашу керек пе?",
+  inviteHelp:
+    "Қазіргі таңдау: {group}. Топты өзгерту жеке тапсырмаларды жоймайды.",
+  keepGroup: "Қазіргі топты қалдыру",
+  invalidInvite: "Сілтемедегі топ табылмады. Тізімнен топты таңда.",
+  onboardingOffline:
+    "Сақталған тізімнен таңдап жатырсың. Желі қосылғанда кесте жаңартылады.",
+});
+Object.assign(en, {
+  onboardingTitle: "Choose your group",
+  onboardingHelp:
+    "Your choice stays on this device. You can change it later in More.",
+  saveGroup: "Save and open timetable",
+  groupUnavailable:
+    "Your saved group is no longer available. Choose another; personal tasks for the previous group are preserved.",
+  subgroupUnavailable: "Subgroups have changed. Confirm your choice.",
+  inviteTitle: "Open the group from this link?",
+  inviteHelp:
+    "Current choice: {group}. Changing groups will not delete personal tasks.",
+  keepGroup: "Keep current group",
+  invalidInvite:
+    "The group in this link was not found. Choose a group from the list.",
+  onboardingOffline:
+    "You are choosing from the saved list. The timetable will update when you reconnect.",
+});
 export const dictionaries = { ru, kk, en };
 export const localeFor = (lang) =>
   ({ ru: "ru-RU", kk: "kk-KZ", en: "en-GB" })[lang] || "ru-RU";
