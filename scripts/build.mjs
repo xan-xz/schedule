@@ -76,7 +76,7 @@ await writeFile(
   JSON.stringify(publicCompatibility, null, 2) + "\n",
 );
 const redirectHtml = (script) =>
-  `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'"><title>UniFlow</title><p>Открываем UniFlow…</p><script type="module" src="${script}"></script></html>\n`;
+  `<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'"><title>UniFlow</title><link rel="icon" href="${posix.join(posix.dirname(script), "icons/icon-192.png")}" type="image/png"><p>Открываем UniFlow…</p><script type="module" src="${script}"></script></html>\n`;
 for (const route of compatibility.legacyRoutes) {
   if (!/^(?:[A-Za-z0-9_-]+\/)+$/.test(route.path))
     throw Error("Unsafe compatibility route");
