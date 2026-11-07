@@ -5,9 +5,12 @@ test("current lesson changes at its exact minute boundary without a manual refre
   page,
 }) => {
   const requests = await mockState(page, {
-    time: new Date("2026-11-06T04:49:59.750Z"),
+    time: new Date("2026-11-06T04:49:00Z"),
     ticking: true,
   });
+  // Navigation can take longer than 250 ms on CI. Pause before loading the
+  // application so only runFor advances across the boundary being tested.
+  await page.clock.pauseAt(new Date("2026-11-06T04:49:59.750Z"));
   await page.goto("/schedule/beta/");
   await expect(
     page
