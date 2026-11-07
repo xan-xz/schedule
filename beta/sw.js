@@ -145,7 +145,25 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+  if (event.data?.type !== "SKIP_WAITING") return;
+  event.waitUntil(
+    (async () => {
+      const metadata = await caches.open(META);
+      // An already-open legacy app waits only for controllerchange. If another
+      // tab has activated us, that event has already happened. Its explicit
+      // update request must navigate this caller, never every open document.
+      if (
+        (await cachedName(metadata, ACTIVE_KEY)) === STATIC &&
+        event.source?.type === "window" &&
+        belongsToShell(event.source) &&
+        typeof event.source.navigate === "function"
+      ) {
+        await event.source.navigate(event.source.url);
+        return;
+      }
+      await self.skipWaiting();
+    })(),
+  );
 });
 
 self.addEventListener("fetch", (event) => {

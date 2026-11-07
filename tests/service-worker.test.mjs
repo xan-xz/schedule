@@ -12,6 +12,7 @@ function worker(scope, keys = [], clients = []) {
   const events = new Map();
   const deleted = [];
   const opened = [];
+  const skipped = [];
   const stored = new Map();
   const cacheFor = (name) => ({
     match: async (key) =>
@@ -31,6 +32,9 @@ function worker(scope, keys = [], clients = []) {
     registration: { scope },
     location: { origin: new URL(scope).origin },
     clients: { claim: async () => {}, matchAll: async () => clients },
+    skipWaiting: async () => {
+      skipped.push(true);
+    },
     addEventListener: (event, handler) => events.set(event, handler),
   };
   runInNewContext(source, {
@@ -52,6 +56,16 @@ function worker(scope, keys = [], clients = []) {
     events,
     deleted,
     opened,
+    skipped,
+    async message(source, data = { type: "SKIP_WAITING" }) {
+      const pending = [];
+      events.get("message")({
+        source,
+        data,
+        waitUntil: (value) => pending.push(value),
+      });
+      await Promise.all(pending);
+    },
     async intercept(
       path,
       {
@@ -201,4 +215,41 @@ test("a first successful installation never pins a failed partial cache as an ac
     clientId: "first-tab",
   });
   assert.equal(beta.opened.at(-1), current);
+});
+
+test("an explicit legacy update request to an active worker navigates only its own shell caller", async () => {
+  const scope = "https://example.test/schedule/";
+  const root = worker(scope);
+  const navigated = [];
+  const caller = {
+    id: "old-tab",
+    type: "window",
+    url: scope + "?demo=student",
+    navigate: async (url) => {
+      navigated.push(url);
+    },
+  };
+  await root.message(caller);
+  assert.equal(root.skipped.length, 1);
+  assert.deepEqual(navigated, []);
+  let activation;
+  root.events.get("activate")({
+    waitUntil: (value) => {
+      activation = value;
+    },
+  });
+  await activation;
+  await root.message(caller);
+  assert.deepEqual(navigated, [caller.url]);
+  assert.equal(root.skipped.length, 1);
+  for (const url of [
+    scope + "beta/",
+    scope + "manage/",
+    "https://other.test/schedule/",
+  ])
+    await root.message({ ...caller, url });
+  assert.deepEqual(navigated, [caller.url]);
+  assert.equal(root.skipped.length, 4);
+  await root.message(caller, { type: "UNRELATED" });
+  assert.deepEqual(navigated, [caller.url]);
 });

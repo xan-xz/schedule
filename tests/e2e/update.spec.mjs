@@ -252,12 +252,15 @@ test("the currently published legacy worker upgrades without losing its old-tab 
   origin.legacy.root = true;
   origin.legacy.beta = true;
   const old = await context.newPage();
+  const untouched = await context.newPage();
   const beta = await context.newPage();
   try {
     await page.goto(origin.url + "/schedule/");
     await ready(page, "root-v1");
     await old.goto(origin.url + "/schedule/");
     await ready(old, "root-v1");
+    await untouched.goto(origin.url + "/schedule/");
+    await ready(untouched, "root-v1");
     await beta.goto(origin.url + "/schedule/beta/?demo=student");
     await ready(beta, "beta-v1");
     expect(
@@ -285,6 +288,25 @@ test("the currently published legacy worker upgrades without losing its old-tab 
     expect(names).toContain("uniflow:%2Fschedule%2F:root-v1-static");
     expect(names).toContain("uniflow:%2Fschedule%2Fbeta%2F:beta-v1-static");
     expect(names).toContain("uniflow:%2Fschedule%2F:clients");
+    // Exact legacy-button behaviour: it blindly posts to the worker reference
+    // and waits for controllerchange, which already fired in this old tab.
+    // No new-app guard and no external page.reload() may rescue this request.
+    await old.evaluate(async () => {
+      const registration = await navigator.serviceWorker.getRegistration();
+      navigator.serviceWorker.addEventListener(
+        "controllerchange",
+        () => location.reload(),
+        { once: true },
+      );
+      registration.active.postMessage({ type: "SKIP_WAITING" });
+    });
+    await ready(old, "root-v2");
+    expect(
+      await untouched.evaluate(() => globalThis.__updateFixtureVersion),
+    ).toBe("root-v1");
+    expect(await beta.evaluate(() => globalThis.__updateFixtureVersion)).toBe(
+      "beta-v1",
+    );
     await context.setOffline(true);
     await beta.reload();
     await ready(beta, "beta-v1");
@@ -292,6 +314,7 @@ test("the currently published legacy worker upgrades without losing its old-tab 
   } finally {
     await context.setOffline(false);
     await old.close();
+    await untouched.close();
     await beta.close();
     await origin.close();
   }
