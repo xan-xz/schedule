@@ -115,6 +115,25 @@ test.describe("compiled inline student entry", () => {
     expect(requests.every((request) => request.action === "state")).toBe(true);
   });
 
+  test("a short Saturday keeps the synchronization footer outside the first viewport", async ({
+    page,
+  }) => {
+    // The first Lighthouse run found a shift on Saturday, not on the longer
+    // Friday fixture. Read the real public bootstrap, with no production POST.
+    await page.clock.setFixedTime(new Date("2026-11-07T04:00:00Z"));
+    await page.goto("/schedule/beta/?demo=student");
+    await expect(page.locator(".hero")).toBeVisible();
+    await expect(page.locator("#navigation button")).toHaveCount(4);
+    await expect(page.locator("#identity")).toContainText("Демо");
+    const position = await page.locator(".statusbar").boundingBox();
+    expect(position.y).toBeGreaterThanOrEqual(page.viewportSize().height);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  });
+
   test("the compiled shell and literal personal task survive a genuinely offline reload", async ({
     page,
     context,
