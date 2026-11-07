@@ -27,6 +27,15 @@ npm run perf
 
 Сервер разработки сжимает статику gzip как Pages; в боевом Supabase CORS разрешён только `https://xan-xz.github.io`, поэтому live API в localhost может быть недоступен. Для локального теста используй demo либо e2e fixtures, не расширяй боевой CORS ради разработки.
 
+Для отдельного beta-кандидата:
+
+```sh
+npm run production:base
+npm run build:beta -- --production-base .release/production-base
+```
+
+`npm run build` формирует production-кандидат в `dist` (публикации сам не выполняет). Отдавайте `dist` для проверки итоговой CSP и скорости: исходный dev entry остаётся модульным. Первоначальный JS/CSS минифицируются esbuild и встраиваются с точными CSP SHA-256-хешами; unsafe-inline не используется. Данные расписания в исполняемый скрипт не встраиваются. Административные инструменты остаются отдельной ленивой страницей.
+
 ## Устройство
 
 `beta/app.mjs` — студенческая оболочка; `beta/lib/` — DOM, i18n, время, публичный клиент, IndexedDB и ICS. `beta/manage/` — роли, редактор, черновики, импорт и журнал; грузится только по запросу. `backend/core.mjs` — единая чистая модель и серверная проверка прав, без секретов. Edge handlers и SQL не входят в Pages artifact, за исключением чистого shared core. `beta/seed.json` сохраняет исходные 524 записи и provenance; bootstrap — публичный снимок выпуска с явным возрастом, обновляемый живым сервером.
@@ -37,10 +46,10 @@ Supabase PostgreSQL/Edge Functions — существующая инфрастр
 
 CI `ci.yml`: lint → format → unit → build → gzip budgets → Playwright. Workflow `pages.yml` запускается вручную и формирует Pages artifact:
 
-- `channel=beta`: прежний корень сохранён побайтно, обновляется `/beta/`.
+- `channel=beta`: берёт точный архив последнего успешного production из immutable GitHub Release, сохраняет каждый файл корня и обновляет только `/beta/`. Без проверенной базы публикация блокируется.
 - `channel=production`, `data_sources_reviewed=true`: та же оболочка публикуется в корне и `/beta/`; build требует флаг `--data-decision-reviewed`.
 
-Владелец **6 ноября 2026 выбрал beta / исходный XLSX единым источником**. Переход означает чтение существующего `uf_platform` по основному URL; `group_schedule` не удаляется и не перезаписывается. Прежний HTML хранится в исходном root `index.html` для beta/rollback build. Это файл прежнего канала, а production entrypoint собирается из `beta/index.html`. Подробности: `docs/RELEASE.md`.
+Владелец **6 ноября 2026 выбрал beta / исходный XLSX единым источником**. Переход означает чтение существующего `uf_platform` по основному URL; `group_schedule` не удаляется и не перезаписывается. Прежний HTML хранится в исходном root `index.html` только как исторический архив; текущие сборки никогда не подставляют его автоматически. Это файл прежнего канала, а production entrypoint собирается из `beta/index.html`. Подробности: `docs/RELEASE.md`.
 
 Перед новой серверной версией применять только additive migration `backend/security-upgrade.sql`, не стартовые схемы создания таблиц. Актуальный статус применения и проверки — в SECURITY.md/RELEASE.md; наличие SQL в git само по себе не означает деплой.
 

@@ -849,7 +849,7 @@ function renderMore() {
   const groupSelect = select(
     data().groups.map((g) => [g.id, g.name]),
     S.settings.groupId,
-    (e) => changeSetting("groupId", e.target.value),
+    (e) => e.target.value && changeSetting("groupId", e.target.value),
     { id: "group-select" },
   );
   const search = el("input", {
@@ -863,11 +863,16 @@ function renderMore() {
           .includes(event.target.value.toLowerCase()),
       );
       groupSelect.replaceChildren(
+        el(
+          "option",
+          { value: "", disabled: true },
+          t(matches.length ? "chooseGroup" : "noGroups"),
+        ),
         ...matches.map((g) => el("option", { value: g.id }, g.name)),
       );
       groupSelect.value = matches.some((g) => g.id === S.settings.groupId)
         ? S.settings.groupId
-        : matches[0]?.id || "";
+        : "";
     },
   });
   const group = data().groups.find((g) => g.id === S.settings.groupId);
@@ -1058,6 +1063,16 @@ async function setupWorker() {
         el("span", {}, t("update")),
         button(t("reload"), () => {
           if (!waitingWorker) return;
+          // A neighbouring tab may have already activated this release. There
+          // will be no second controllerchange event for this client.
+          if (
+            waitingWorker.state === "activated" ||
+            waitingWorker.state === "redundant" ||
+            registration.active === waitingWorker
+          ) {
+            location.reload();
+            return;
+          }
           navigator.serviceWorker.addEventListener(
             "controllerchange",
             () => location.reload(),
@@ -1165,7 +1180,18 @@ document.addEventListener("visibilitychange", () => {
 setInterval(() => {
   if (!document.hidden && navigator.onLine && !S.demo) void refresh();
 }, 60000);
-setInterval(tick, 30000);
+// Lesson times have minute precision. Align to their boundary rather than
+// keeping a stale "current" lesson for up to 30 seconds after it ended.
+function scheduleClockTick() {
+  setTimeout(
+    () => {
+      tick();
+      scheduleClockTick();
+    },
+    60000 - (Date.now() % 60000) + 10,
+  );
+}
+scheduleClockTick();
 applyTheme();
 header();
 await loadPersonal();

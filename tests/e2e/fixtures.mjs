@@ -71,9 +71,13 @@ export const fixture = {
   history: [],
 };
 
-export async function mockState(page) {
+export async function mockState(
+  page,
+  { time = new Date("2026-11-06T04:00:00Z"), ticking = false } = {},
+) {
   const requests = [];
-  await page.clock.setFixedTime(new Date("2026-11-06T04:00:00Z"));
+  if (ticking) await page.clock.install({ time });
+  else await page.clock.setFixedTime(time);
   await page.route(
     "https://anfwdrcazwbkkayczkxg.supabase.co/**",
     async (route) => {

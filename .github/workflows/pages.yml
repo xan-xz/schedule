@@ -1,4 +1,5 @@
 name: Publish reviewed Pages candidate
+run-name: Publish ${{ inputs.channel }} UniFlow
 on:
   workflow_dispatch:
     inputs:
@@ -33,22 +34,11 @@ jobs:
       - run: npm run lint && npm run format:check && npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
-      - name: Lighthouse mobile budgets before publication
-        run: |
-          node scripts/serve.mjs --port 4173 &
-          PREVIEW_PID=$!
-          trap 'kill "$PREVIEW_PID"' EXIT
-          for attempt in $(seq 1 50); do
-            if curl -fsS -o /dev/null http://127.0.0.1:4173/schedule/beta/; then break; fi
-            sleep 0.2
-          done
-          LH_OUTPUT=/tmp/uniflow.lighthouse.json npm run perf
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: lighthouse-release-report
-          path: /tmp/uniflow.lighthouse.json
-          if-no-files-found: ignore
+      - name: Restore immutable production base for beta
+        if: inputs.channel == 'beta'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run production:base
       - name: Build selected channel
         env:
           CHANNEL: ${{ inputs.channel }}
@@ -58,15 +48,38 @@ jobs:
             test "$REVIEWED" = "true" || { echo 'Resolve the data source decision in docs/MERGE_PLAN.md first.'; exit 1; }
             node scripts/build.mjs --channel production --data-decision-reviewed
           else
-            npm run build
+            npm run build:beta -- --production-base .release/production-base
           fi
       - run: npm run budget
-      - name: Verify production artifact routes and offline shell
-        if: inputs.channel == 'production'
+      - name: Lighthouse mobile budgets before publication
+        run: |
+          node scripts/serve.mjs --root dist --port 4174 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID"' EXIT
+          for attempt in $(seq 1 50); do
+            if curl -fsS -o /dev/null http://127.0.0.1:4174/schedule/beta/; then break; fi
+            sleep 0.2
+          done
+          LH_OUTPUT=/tmp/uniflow.lighthouse.json npm run perf -- "http://127.0.0.1:4174/schedule/beta/?demo=student"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-release-report
+          path: /tmp/uniflow.lighthouse.json
+          if-no-files-found: ignore
+      - name: Verify compiled candidate routes and offline shell
         env:
-          RELEASE_CHANNEL: production
+          RELEASE_CHANNEL: ${{ inputs.channel }}
           PW_SERVER_ROOT: dist
-        run: npx playwright test tests/e2e/release.spec.mjs
+        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs
+      - name: Archive verified production artifact
+        if: inputs.channel == 'production'
+        run: node scripts/archive-production.mjs
+      - uses: actions/upload-artifact@v4
+        if: inputs.channel == 'production'
+        with:
+          name: immutable-production-archive
+          path: .release/upload/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -81,3 +94,29 @@ jobs:
       - name: Publish
         id: deployment
         uses: actions/deploy-pages@v4
+
+  record-production:
+    if: inputs.channel == 'production'
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: immutable-production-archive
+          path: release-upload
+      - name: Record immutable successful production for future beta builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="uniflow-production-${GITHUB_RUN_ID}"
+          EXISTING=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .target_commitish 2>/dev/null || true)
+          if [ -n "$EXISTING" ]; then
+            test "$EXISTING" = "$GITHUB_SHA" || { echo 'Immutable production tag points to another source.'; exit 1; }
+            ASSET_COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '[.assets[].name | select(. == "production-site.tar" or . == "production.json")] | unique | length')
+            test "$ASSET_COUNT" = "2" || { echo 'Existing immutable release is incomplete; restore its missing assets before recording success.'; exit 1; }
+            echo 'This successful production run was already recorded.'
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Verified UniFlow production ${GITHUB_RUN_ID}" --notes "Verified production Pages artifact. Future beta builds preserve this production snapshot byte for byte." release-upload/production-site.tar release-upload/production.json
+          fi

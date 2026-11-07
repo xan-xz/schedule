@@ -1,8 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
-
-const entry = "beta/index.html";
-const seen = new Set();
+const entry = process.argv[2] || "dist/beta/index.html",
+  seen = new Set();
 let js = 0,
   css = 0;
 async function walk(path) {
@@ -15,15 +14,26 @@ async function walk(path) {
     ...code.matchAll(
       /(?:import\s+(?:[^'";]+?\s+from\s+)?|export\s+[^'";]+?\s+from\s+)["'](\.[^"']+)["']/g,
     ),
-  ].map((match) => match[1]);
-  if (path.endsWith(".html"))
+  ].map((m) => m[1]);
+  if (path.endsWith(".html")) {
+    for (const match of code.matchAll(
+      /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
+    ))
+      if (
+        !/\bsrc\s*=/.test(match[1]) &&
+        /\btype\s*=\s*["']module["']/.test(match[1])
+      )
+        js += gzipSync(match[2]).length;
+    for (const match of code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi))
+      css += gzipSync(match[1]).length;
     specifiers.push(
       ...[
         ...code.matchAll(/(?:src|href)=["'](\.\/[^"']+\.(?:m?js|css))["']/g),
-      ].map((match) => match[1]),
+      ].map((m) => m[1]),
     );
-  for (const specifier of specifiers) {
-    const url = new URL(specifier, `file:///${path}`);
+  }
+  for (const ref of specifiers) {
+    const url = new URL(ref, `file:///${path}`);
     await walk(url.pathname.slice(1));
   }
 }
@@ -31,6 +41,7 @@ await walk(entry);
 console.log(
   JSON.stringify(
     {
+      entry,
       initialJavaScriptGzip: js,
       cssGzip: css,
       budgets: { initialJavaScriptGzip: 60 * 1024, cssGzip: 15 * 1024 },
@@ -41,10 +52,5 @@ console.log(
   ),
 );
 if (js > 60 * 1024 || css > 15 * 1024) process.exitCode = 1;
-// Verify no runtime package directory was accidentally copied to Pages.
-try {
-  if ((await readdir("dist")).includes("node_modules"))
-    throw new Error("node_modules in public artifact");
-} catch (error) {
-  if (error.code !== "ENOENT") throw error;
-}
+if ((await readdir("dist")).includes("node_modules"))
+  throw Error("node_modules in public artifact");
