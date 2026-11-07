@@ -474,6 +474,16 @@ test.describe("personal data migration and concurrent actions", () => {
     const second = await context.newPage();
     await mockState(page);
     await mockState(second);
+    // This test explicitly schedules the two native migration calls below.
+    // A late automatic startup fetch must not consume their prepared source
+    // before the controlled first call reaches its checkpoint. Automatic
+    // startup/online migration remains covered by the other scenarios.
+    await context.route("**/compatibility.json", (route) =>
+      route.fulfill({
+        status: 503,
+        body: "Automatic startup is held by this fixture",
+      }),
+    );
     await page.goto(studentPath);
     await second.goto(studentPath);
     await page.evaluate(async (config) => {
