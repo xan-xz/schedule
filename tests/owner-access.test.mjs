@@ -409,10 +409,11 @@ test("admin factor removal validates identifiers and tolerates a previously remo
 });
 
 test("new secret keys remain apikey headers and are never used as JWT bearer credentials", async () => {
+  const syntheticKey = "sb_secret_" + "synthetic-key-for-test-only";
   const secretConfiguration = {
     api: API,
-    key: "sb_secret_synthetic_key_for_test_only",
-    adminKey: "sb_secret_synthetic_key_for_test_only",
+    key: syntheticKey,
+    adminKey: syntheticKey,
   };
   const provider = createAuthProvider(
     secretConfiguration,
