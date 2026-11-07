@@ -1,6 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
-const entry = process.argv[2] || "dist/beta/index.html",
+const entry = process.argv[2] || "dist/index.html",
   seen = new Set();
 let js = 0,
   css = 0;

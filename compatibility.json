@@ -1,0 +1,97 @@
+{
+  "format": "uniflow-compatibility-v1",
+  "canonical": {
+    "source": "app/",
+    "publicRoot": "/schedule/",
+    "admin": "/schedule/admin/"
+  },
+  "legacyRoutes": [
+    {
+      "path": "beta/",
+      "target": "./",
+      "worker": true
+    },
+    {
+      "path": "beta/manage/",
+      "target": "./admin/"
+    },
+    {
+      "path": "beta/admin/",
+      "target": "./admin/"
+    }
+  ],
+  "retiredQueryParams": ["demo"],
+  "cacheScopes": ["beta/"],
+  "storage": {
+    "localPrefixes": ["uf.demo.", "uf.schedule.templates.v1.demo"],
+    "publicPrefixes": [],
+    "localExact": [],
+    "personalMigrations": [
+      {
+        "personalFrom": "personal:demo:",
+        "statusesFrom": "statuses:demo:"
+      }
+    ],
+    "legacyCompletionPrefixes": ["uf.tasks.demo."]
+  },
+  "retirementGuard": {
+    "exceptions": [
+      {
+        "path": "scripts/check-retirement.mjs",
+        "literals": ["export const FORBIDDEN = /beta|demo|бета|демо/giu;"],
+        "reason": "The literal detection expression must name every forbidden form explicitly."
+      },
+      {
+        "path": "tests/retirement-guard.test.mjs",
+        "literals": [
+          "const terms = [\"beta\", \"BETA\", \"Demo\", \"dEmO\", \"Бета\", \"ДЕМО\"];",
+          "const line = 'location.replace(\"/schedule/\"); // /beta/ retired';",
+          "const line = 'const route = \"/beta/\";';",
+          "{ \"compat/retired.js\": line + ' const mode = \"demo\";' },",
+          "const context = await fixture(t, { \"app/demo.mjs\": \"export {};\" });",
+          "const file = \"dist/beta/index.html\";",
+          "await fs.writeFile(path.join(context.root, file), \"<p>demo</p>\");",
+          "\"docs/REMOVAL_INVENTORY.md\": \"beta demo Бета Демо\",",
+          "\"CHANGELOG.md\": \"beta retired\",",
+          "\"docs/README.md\": \"beta\",",
+          "allow(\"app/*\", \"beta\"),",
+          "allow(\"../outside\", \"beta\"),",
+          "allow(\"compat/retired.js\", \" beta \"),",
+          "allow(\"compat/retired.js\", \"beta\"),",
+          "\"dist/index.html\": \"<p>DEMO</p>\",",
+          "\"node_modules/fixture/index.js\": \"beta\",",
+          "const line = 'const retired = \"/beta/\";';",
+          "await fs.writeFile(path.join(context.root, \"untracked.txt\"), \"demo\");"
+        ],
+        "reason": "Negative fixtures prove forbidden forms, paths and new words are rejected; never runtime product data."
+      },
+      {
+        "path": "dist/beta/index.html",
+        "literals": [],
+        "reason": "Exact retired address contains only generic redirect or retirement-worker loading; no second product."
+      },
+      {
+        "path": "dist/beta/admin/index.html",
+        "literals": [],
+        "reason": "Exact retired address contains only generic redirect or retirement-worker loading; no second product."
+      },
+      {
+        "path": "dist/beta/manage/index.html",
+        "literals": [],
+        "reason": "Exact retired address contains only generic redirect or retirement-worker loading; no second product."
+      },
+      {
+        "path": "dist/beta/sw.js",
+        "literals": [],
+        "reason": "Exact retired address contains only generic redirect or retirement-worker loading; no second product."
+      },
+      {
+        "path": "tests/e2e/fixtures/legacy-worker.js",
+        "literals": [
+          "// /beta/ alias or staff workspace. Those documents and assets use the network"
+        ],
+        "reason": "Historical worker fixture needed to prove migration from an existing installation; never public runtime."
+      }
+    ]
+  }
+}

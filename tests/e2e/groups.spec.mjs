@@ -8,7 +8,7 @@ const initialGroups = [
   { id: "g-main", code: "MAIN", name: "06-057-25-11", subgroups: ["А", "Б"] },
   { id: "g-other", code: "OTHER", name: "06-057-25-18", subgroups: ["А", "Б"] },
 ];
-const studentPath = "/schedule/beta/";
+const studentPath = "/schedule/";
 const groupSelect = (page) =>
   page.getByRole("combobox", { name: "Группа", exact: true });
 const subgroupSelect = (page) =>
@@ -312,7 +312,7 @@ test("code and legacy group invitation links require confirmation before replaci
   ).toBeVisible();
   await saveChoice(page).click();
   await expect(page.locator("#identity")).toContainText("06-057-25-18 · Б");
-  await expect(page).toHaveURL(/\/beta\/$/);
+  await expect(page).toHaveURL(/\/schedule\/$/);
   await page.goto(studentPath + "?g=unknown-group");
   await expect(
     page.getByText("Группа по ссылке не найдена. Выбери группу из списка.", {
@@ -432,11 +432,11 @@ test("a removed subgroup needs confirmation without silently changing the saved 
 test("searching for a single group never changes the selection until it is explicitly chosen", async ({
   page,
 }) => {
-  const requests = [];
-  page.on("request", (request) => {
-    if (request.url().includes("supabase.co")) requests.push(request.method());
-  });
-  await page.goto("/schedule/beta/?demo=student");
+  const { calls } = await liveGroups(page);
+  await page.addInitScript(() =>
+    localStorage.setItem("uf.group", JSON.stringify("g-main")),
+  );
+  await page.goto(studentPath);
   await page.getByRole("button", { name: "Ещё", exact: true }).click();
   const identity = page.locator("#identity"),
     group = page.getByRole("combobox", { name: "Группа", exact: true });
@@ -445,7 +445,7 @@ test("searching for a single group never changes the selection until it is expli
     .fill("06-057-25-18");
   await expect(group).toHaveValue("");
   await expect(identity).toContainText("06-057-25-11");
-  await group.selectOption("g-25-18");
+  await group.selectOption("g-other");
   await expect(identity).toContainText("06-057-25-18");
   await page.reload();
   await expect(identity).toContainText("06-057-25-18");
@@ -455,5 +455,5 @@ test("searching for a single group never changes the selection until it is expli
     .fill("несуществующая группа");
   await expect(group).toHaveValue("");
   await expect(identity).toContainText("06-057-25-18");
-  expect(requests).toEqual([]);
+  expect(calls.every((call) => call.action === "state")).toBe(true);
 });

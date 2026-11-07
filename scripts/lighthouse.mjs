@@ -5,8 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-const url =
-  process.argv[2] || "http://127.0.0.1:4173/schedule/beta/?demo=student";
+const url = process.argv[2] || "http://127.0.0.1:4173/schedule/";
 const output =
   process.env.LH_OUTPUT || resolve(tmpdir(), "uniflow.lighthouse.json");
 const profile = await mkdtemp(resolve(tmpdir(), "uniflow-lighthouse-"));

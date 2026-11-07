@@ -32,6 +32,27 @@ async function requestCache(event) {
   const metadata = await caches.open(META);
   return (await cachedName(metadata, clientKey(event.clientId))) || STATIC;
 }
+async function pruneInactive() {
+  const metadata = await caches.open(META);
+  const clients = (
+    await self.clients.matchAll({ type: "window", includeUncontrolled: true })
+  ).filter(belongsToShell);
+  const keep = new Set([STATIC]);
+  for (const client of clients) {
+    const pin = await cachedName(metadata, clientKey(client.id));
+    if (pin?.startsWith(PREFIX) && pin.endsWith("-static")) keep.add(pin);
+  }
+  await Promise.all(
+    (await caches.keys())
+      .filter(
+        (name) =>
+          name.startsWith(PREFIX) &&
+          name.endsWith("-static") &&
+          !keep.has(name),
+      )
+      .map((name) => caches.delete(name)),
+  );
+}
 const FILES = [
   "./",
   "./index.html",
@@ -43,12 +64,25 @@ const FILES = [
   "./lib/time.mjs",
   "./lib/storage.mjs",
   "./lib/calendar.mjs",
+  "./lib/compatibility.mjs",
+  "./lib/compatibility-policy.mjs",
+  "./lib/personal-migration.mjs",
+  "./compatibility.json",
   "./bootstrap.json",
   "./seed.json",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
 ];
+const PREVIOUS_FILES = FILES.filter(
+  (path) =>
+    ![
+      "./lib/compatibility.mjs",
+      "./lib/compatibility-policy.mjs",
+      "./lib/personal-migration.mjs",
+      "./compatibility.json",
+    ].includes(path),
+);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -98,7 +132,9 @@ self.addEventListener("activate", (event) => {
             if (
               (
                 await Promise.all(
-                  FILES.map((path) => candidate.match(new URL(path, SCOPE))),
+                  PREVIOUS_FILES.map((path) =>
+                    candidate.match(new URL(path, SCOPE)),
+                  ),
                 )
               ).every(Boolean)
             ) {
@@ -139,12 +175,59 @@ self.addEventListener("activate", (event) => {
           .filter((key) => !keep.has(key))
           .map((key) => caches.delete(key)),
       );
+      // Do not disturb another registration or an old open document. Its last
+      // cached bytes remain available until that document deliberately reloads.
+      try {
+        const config = await (
+          await caches.open(STATIC)
+        )
+          .match(new URL("compatibility.json", SCOPE))
+          .then((response) => response?.json());
+        const allClients = await self.clients.matchAll({
+          type: "window",
+          includeUncontrolled: true,
+        });
+        for (const path of config?.cacheScopes || []) {
+          if (
+            config?.format !== "uniflow-compatibility-v1" ||
+            !/^[A-Za-z0-9_-]+\/$/.test(path) ||
+            !config.legacyRoutes?.some(
+              (route) =>
+                route.path === path &&
+                route.worker === true &&
+                route.target === "./",
+            )
+          )
+            continue;
+          const oldScope = new URL(path, SCOPE);
+          if (
+            oldScope.origin !== SCOPE.origin ||
+            !oldScope.href.startsWith(SCOPE.href) ||
+            oldScope.href === SCOPE.href
+          )
+            continue;
+          if (allClients.some((client) => client.url.startsWith(oldScope.href)))
+            continue;
+          const oldPrefix = `uniflow:${encodeURIComponent(oldScope.pathname)}:`;
+          await Promise.all(
+            keys
+              .filter((key) => key.startsWith(oldPrefix))
+              .map((key) => caches.delete(key)),
+          );
+        }
+      } catch {
+        /* Retirement retries after a later complete install. */
+      }
       await self.clients.claim();
     })(),
   );
 });
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "CLEAN_INACTIVE") {
+    event.waitUntil(pruneInactive());
+    return;
+  }
   if (event.data?.type !== "SKIP_WAITING") return;
   event.waitUntil(
     (async () => {
@@ -169,7 +252,7 @@ self.addEventListener("message", (event) => {
 self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
-  const sharedModel = new URL("../backend/core.mjs", self.registration.scope)
+  const sharedModel = new URL("./backend/core.mjs", self.registration.scope)
     .href;
   if (
     request.method !== "GET" ||
@@ -179,7 +262,7 @@ self.addEventListener("fetch", (event) => {
     return;
   const relative = url.pathname.slice(SCOPE.pathname.length);
   // A root-scope installation must not take over the independently deployed
-  // /beta/ alias or staff workspace. Those documents and assets use the network
+  // Retired aliases and the private workspace use the network
   // or their own more specific worker.
   if (
     url.href !== sharedModel &&
@@ -215,7 +298,8 @@ self.addEventListener("fetch", (event) => {
   }
   if (
     url.pathname.endsWith("/seed.json") ||
-    url.pathname.endsWith("/bootstrap.json")
+    url.pathname.endsWith("/bootstrap.json") ||
+    url.pathname.endsWith("/compatibility.json")
   ) {
     event.respondWith(
       (async () => {

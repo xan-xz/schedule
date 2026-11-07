@@ -11,7 +11,7 @@ import {
   timeline,
   validDate,
   changesForDate,
-} from "../beta/lib/time.mjs";
+} from "../app/lib/time.mjs";
 
 function fixture(extra = {}) {
   return {

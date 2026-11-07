@@ -5,6 +5,10 @@ import { resolve, extname, sep } from "node:path";
 import { fixture } from "./fixtures.mjs";
 
 const repository = resolve(import.meta.dirname, "../..");
+const compatibility = JSON.parse(
+  await readFile(new URL("../../compatibility.json", import.meta.url), "utf8"),
+);
+const retiredPath = "/schedule/" + compatibility.cacheScopes[0];
 const mime = {
   ".html": "text/html; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
@@ -20,13 +24,18 @@ const mime = {
  * contacted, and no active repository files are modified between releases.
  */
 async function releaseOrigin() {
-  const versions = { root: "root-v1", beta: "beta-v1" };
-  const legacy = { root: false, beta: false };
+  const versions = {
+    root: "root-v1",
+    foreign: "foreign-v1",
+    retired: "retired-v1",
+  };
+  const legacy = { root: false, foreign: false, retired: true };
   const legacySource = await readFile(
     new URL("./fixtures/legacy-worker.js", import.meta.url),
     "utf8",
   );
   const actions = [];
+  let retiring = false;
   const server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url, "http://localhost").pathname;
@@ -56,18 +65,40 @@ async function releaseOrigin() {
         );
         return;
       }
-      const scope = pathname.startsWith("/schedule/beta/") ? "beta" : "root";
-      const prefix = scope === "beta" ? "/schedule/beta/" : "/schedule/";
+      const scope = pathname.startsWith(retiredPath)
+        ? "retired"
+        : pathname.startsWith("/other/")
+          ? "foreign"
+          : "root";
+      const prefix =
+        scope === "retired"
+          ? retiredPath
+          : scope === "foreign"
+            ? "/other/"
+            : "/schedule/";
       if (!pathname.startsWith(prefix)) {
         response.writeHead(404).end();
         return;
       }
       const relative =
         decodeURIComponent(pathname.slice(prefix.length)) || "index.html";
-      const root =
-        relative === "backend/core.mjs"
-          ? repository
-          : resolve(repository, "beta");
+      if (scope === "retired" && retiring) {
+        if (relative === "sw.js") {
+          response.writeHead(200, { "Content-Type": "text/javascript" });
+          response.end('importScripts("../retirement-worker.js");');
+          return;
+        }
+        if (relative === "index.html") {
+          response.writeHead(302, { Location: "/schedule/" });
+          response.end();
+          return;
+        }
+        response.writeHead(404).end();
+        return;
+      }
+      const root = ["backend/core.mjs", "compatibility.json"].includes(relative)
+        ? repository
+        : resolve(repository, "app");
       const file = resolve(root, relative);
       if (!file.startsWith(root + sep)) {
         response.writeHead(403).end();
@@ -128,6 +159,9 @@ async function releaseOrigin() {
     versions,
     legacy,
     actions,
+    retire: () => {
+      retiring = true;
+    },
     close: () =>
       new Promise((resolve) => {
         server.close(resolve);
@@ -146,12 +180,30 @@ async function ready(page, version) {
   await expect
     .poll(() => page.evaluate(() => !!navigator.serviceWorker.controller))
     .toBe(true);
+  // The worker fixture is historically exact; its current test UI imports
+  // additional modules. Warm those through the real worker before offline QA.
+  await page.evaluate(async () => {
+    if (navigator.onLine)
+      await Promise.all(
+        [
+          "./lib/compatibility.mjs",
+          "./lib/compatibility-policy.mjs",
+          "./lib/personal-migration.mjs",
+        ].map(async (path) => {
+          const response = await fetch(path);
+          if (!response.ok) throw Error("Cannot warm offline module: " + path);
+          await response.arrayBuffer();
+        }),
+      );
+  });
 }
 
 async function update(page, version) {
-  await page.evaluate(async () =>
-    (await navigator.serviceWorker.getRegistration()).update(),
-  );
+  await page.bringToFront();
+  await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    await registration.update();
+  });
   await expect(
     page.getByRole("button", { name: "Обновить приложение", exact: true }),
   ).toBeVisible();
@@ -161,7 +213,7 @@ async function update(page, version) {
   await ready(page, version);
 }
 
-test("installed PWA updates atomically across tabs while root and beta caches stay independent", async ({
+test("installed PWA updates atomically across tabs while unrelated caches stay independent", async ({
   page,
   context,
 }) => {
@@ -169,7 +221,7 @@ test("installed PWA updates atomically across tabs while root and beta caches st
   const origin = await releaseOrigin();
   const second = await context.newPage();
   const retained = await context.newPage();
-  const beta = await context.newPage();
+  const foreign = await context.newPage();
   try {
     await page.goto(origin.url + "/schedule/");
     await ready(page, "root-v1");
@@ -177,8 +229,8 @@ test("installed PWA updates atomically across tabs while root and beta caches st
     await ready(second, "root-v1");
     await retained.goto(origin.url + "/schedule/");
     await ready(retained, "root-v1");
-    await beta.goto(origin.url + "/schedule/beta/?demo=student");
-    await ready(beta, "beta-v1");
+    await foreign.goto(origin.url + "/other/");
+    await ready(foreign, "foreign-v1");
     origin.versions.root = "root-v2";
     await update(page, "root-v2");
     expect(await second.evaluate(() => globalThis.__updateFixtureVersion)).toBe(
@@ -196,9 +248,9 @@ test("installed PWA updates atomically across tabs while root and beta caches st
         async () => (await import("./lib/calendar.mjs")).updateFixtureVersion,
       ),
     ).toBe("root-v2");
-    expect(await beta.evaluate(() => globalThis.__updateFixtureVersion)).toBe(
-      "beta-v1",
-    );
+    expect(
+      await foreign.evaluate(() => globalThis.__updateFixtureVersion),
+    ).toBe("foreign-v1");
     // The waiting worker may already be active because the first tab accepted.
     // Accepting from the second tab must still reload it, without waiting for a
     // controllerchange event which has already occurred.
@@ -227,18 +279,18 @@ test("installed PWA updates atomically across tabs while root and beta caches st
     await update(page, "root-v4");
     const names = await page.evaluate(() => caches.keys());
     expect(names).not.toContain("uniflow:%2Fschedule%2F:root-v1-static");
-    expect(names).toContain("uniflow:%2Fschedule%2Fbeta%2F:beta-v1-static");
+    expect(names).toContain("uniflow:%2Fother%2F:foreign-v1-static");
     await context.setOffline(true);
     await page.reload();
     await ready(page, "root-v4");
-    await beta.reload();
-    await ready(beta, "beta-v1");
+    await foreign.reload();
+    await ready(foreign, "foreign-v1");
     expect(origin.actions.every((action) => action === "state")).toBe(true);
   } finally {
     await context.setOffline(false);
     await second.close().catch(() => {});
     await retained.close().catch(() => {});
-    await beta.close();
+    await foreign.close();
     await origin.close();
   }
 });
@@ -250,10 +302,10 @@ test("the currently published legacy worker upgrades without losing its old-tab 
   test.setTimeout(45000);
   const origin = await releaseOrigin();
   origin.legacy.root = true;
-  origin.legacy.beta = true;
+  origin.legacy.foreign = true;
   const old = await context.newPage();
   const untouched = await context.newPage();
-  const beta = await context.newPage();
+  const foreign = await context.newPage();
   try {
     await page.goto(origin.url + "/schedule/");
     await ready(page, "root-v1");
@@ -261,8 +313,8 @@ test("the currently published legacy worker upgrades without losing its old-tab 
     await ready(old, "root-v1");
     await untouched.goto(origin.url + "/schedule/");
     await ready(untouched, "root-v1");
-    await beta.goto(origin.url + "/schedule/beta/?demo=student");
-    await ready(beta, "beta-v1");
+    await foreign.goto(origin.url + "/other/");
+    await ready(foreign, "foreign-v1");
     expect(
       (await page.evaluate(() => caches.keys())).filter((name) =>
         name.endsWith(":clients"),
@@ -286,7 +338,7 @@ test("the currently published legacy worker upgrades without losing its old-tab 
     ).toBe("root-v2");
     const names = await page.evaluate(() => caches.keys());
     expect(names).toContain("uniflow:%2Fschedule%2F:root-v1-static");
-    expect(names).toContain("uniflow:%2Fschedule%2Fbeta%2F:beta-v1-static");
+    expect(names).toContain("uniflow:%2Fother%2F:foreign-v1-static");
     expect(names).toContain("uniflow:%2Fschedule%2F:clients");
     // Exact legacy-button behaviour: it blindly posts to the worker reference
     // and waits for controllerchange, which already fired in this old tab.
@@ -304,18 +356,132 @@ test("the currently published legacy worker upgrades without losing its old-tab 
     expect(
       await untouched.evaluate(() => globalThis.__updateFixtureVersion),
     ).toBe("root-v1");
-    expect(await beta.evaluate(() => globalThis.__updateFixtureVersion)).toBe(
-      "beta-v1",
-    );
+    expect(
+      await foreign.evaluate(() => globalThis.__updateFixtureVersion),
+    ).toBe("foreign-v1");
     await context.setOffline(true);
-    await beta.reload();
-    await ready(beta, "beta-v1");
+    await foreign.reload();
+    await ready(foreign, "foreign-v1");
     expect(origin.actions.every((action) => action === "state")).toBe(true);
   } finally {
     await context.setOffline(false);
     await old.close();
     await untouched.close();
-    await beta.close();
+    await foreign.close();
+    await origin.close();
+  }
+});
+
+test("retiring an installed address waits for explicit updates, preserves live tasks and clears only its own caches", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(60000);
+  const origin = await releaseOrigin();
+  const retained = await context.newPage(),
+    canonical = await context.newPage();
+  const oldCache = `uniflow:${encodeURIComponent(retiredPath)}:retired-v1-static`;
+  const oldPrefix = `uniflow:${encodeURIComponent(retiredPath)}:`;
+  await context.addInitScript(() => {
+    localStorage.setItem("uf.group", JSON.stringify("g-main"));
+    localStorage.setItem("uf.subgroup", JSON.stringify("А"));
+  });
+  try {
+    await page.goto(origin.url + retiredPath);
+    await ready(page, "retired-v1");
+    await retained.goto(origin.url + retiredPath);
+    await ready(retained, "retired-v1");
+    await retained.evaluate(() => {
+      window.unpublishedDraft = "keep until my explicit update";
+    });
+    await page.evaluate(async () => {
+      const storage = await import("./lib/storage.mjs");
+      await storage.set("personal:live:g-main:А", [
+        {
+          id: "retained-personal",
+          title: "Личное задание после перехода",
+          due: "2026-11-08",
+          groupId: "g-main",
+        },
+      ]);
+      await (
+        await caches.open("unrelated-owner-cache")
+      ).put(new URL("/unrelated-proof", location.origin), new Response("keep"));
+    });
+    origin.retire();
+    await canonical.goto(origin.url + "/schedule/");
+    await ready(canonical, "root-v1");
+    await page.evaluate(async () => {
+      await (await navigator.serviceWorker.getRegistration()).update();
+    });
+    await expect(
+      page.getByRole("button", { name: "Обновить приложение", exact: true }),
+    ).toBeVisible();
+    expect(await retained.evaluate(() => window.unpublishedDraft)).toBe(
+      "keep until my explicit update",
+    );
+    expect(await page.evaluate(() => caches.keys())).toContain(oldCache);
+    await page
+      .getByRole("button", { name: "Обновить приложение", exact: true })
+      .click();
+    await ready(page, "root-v1");
+    await expect(page).toHaveURL(origin.url + "/schedule/");
+    expect(await retained.evaluate(() => window.unpublishedDraft)).toBe(
+      "keep until my explicit update",
+    );
+    expect(
+      await retained.evaluate(
+        async () => (await import("./lib/calendar.mjs")).updateFixtureVersion,
+      ),
+    ).toBe("retired-v1");
+    // The genuine old update-button protocol waits only for controllerchange.
+    // The already-active retirement worker must navigate this caller itself.
+    await retained.evaluate(async () => {
+      const registration = await navigator.serviceWorker.getRegistration();
+      navigator.serviceWorker.addEventListener(
+        "controllerchange",
+        () => location.reload(),
+        { once: true },
+      );
+      registration.active.postMessage({ type: "SKIP_WAITING" });
+    });
+    await ready(retained, "root-v1");
+    await expect
+      .poll(async () =>
+        (await page.evaluate(() => caches.keys())).some((name) =>
+          name.startsWith(oldPrefix),
+        ),
+      )
+      .toBe(false);
+    expect(await page.evaluate(() => caches.keys())).toContain(
+      "unrelated-owner-cache",
+    );
+    await expect
+      .poll(async () =>
+        page.evaluate(
+          async (scope) =>
+            (await navigator.serviceWorker.getRegistrations()).some(
+              (registration) => registration.scope === scope,
+            ),
+          origin.url + retiredPath,
+        ),
+      )
+      .toBe(false);
+    await context.setOffline(true);
+    await page.reload();
+    await ready(page, "root-v1");
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Личное задание после перехода",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(origin.actions.every((action) => action === "state")).toBe(true);
+  } finally {
+    await context.setOffline(false);
+    await retained.close();
+    await canonical.close();
     await origin.close();
   }
 });

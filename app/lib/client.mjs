@@ -17,33 +17,14 @@ export function writePreference(key, value) {
     return false;
   }
 }
-/** Read the former beta's completion lists once; never rewrite the legacy keys. */
-export function legacyTaskStatuses(settings, mode = "live") {
-  let keys;
-  if (mode === "live") keys = ["uf.tasks.live.guest"];
-  else if (mode === "demo") {
-    const indices =
-      settings.subgroup === "all"
-        ? [0, 1]
-        : settings.subgroup === "Б"
-          ? [1]
-          : [0];
-    keys = indices.map((index) => {
-      const id =
-        settings.groupId === "g-main"
-          ? `demo-student-${index === 0 ? "a" : "b"}`
-          : `demo-student-${settings.groupId}-${index}`;
-      return `uf.tasks.demo.${id}`;
-    });
-  } else return {};
-  const ids = new Set();
-  for (const key of keys) {
-    const value = readPreference(key, []);
-    if (!Array.isArray(value)) continue;
-    for (const id of value)
-      if (typeof id === "string" && id.length > 0) ids.add(id);
-  }
-  return Object.fromEntries([...ids].map((id) => [id, "done"]));
+/** Read the former public completion list once without changing its stored value. */
+export function legacyTaskStatuses() {
+  const value = readPreference("uf.tasks.live.guest", []);
+  return Object.fromEntries(
+    (Array.isArray(value) ? value : [])
+      .filter((id) => typeof id === "string" && id.length > 0)
+      .map((id) => [id, "done"]),
+  );
 }
 export function initialSettings() {
   let legacy = "А";
@@ -155,25 +136,4 @@ export async function releaseSnapshot(settings) {
   );
   if (!r.ok) throw Error("snapshot");
   return publicSnapshot(await r.json(), settings || initialSettings());
-}
-export async function demoSnapshot(role, settings) {
-  // The read-only student surface does not need the mutation engine, account
-  // catalogue or source provenance. Staff opens those modules only in /manage/.
-  const saved = readPreference("uf.demo.source.v4", null);
-  const valid = saved?.data?.schemaVersion === 4;
-  const snapshot = valid
-    ? {
-        data: saved.data,
-        revision: saved.revision || 1,
-        updatedAt: new Date().toISOString(),
-        source: "demo",
-      }
-    : await releaseSnapshot(settings);
-  const result = publicSnapshot({ ...snapshot, source: "demo" }, settings);
-  if (!valid) {
-    result.data.tasks = [];
-    result.data.announcements = [];
-  }
-  result.actor = { role };
-  return result;
 }

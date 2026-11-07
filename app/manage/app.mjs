@@ -28,10 +28,7 @@ import {
   occurrences,
   mutate,
   visible,
-  validate,
-  canTeach,
 } from "../core.mjs";
-import { makeDemo, DEMO_USERS, DEMO_VERSION } from "../demo.mjs";
 import {
   findConflicts,
   conflictMessage,
@@ -103,17 +100,16 @@ const storage = {
   set(k, v) {
     try {
       localStorage.setItem(k, JSON.stringify(v));
-    } catch {}
+    } catch {
+      /* Browser storage or malformed optional UI arguments. */
+    }
   },
 };
 const S = {
-  mode: "live",
   page: "overview",
   date: localDate(),
   data: null,
-  base: null,
   user: { id: "guest", role: "guest", name: "Посетитель" },
-  users: [],
   versions: [],
   revision: 0,
   token: "",
@@ -127,10 +123,7 @@ const S = {
   catalog: "groups",
   online: false,
   busy: false,
-  demoFull: null,
-  demoUsers: clone(DEMO_USERS),
   epoch: 0,
-  demoTeacherId: "t-csharp-a",
   draftConflicts: [],
 };
 const nav = [
@@ -138,16 +131,13 @@ const nav = [
   ["schedule", "Расписание", "calendar"],
   ["tasks", "Задания", "task"],
   ["notifications", "Уведомления", "bell"],
-  ["requests", "Запросы", "request"],
   ["catalogs", "Справочники", "layers"],
   ["conflicts", "Конфликты", "layers"],
   ["history", "История", "history"],
-  ["accounts", "Аккаунты", "users"],
   ["guide", "Инструкция", "help"],
 ];
 const isAdmin = () => S.user.role === "admin",
-  isTeacher = () => S.user.role === "teacher",
-  canWrite = () => isAdmin() || isTeacher();
+  isTeacher = () => S.user.role === "teacher";
 const name = (kind, id, unknown = "Не назначено") =>
   S.data?.[kind]?.find((x) => x.id === id)?.name || unknown;
 const niceDate = (date, long = false) =>
@@ -156,31 +146,9 @@ const niceDate = (date, long = false) =>
     month: long ? "long" : "short",
     ...(long ? { weekday: "long" } : {}),
   }).format(new Date(date + "T12:00:00Z"));
-const myKey = (key) => "uf." + key + "." + S.mode + "." + S.user.id;
+const myKey = (key) => "uf." + key + ".live." + S.user.id;
 function viewedGroup() {
   return S.data?.groups.find((g) => g.id === S.groupId) || S.data?.groups[0];
-}
-function demoRoleUser(role) {
-  if (role === "admin")
-    return clone(S.demoUsers.find((u) => u.role === "admin"));
-  if (role === "teacher")
-    return clone(
-      S.demoUsers.find(
-        (u) => u.role === "teacher" && u.teacherId === S.demoTeacherId,
-      ) || S.demoUsers.find((u) => u.role === "teacher"),
-    );
-  return clone(
-    S.demoUsers.find(
-      (u) =>
-        u.role === "student" &&
-        u.groupId === S.groupId &&
-        u.subgroup === S.subgroup,
-    ) ||
-      S.demoUsers.find(
-        (u) => u.role === "student" && u.groupId === S.groupId,
-      ) ||
-      S.demoUsers.find((u) => u.role === "student"),
-  );
 }
 function teacherSubject() {
   return (
@@ -189,50 +157,6 @@ function teacherSubject() {
       ?.subjects.map((id) => name("subjects", id))
       .join(", ") || "Предмет не назначен"
   );
-}
-function demoSelectors() {
-  if (S.mode !== "demo") return "";
-  if (S.user.role === "student")
-    return (
-      '<div class="demo-selectors"><label>Моя группа<select data-demo-group>' +
-      optionList(S.data.groups, S.groupId, "name", false) +
-      "</select></label><label>Подгруппа<select data-demo-subgroup>" +
-      viewedGroup()
-        .subgroups.map(
-          (g) =>
-            '<option value="' +
-            h(g) +
-            '" ' +
-            (g === S.subgroup ? "selected" : "") +
-            ">" +
-            h(g) +
-            "</option>",
-        )
-        .join("") +
-      "</select></label><p>Выбери группу — ниже только её расписание и задания.</p></div>"
-    );
-  if (isTeacher()) {
-    const subject =
-      S.data.teachers.find((t) => t.id === S.user.teacherId)?.subjects[0] || "";
-    const teachers = S.data.teachers.filter((t) =>
-      t.subjects.includes(subject),
-    );
-    return (
-      '<div class="demo-selectors"><label>Мой предмет<select data-demo-subject>' +
-      optionList(
-        S.data.subjects.filter((s) =>
-          S.data.teachers.some((t) => t.subjects.includes(s.id)),
-        ),
-        subject,
-        "name",
-        false,
-      ) +
-      "</select></label><label>Преподаватель<select data-demo-teacher>" +
-      optionList(teachers, S.user.teacherId, "name", false) +
-      "</select></label><p>Только свои занятия. В строках — группа, кабинет и время.</p></div>"
-    );
-  }
-  return "";
 }
 function scopedLessons(date = S.date) {
   return occurrences(S.data, date).filter((l) => {
@@ -266,6 +190,7 @@ function toast(message) {
   toastTimer = setTimeout(() => $("toast").classList.remove("show"), 4200);
 }
 async function api(action, extra = {}) {
+  if (!ownerSession) throw Error("Войдите в кабинет владельца.");
   if (ownerEnding) throw Error("Сессия завершена. Войдите заново.");
   if (ownerSession && ["logout", "logout.all"].includes(action)) {
     ownerEnding = true;
@@ -280,7 +205,6 @@ async function api(action, extra = {}) {
       clearOwnerSession();
       S.token = "";
       S.data = null;
-      S.users = [];
       S.versions = [];
       $("app").replaceChildren();
       const destination = new URL("../admin/", import.meta.url);
@@ -299,7 +223,6 @@ async function api(action, extra = {}) {
         clearOwnerSession();
         S.token = "";
         S.data = null;
-        S.users = [];
         S.versions = [];
         $("app").replaceChildren();
         location.replace(new URL("../admin/", import.meta.url).href);
@@ -325,7 +248,6 @@ async function api(action, extra = {}) {
       clearOwnerSession();
       S.token = "";
       S.data = null;
-      S.users = [];
       S.versions = [];
       $("app").replaceChildren();
       location.replace(new URL("../admin/", import.meta.url).href);
@@ -341,7 +263,6 @@ function install(result) {
   S.data = result.data;
   S.revision = result.revision;
   S.user = result.user;
-  S.users = result.users || [];
   S.versions = result.versions || [];
   S.online = true;
   if (S.user.role === "student") {
@@ -369,7 +290,7 @@ let refreshing = false;
 async function refresh(silent = false) {
   if (ownerEnding) return;
   if (draft) return;
-  if (S.mode !== "live" || refreshing || document.hidden) return;
+  if (refreshing || document.hidden) return;
   refreshing = true;
   const epoch = S.epoch;
   try {
@@ -377,7 +298,7 @@ async function refresh(silent = false) {
       groupId: S.groupId,
       subgroup: S.subgroup,
     });
-    if (S.mode === "live" && epoch === S.epoch) {
+    if (epoch === S.epoch) {
       install(result);
       if (
         !$("modal").open &&
@@ -398,7 +319,7 @@ async function refresh(silent = false) {
       }
     }
   } catch (e) {
-    if (epoch === S.epoch && S.mode === "live") {
+    if (epoch === S.epoch) {
       S.online = false;
       if (e.status === 401) {
         S.token = "";
@@ -413,13 +334,12 @@ async function refresh(silent = false) {
     refreshing = false;
   }
 }
-let channel;
 function connectRealtime() {
   if (!window.supabase) return;
   const client = window.supabase.createClient(API, KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  channel = client
+  client
     .channel("uniflow-signal")
     .on(
       "postgres_changes",
@@ -434,87 +354,6 @@ function connectRealtime() {
     .subscribe((status) => {
       if (status === "SUBSCRIBED") refresh(true);
     });
-}
-function applyDemo() {
-  install({
-    data: visible(S.demoFull, S.user),
-    revision: S.revision,
-    user: S.user,
-    users: isAdmin()
-      ? S.demoUsers
-      : isTeacher()
-        ? S.demoUsers.filter(
-            (u) =>
-              u.role === "student" &&
-              S.demoFull.lessons.some(
-                (l) =>
-                  l.teacherId === S.user.teacherId &&
-                  l.groupId === u.groupId &&
-                  (l.subgroup === "all" || u.subgroup === l.subgroup),
-              ),
-          )
-        : [],
-    versions: S.versions,
-  });
-  storage.set("uf.demo.source.v4", {
-    data: S.demoFull,
-    users: S.demoUsers,
-    revision: S.revision,
-    versions: S.versions,
-  });
-  render();
-}
-async function enterDemo(role = "student") {
-  if (!S.base) {
-    toast("Загружаем пример…");
-    return;
-  }
-  S.epoch++;
-  S.mode = "demo";
-  S.token = "";
-  const saved = storage.get("uf.demo.source.v4", null);
-  S.demoFull =
-    saved?.data?.schemaVersion === DEMO_VERSION ? saved.data : makeDemo(S.base);
-  S.demoUsers =
-    saved?.data?.schemaVersion === DEMO_VERSION
-      ? saved.users
-      : clone(DEMO_USERS);
-  S.revision = saved?.data?.schemaVersion === DEMO_VERSION ? saved.revision : 1;
-  S.versions =
-    saved?.data?.schemaVersion === DEMO_VERSION ? saved.versions : [];
-  if (!S.demoFull.groups.some((g) => g.id === S.groupId)) S.groupId = "g-main";
-  if (S.subgroup === "all") S.subgroup = "А";
-  const wanted = new URLSearchParams(location.search).get("teacher");
-  if (wanted && S.demoFull.teachers.some((t) => t.id === wanted))
-    S.demoTeacherId = wanted;
-  S.user = demoRoleUser(role);
-  S.teacherId = "";
-  S.scope = "group";
-  S.page = "overview";
-  S.search = "";
-  S.draftConflicts = [];
-  applyDemo();
-  history.replaceState(
-    null,
-    "",
-    location.pathname +
-      "?demo=" +
-      role +
-      (role === "teacher" ? "&teacher=" + S.user.teacherId : ""),
-  );
-}
-async function leaveDemo() {
-  S.mode = "live";
-  S.epoch++;
-  S.data = null;
-  S.user = { id: "guest", role: "guest", name: "Посетитель" };
-  S.versions = [];
-  S.teacherId = "";
-  S.scope = "group";
-  S.page = "overview";
-  history.replaceState(null, "", location.pathname);
-  render();
-  await refresh();
 }
 async function act(op, payload, expected = S.revision) {
   if (
@@ -537,16 +376,11 @@ async function act(op, payload, expected = S.revision) {
     return;
   }
   if (S.busy) throw Error("Дождись сохранения");
-  if (S.mode === "live" && !S.online)
-    throw Error("Нет связи с сервером. Изменения не отправлены.");
+  if (!S.online) throw Error("Нет связи с сервером. Изменения не отправлены.");
   S.busy = true;
   try {
     if (isAdmin()) {
-      const conflicts = candidateConflicts(
-        S.mode === "demo" ? S.demoFull : S.data,
-        op,
-        payload,
-      );
+      const conflicts = candidateConflicts(S.data, op, payload);
       if (conflicts.length) {
         S.draftConflicts = conflicts;
         render();
@@ -554,50 +388,26 @@ async function act(op, payload, expected = S.revision) {
           "Конфликт. Изменения не сохранены.\n" +
             conflicts
               .slice(0, 6)
-              .map((c) =>
-                conflictMessage(S.mode === "demo" ? S.demoFull : S.data, c),
-              )
+              .map((c) => conflictMessage(S.data, c))
               .join("\n"),
         );
       }
     }
-    if (S.mode === "demo") {
-      if (expected !== S.revision)
-        throw Error("Данные изменились. Открой форму заново.");
-      const before = clone(S.demoFull),
-        result = mutate(S.demoFull, S.user, op, payload);
-      S.versions.unshift({
-        revision: S.revision,
-        actor: S.user.name,
-        reason: result.summary,
-        created_at: new Date().toISOString(),
-        data: before,
-      });
-      S.versions = S.versions.slice(0, 30);
-      S.demoFull = result.data;
-      S.revision++;
-      applyDemo();
-    } else {
-      install(await api("mutate", { op, payload, revision: expected }));
-      render();
-    }
+    install(await api("mutate", { op, payload, revision: expected }));
+    render();
     S.draftConflicts = [];
-    toast(
-      "Сохранено" +
-        (S.mode === "demo" ? " в демо-песочнице" : " для участников"),
-    );
-  } catch (e) {
-    if (e.status === 409) await refresh(true);
-    throw e;
+    toast("Сохранено для участников");
+  } catch (error) {
+    if (error.status === 409) await refresh(true);
+    throw error;
   } finally {
     S.busy = false;
   }
 }
 function allowedPage(page) {
-  if (page === "attendance") return false;
+  if (!nav.some(([name]) => name === page)) return false;
   if (page === "conflicts") return isAdmin();
-  if (["history", "accounts"].includes(page)) return isAdmin();
-  if (page === "requests") return canWrite();
+  if (page === "history") return isAdmin();
   return true;
 }
 function shell(content) {
@@ -607,17 +417,17 @@ function shell(content) {
     .filter(([p]) => allowedPage(p))
     .map(
       ([p, t, i]) =>
-        `<button data-page="${p}" class="${S.page === p ? "active" : ""}" ${S.page === p ? 'aria-current="page"' : ""}>${icon(i)}${t}${p === "notifications" && unread() ? `<span class="count">${unread()}</span>` : ""}${p === "requests" && S.data?.requests.filter((r) => r.status === "pending").length ? `<span class="count">${S.data.requests.filter((r) => r.status === "pending").length}</span>` : ""}</button>`,
+        `<button data-page="${p}" class="${S.page === p ? "active" : ""}" ${S.page === p ? 'aria-current="page"' : ""}>${icon(i)}${t}${p === "notifications" && unread() ? `<span class="count">${unread()}</span>` : ""}</button>`,
     )
     .join(
       "",
-    )}</nav><div class="sidebar-foot"><b>${ownerSession ? "UniFlow · Управление" : "UniFlow · beta 2.0"}</b><br>Автор: Азат Араппаев<br>Казахстан · UTC+5</div></aside><div class="workspace"><header class="topbar"><span class="breadcrumb">${icon("home")}Рабочее пространство</span><label class="global-search">${icon("search")}<input id="global-search" type="search" value="${h(S.search)}" placeholder="Поиск по расписанию…" aria-label="Поиск по расписанию"></label><div class="top-actions">${ownerSession ? "" : button("Демо ролей", "demo", {}, "", "flask")}${button(S.user.role === "guest" ? "Войти" : "Кабинет", S.user.role === "guest" ? "login" : "profile", {}, "", "users")}<button class="avatar" data-action="profile" aria-label="Открыть профиль">${h(
+    )}</nav><div class="sidebar-foot"><b>UniFlow · Управление</b><br>Автор: Азат Араппаев<br>Казахстан · UTC+5</div></aside><div class="workspace"><header class="topbar"><span class="breadcrumb">${icon("home")}Рабочее пространство</span><label class="global-search">${icon("search")}<input id="global-search" type="search" value="${h(S.search)}" placeholder="Поиск по расписанию…" aria-label="Поиск по расписанию"></label><div class="top-actions">${button(S.user.role === "guest" ? "Войти" : "Кабинет", S.user.role === "guest" ? "login" : "profile", {}, "", "users")}<button class="avatar" data-action="profile" aria-label="Открыть профиль">${h(
     S.user.name
       .split(" ")
       .map((x) => x[0])
       .slice(0, 2)
       .join(""),
-  )}</button></div></header><main class="main" id="main"><div class="heading"><div><h1>${headingTitle()}</h1><p>${h(userLabel)} · ${h(ROLES[S.user.role])}${S.mode === "demo" ? " · пример роли" : ""}</p></div><div class="heading-actions">${S.mode === "demo" ? roleSwitcher() : button("Инструкция", "page", { page: "guide" }, "ghost", "help")}${S.page === "schedule" && isAdmin() ? button("Добавить занятие", "lesson", {}, "primary", "plus") : ""}</div></div>${S.mode === "demo" ? `<div class="demo-banner">${icon("flask")}<div><strong>Демо-песочница.</strong> Пробуй все роли. Изменения не затрагивают настоящее расписание.</div><div class="right">${button("Сбросить пример", "resetDemo", {}, "tiny")}${button("Настоящий сайт", "leaveDemo", {}, "tiny")}</div></div>` : ""}${demoSelectors()}${groupChooser()}${content}<div class="sync ${S.online ? "" : "offline"}" role="status">${S.mode === "demo" ? "Демо-данные сохраняются в этом браузере" : S.online ? "Подключено · общие изменения обновляются автоматически" : "Нет связи · запись временно недоступна"}</div><footer class="footer"><span>UniFlow · меньше суеты, больше ясности</span><span>${ownerSession ? "Время Казахстана · UTC+5" : "Бета-версия · время Казахстана · UTC+5"}</span></footer></main></div></div>`;
+  )}</button></div></header><main class="main" id="main"><div class="heading"><div><h1>${headingTitle()}</h1><p>${h(userLabel)} · ${h(ROLES[S.user.role])}</p></div><div class="heading-actions">${button("Инструкция", "page", { page: "guide" }, "ghost", "help")}${S.page === "schedule" && isAdmin() ? button("Добавить занятие", "lesson", {}, "primary", "plus") : ""}</div></div>${groupChooser()}${content}<div class="sync ${S.online ? "" : "offline"}" role="status">${S.online ? "Подключено · общие изменения обновляются автоматически" : "Нет связи · запись временно недоступна"}</div><footer class="footer"><span>UniFlow · меньше суеты, больше ясности</span><span>Время Казахстана · UTC+5</span></footer></main></div></div>`;
 }
 function headingTitle() {
   if (S.page === "conflicts") return "Конфликты расписания.";
@@ -629,17 +439,11 @@ function headingTitle() {
       schedule: "Твоё расписание.",
       tasks: "Задания и дедлайны.",
       notifications: "Важное — в одном месте.",
-      requests: "Переносы без путаницы.",
-      attendance: "Журнал посещаемости.",
       catalogs: "Учебное пространство.",
       history: "История изменений.",
-      accounts: "Люди и права доступа.",
       guide: "Как работает UniFlow.",
     }[S.page] || "UniFlow"
   );
-}
-function roleSwitcher() {
-  return `<div class="role-switch" aria-label="Демонстрационная роль">${["student", "teacher", "admin"].map((r) => `<button data-action="demoRole" data-role="${r}" class="${S.user.role === r ? "active" : ""}" aria-pressed="${S.user.role === r}">${ROLES[r]}</button>`).join("")}</div>`;
 }
 function optionList(items, value, label = "name", blank = "") {
   const start =
@@ -675,21 +479,16 @@ function optionList(items, value, label = "name", blank = "") {
   return start + items.map(option).join("");
 }
 function groupChooser() {
-  if (
-    S.mode === "demo" ||
-    !S.data ||
-    isTeacher() ||
-    !["overview", "schedule"].includes(S.page)
-  )
+  if (!S.data || isTeacher() || !["overview", "schedule"].includes(S.page))
     return "";
   const g = viewedGroup(),
-    locked = S.user.role === "student" && S.mode !== "demo";
+    locked = S.user.role === "student";
   const pending = !S.data.lessons.some((l) => l.groupId === g?.id);
   return `<section class="panel scope-filter"><div class="toolbar"><label class="field-inline">Моя группа<select data-filter="groupId" ${locked ? "disabled" : ""}>${optionList(S.data.groups, S.groupId, "name", false)}</select></label><label class="field-inline">Подгруппа<select data-filter="subgroup" ${locked ? "disabled" : ""}>${(g?.subgroups || []).map((v) => `<option value="${h(v)}" ${v === S.subgroup ? "selected" : ""}>${h(v)}</option>`).join("")}</select></label></div><p class="small muted">${h(g?.specialty || "Специальность не указана")} · ${g?.language === "kk" ? "Казахский язык обучения" : g?.language === "ru" ? "Русский язык обучения" : "Язык не указан"}${pending ? " · Расписание этой группы ещё не загружено. Это не означает, что занятий нет." : ""}</p></section>`;
 }
 function filters() {
   const group = viewedGroup(),
-    locked = S.user.role === "student" && S.mode !== "demo";
+    locked = S.user.role === "student";
   return `<div class="toolbar">${!isTeacher() && S.user.role !== "student" ? `<label class="field-inline">Режим<select data-filter="scope"><option value="group" ${S.scope === "group" ? "selected" : ""}>По группе</option><option value="teacher" ${S.scope === "teacher" ? "selected" : ""}>По преподавателю</option></select></label>` : ""}${S.scope === "teacher" || isTeacher() ? `<label class="field-inline">Преподаватель<select data-filter="teacherId" ${isTeacher() ? "disabled" : ""}>${optionList(S.data.teachers, S.teacherId, "name", "Все преподаватели")}</select></label>` : `<label class="field-inline">Группа<select data-filter="groupId" ${locked ? "disabled" : ""}>${optionList(S.data.groups, S.groupId, "name", false)}</select></label><label class="field-inline">Подгруппа<select data-filter="subgroup" ${locked ? "disabled" : ""}>${["all", ...(group?.subgroups || [])].map((g) => `<option value="${h(g)}" ${g === S.subgroup ? "selected" : ""}>${g === "all" ? "Все подгруппы" : h(g)}</option>`).join("")}</select></label>`}<span class="spacer"></span>${button("Назад", "week", { offset: -7 }, "btn-square", "back")}<span class="small muted">${h(niceDate(monday(S.date)))} — ${h(niceDate(addDays(monday(S.date), 6)))} · ${isoWeek(S.date) % 2 ? "нечётная" : "чётная"}</span>${button("Вперёд", "week", { offset: 7 }, "btn-square", "arrow")}${button("Сегодня", "today", {}, "")}${button(S.weekView ? "День" : "Неделя", "toggleWeek", {}, "")}</div>`;
 }
 function dayButtons() {
@@ -716,7 +515,7 @@ function lessonTable(list, date, editable = true) {
     "</th><th>" +
     (teacherView ? "ТИП ЗАНЯТИЯ" : "ПРЕПОДАВАТЕЛЬ") +
     "</th><th>АУДИТОРИЯ</th>" +
-    (editable && canWrite() ? "<th>ДЕЙСТВИЯ</th>" : "") +
+    (editable && isAdmin() ? "<th>ДЕЙСТВИЯ</th>" : "") +
     "</tr></thead><tbody>" +
     list
       .map(
@@ -763,22 +562,10 @@ function lessonTable(list, date, editable = true) {
           "</td><td>" +
           tag(name("rooms", l.roomId, "Не указана")) +
           "</td>" +
-          (editable && canWrite()
+          (editable && isAdmin()
             ? '<td><div class="actions">' +
-              (isAdmin()
-                ? button("Изменить", "lesson", { id: l.id }, "tiny", "edit") +
-                  button("По дате", "exception", { id: l.id, date }, "tiny")
-                : l.teacherId === S.user.teacherId &&
-                    (S.mode === "demo" || S.capabilities?.teacherOverrides)
-                  ? button("По дате", "exception", { id: l.id, date }, "tiny") +
-                    button(
-                      "Запрос",
-                      "request",
-                      { id: l.id, date },
-                      "tiny",
-                      "request",
-                    )
-                  : "") +
+              button("Изменить", "lesson", { id: l.id }, "tiny", "edit") +
+              button("По дате", "exception", { id: l.id, date }, "tiny") +
               "</div></td>"
             : "") +
           "</tr>",
@@ -810,7 +597,7 @@ function schedule() {
   );
 }
 function conflictRows(rows) {
-  const data = S.mode === "demo" ? S.demoFull : S.data;
+  const data = S.data;
   const link = (l, label) =>
     data.lessons.some((x) => x.id === l.id)
       ? button(label, "lesson", { id: l.id }, "tiny")
@@ -837,7 +624,7 @@ function conflictRows(rows) {
 }
 function conflictSummary() {
   if (!isAdmin()) return "";
-  const conflicts = findConflicts(S.mode === "demo" ? S.demoFull : S.data);
+  const conflicts = findConflicts(S.data);
   return (
     '<div class="notice-info row section-space conflict-summary"><span>Проверка расписания: ' +
     (conflicts.length ? conflicts.length + " пересечений" : "конфликтов нет") +
@@ -847,7 +634,7 @@ function conflictSummary() {
   );
 }
 function sourceWarnings() {
-  const d = S.mode === "demo" ? S.demoFull : S.data;
+  const d = S.data;
   const rows = d.sourceWarnings || [];
   return (
     '<section class="panel section-space"><div class="panel-head"><h2>Проверка исходного файла</h2>' +
@@ -871,13 +658,10 @@ function sourceWarnings() {
   );
 }
 function conflictsPage() {
-  const actual = findConflicts(S.mode === "demo" ? S.demoFull : S.data);
+  const actual = findConflicts(S.data);
   return (
     sourceWarnings() +
     '<div class="toolbar"><span class="small muted">Проверяются кабинеты, преподаватели, группы и изменения по датам.</span><span class="spacer"></span>' +
-    (S.mode === "demo"
-      ? button("Показать пример конфликта", "previewConflict", {}, "", "search")
-      : "") +
     '</div><section class="panel"><div class="panel-head"><h2>Сохранённое расписание</h2>' +
     tag(
       actual.length ? actual.length + " конфликтов" : "Конфликтов нет",
@@ -927,7 +711,7 @@ function dashboard() {
   const week = Array.from({ length: 7 }, (_, i) =>
     scopedLessons(addDays(monday(S.date), i)).filter((l) => !l.cancelled),
   ).flat();
-  return `${conflictSummary()}${isAdmin() ? `<div class="stats"><div class="stat"><small>ГРУППЫ</small><strong>${S.data.groups.length}</strong><span>в учебном пространстве</span></div><div class="stat"><small>ЗАНЯТИЯ НЕДЕЛИ</small><strong>${week.length}</strong><span>по выбранному фильтру</span></div><div class="stat"><small>УЧЕБНЫЕ ЧАСЫ</small><strong>${(week.reduce((n, l) => n + time(l.end) - time(l.start), 0) / 60).toFixed(1)}</strong><span>астрономические часы</span></div><div class="stat"><small>ОЖИДАЮТ РЕШЕНИЯ</small><strong>${S.data.requests.filter((r) => r.status === "pending").length}</strong><span>запросов на перенос</span></div></div>` : ""}<div class="dashboard"><div><div class="hero-grid"><section class="panel live">${tag(current ? "Текущее занятие" : "Сейчас нет занятий")}<h2>${h(current ? (isTeacher() ? name("groups", current.groupId) : name("subjects", current.subjectId)) : "Время выдохнуть.")}</h2><div class="class-meta">${current ? `<span>${icon("clock")}${h(current.start)}–${h(current.end)}</span><span>${icon("pin")}${h(name("rooms", current.roomId))}</span>` : "Пары определяются по времени Казахстана"}</div></section><section class="panel next">${tag("Следующее занятие")}<h2>${h(next ? (isTeacher() ? name("groups", next.groupId) : name("subjects", next.subjectId)) : "Свободное время")}</h2><div class="class-meta">${next ? `${h(niceDate(nextDate))} · ${h(next.start)}–${h(next.end)}<br>${h(name("rooms", next.roomId))}` : "В ближайшие две недели занятий нет"}</div></section></div><section class="panel"><div class="panel-head"><h2>${icon("calendar")}Твоя учебная неделя</h2>${dayButtons()}</div><div class="day-caption"><span>${h(niceDate(S.date, true))}</span><span>${h(S.scope === "teacher" ? name("teachers", S.teacherId, "Все преподаватели") : name("groups", S.groupId))} · ${h(S.subgroup === "all" ? "А и Б" : S.subgroup)}</span></div>${lessonTable(scopedLessons(), S.date)}</section><div class="notice-info section-space row">${icon("users")}<span>${S.mode === "demo" ? "Четыре группы и отдельные преподаватели по предметам. Выбирай свою группу или преподавателя в панели выше." : "Студенты видят свои группы, преподаватели — свои пары, администратор управляет назначениями."}</span>${button("Открыть расписание", "page", { page: "schedule" }, "tiny")}</div>${isAdmin() ? workload() : ""}</div><aside class="stack"><section class="panel"><div class="panel-head"><h2>${icon("task")}Ближайшие задания</h2></div>${tasks.length ? `<div class="list">${tasks.map((t) => `<div class="list-item">${icon("request")}<div><h3>${h(t.title)}</h3><p>До ${niceDate(t.due)} · ${h(name("subjects", t.subjectId))}</p></div></div>`).join("")}</div>` : empty("Новых заданий пока нет", "task")}</section><section class="panel"><div class="panel-head"><h2>${icon("bell")}Изменения</h2></div>${notices.length ? `<div class="list">${notices.map((n) => `<div class="list-item">${icon("bell")}<div><h3>${h(n.title)}</h3><p>${h(n.body.slice(0, 140))}</p></div></div>`).join("")}</div>` : empty("Здесь появятся объявления и изменения", "bell")}</section><section class="panel panel-pad"><h3>Быстрые действия</h3><div class="row section-space">${button("Мои задания", "page", { page: "tasks" }, "tiny", "task")}${canWrite() ? button("Запрос переноса", "request", {}, "tiny", "request") : button("Как пользоваться", "page", { page: "guide" }, "tiny", "help")}</div></section></aside></div>`;
+  return `${conflictSummary()}${isAdmin() ? `<div class="stats"><div class="stat"><small>ГРУППЫ</small><strong>${S.data.groups.length}</strong><span>в учебном пространстве</span></div><div class="stat"><small>ЗАНЯТИЯ НЕДЕЛИ</small><strong>${week.length}</strong><span>по выбранному фильтру</span></div><div class="stat"><small>УЧЕБНЫЕ ЧАСЫ</small><strong>${(week.reduce((n, l) => n + time(l.end) - time(l.start), 0) / 60).toFixed(1)}</strong><span>астрономические часы</span></div></div>` : ""}<div class="dashboard"><div><div class="hero-grid"><section class="panel live">${tag(current ? "Текущее занятие" : "Сейчас нет занятий")}<h2>${h(current ? (isTeacher() ? name("groups", current.groupId) : name("subjects", current.subjectId)) : "Время выдохнуть.")}</h2><div class="class-meta">${current ? `<span>${icon("clock")}${h(current.start)}–${h(current.end)}</span><span>${icon("pin")}${h(name("rooms", current.roomId))}</span>` : "Пары определяются по времени Казахстана"}</div></section><section class="panel next">${tag("Следующее занятие")}<h2>${h(next ? (isTeacher() ? name("groups", next.groupId) : name("subjects", next.subjectId)) : "Свободное время")}</h2><div class="class-meta">${next ? `${h(niceDate(nextDate))} · ${h(next.start)}–${h(next.end)}<br>${h(name("rooms", next.roomId))}` : "В ближайшие две недели занятий нет"}</div></section></div><section class="panel"><div class="panel-head"><h2>${icon("calendar")}Твоя учебная неделя</h2>${dayButtons()}</div><div class="day-caption"><span>${h(niceDate(S.date, true))}</span><span>${h(S.scope === "teacher" ? name("teachers", S.teacherId, "Все преподаватели") : name("groups", S.groupId))} · ${h(S.subgroup === "all" ? "А и Б" : S.subgroup)}</span></div>${lessonTable(scopedLessons(), S.date)}</section><div class="notice-info section-space row">${icon("users")}<span>Студенты открывают расписание своей группы, а владелец управляет назначениями и изменениями по датам.</span>${button("Открыть расписание", "page", { page: "schedule" }, "tiny")}</div>${isAdmin() ? workload() : ""}</div><aside class="stack"><section class="panel"><div class="panel-head"><h2>${icon("task")}Ближайшие задания</h2></div>${tasks.length ? `<div class="list">${tasks.map((t) => `<div class="list-item">${icon("request")}<div><h3>${h(t.title)}</h3><p>До ${niceDate(t.due)} · ${h(name("subjects", t.subjectId))}</p></div></div>`).join("")}</div>` : empty("Новых заданий пока нет", "task")}</section><section class="panel"><div class="panel-head"><h2>${icon("bell")}Изменения</h2></div>${notices.length ? `<div class="list">${notices.map((n) => `<div class="list-item">${icon("bell")}<div><h3>${h(n.title)}</h3><p>${h(n.body.slice(0, 140))}</p></div></div>`).join("")}</div>` : empty("Здесь появятся объявления и изменения", "bell")}</section><section class="panel panel-pad"><h3>Быстрые действия</h3><div class="row section-space">${button("Мои задания", "page", { page: "tasks" }, "tiny", "task")}</div></section></aside></div>`;
 }
 function workload() {
   return `<section class="panel section-space"><div class="panel-head"><h2>Нагрузка преподавателей</h2>${button("Свободные аудитории", "freeRooms", {}, "tiny", "search")}</div><div class="table-scroll"><table class="table"><thead><tr><th>ПРЕПОДАВАТЕЛЬ</th><th>ПАР / НЕДЕЛЮ</th><th>ЧАСЫ</th></tr></thead><tbody>${S.data.teachers
@@ -969,68 +753,12 @@ function tasks() {
     )
     .join(
       "",
-    )}</div><span class="spacer"></span>${canWrite() ? button("Новое задание", "task", {}, "primary", "plus") : ""}</div><section class="panel">${list.length ? list.map((t) => `<article class="task ${done.has(t.id) ? "done" : ""}"><label class="check"><input type="checkbox" data-task-check="${h(t.id)}" ${done.has(t.id) ? "checked" : ""} aria-label="Отметить задание выполненным"></label><div class="grow"><h3>${h(t.title)}</h3><p>${h(t.description)}</p><div class="task-meta">${tag("До " + niceDate(t.due), t.due < today && !done.has(t.id) ? "red" : "")}${tag(name("subjects", t.subjectId))}${tag(name("groups", t.groupId) + " · " + (t.subgroup === "all" ? "А и Б" : t.subgroup))}</div></div>${canWrite() ? `<div class="actions">${button("Изменить", "task", { id: t.id }, "tiny", "edit")}${button("Удалить", "deleteTask", { id: t.id }, "tiny danger", "trash")}</div>` : ""}</article>`).join("") : empty("Заданий по этому фильтру пока нет", "task")}</section><p class="small muted section-space">Отметки выполнения — личные, сохраняются на этом устройстве. Это не отправка работы преподавателю.</p>`;
+    )}</div><span class="spacer"></span>${isAdmin() ? button("Новое задание", "task", {}, "primary", "plus") : ""}</div><section class="panel">${list.length ? list.map((t) => `<article class="task ${done.has(t.id) ? "done" : ""}"><label class="check"><input type="checkbox" data-task-check="${h(t.id)}" ${done.has(t.id) ? "checked" : ""} aria-label="Отметить задание выполненным"></label><div class="grow"><h3>${h(t.title)}</h3><p>${h(t.description)}</p><div class="task-meta">${tag("До " + niceDate(t.due), t.due < today && !done.has(t.id) ? "red" : "")}${tag(name("subjects", t.subjectId))}${tag(name("groups", t.groupId) + " · " + (t.subgroup === "all" ? "А и Б" : t.subgroup))}</div></div>${isAdmin() ? `<div class="actions">${button("Изменить", "task", { id: t.id }, "tiny", "edit")}${button("Удалить", "deleteTask", { id: t.id }, "tiny danger", "trash")}</div>` : ""}</article>`).join("") : empty("Заданий по этому фильтру пока нет", "task")}</section><p class="small muted section-space">Отметки выполнения — личные, сохраняются на этом устройстве. Это не отправка работы преподавателю.</p>`;
 }
 function notifications() {
   const read = new Set(storage.get(myKey("read"), []));
-  return `<div class="toolbar"><span class="small muted">${unread()} непрочитанных · уведомления внутри сайта</span><span class="spacer"></span>${button("Прочитать все", "readAll", {}, "", "check")}${canWrite() ? button("Объявление", "announcement", {}, "primary", "plus") : ""}</div><section class="panel">${S.data.announcements.length ? S.data.announcements.map((n) => `<article class="notice ${read.has(n.id) ? "" : "unread"}"><div class="notice-top"><h3>${h(n.title)}</h3><small>${h(niceDate(n.createdAt.slice(0, 10)))}</small></div><p>${h(n.body)}</p>${tag(n.groupId ? name("groups", n.groupId) : n.teacherId ? name("teachers", n.teacherId) : "Получатели: " + n.roles.map((r) => ROLES[r]).join(", "))}${!read.has(n.id) ? `<div class="notice-action">${button("Прочитано", "read", { id: n.id }, "tiny")}</div>` : ""}</article>`).join("") : empty("Нет уведомлений для твоей роли", "bell")}</section>`;
+  return `<div class="toolbar"><span class="small muted">${unread()} непрочитанных · уведомления внутри сайта</span><span class="spacer"></span>${button("Прочитать все", "readAll", {}, "", "check")}${isAdmin() ? button("Объявление", "announcement", {}, "primary", "plus") : ""}</div><section class="panel">${S.data.announcements.length ? S.data.announcements.map((n) => `<article class="notice ${read.has(n.id) ? "" : "unread"}"><div class="notice-top"><h3>${h(n.title)}</h3><small>${h(niceDate(n.createdAt.slice(0, 10)))}</small></div><p>${h(n.body)}</p>${tag(n.groupId ? name("groups", n.groupId) : n.teacherId ? name("teachers", n.teacherId) : "Получатели: " + n.roles.map((r) => ROLES[r]).join(", "))}${!read.has(n.id) ? `<div class="notice-action">${button("Прочитано", "read", { id: n.id }, "tiny")}</div>` : ""}</article>`).join("") : empty("Нет уведомлений для твоей роли", "bell")}</section>`;
 }
-function requests() {
-  return `<div class="toolbar"><span class="small muted">${isAdmin() ? "Решение администратора обновляет расписание по дате" : "Запрос не меняет расписание до утверждения"}</span><span class="spacer"></span>${button("Запросить перенос", "request", {}, "primary", "plus")}</div><section class="panel">${
-    S.data.requests.length
-      ? S.data.requests
-          .map((r) => {
-            const l = S.data.lessons.find((l) => l.id === r.lessonId);
-            return `<article class="notice"><div class="notice-top"><h3>${h(name("subjects", l?.subjectId, "Удалённая пара"))}</h3>${tag({ pending: "Ожидает решения", approved: "Согласовано", rejected: "Отклонено" }[r.status], r.status === "approved" ? "green" : r.status === "rejected" ? "red" : "amber")}</div><p>${h(r.reason)}</p><div class="small muted section-space">${h(name("teachers", r.teacherId))} · ${niceDate(r.date)} · ${h(r.start)}–${h(r.end)} · ${h(name("rooms", r.roomId))}</div>${r.response ? `<p>Ответ: ${h(r.response)}</p>` : ""}${isAdmin() && r.status === "pending" ? `<div class="row section-space">${button("Согласовать", "decide", { id: r.id, status: "approved" }, "primary tiny", "check")}${button("Отклонить", "decide", { id: r.id, status: "rejected" }, "danger tiny", "close")}</div>` : ""}</article>`;
-          })
-          .join("")
-      : empty("Запросов пока нет", "request")
-  }</section>`;
-}
-function attendance() {
-  if (!canWrite()) {
-    const rows = S.data.attendance;
-    return `<section class="panel"><div class="panel-head"><h2>Моя посещаемость</h2></div>${rows.length ? `<div class="list">${rows.map((a) => `<div class="list-item"><div><h3>${h(name("subjects", S.data.lessons.find((l) => l.id === a.lessonId)?.subjectId))}</h3><p>${niceDate(a.date)}</p></div><span class="end">${tag(attStatus(a.status), a.status === "absent" ? "red" : "green")}</span></div>`).join("")}</div>` : empty(S.user.role === "guest" ? "Войди в аккаунт студента, чтобы видеть свою посещаемость" : "Преподаватель пока не выставил отметки", "book")}</section>`;
-  }
-  const lessons = occurrences(S.data, S.date).filter(
-    (l) => !l.cancelled && (isAdmin() || l.teacherId === S.user.teacherId),
-  );
-  const lesson = lessons.find((l) => l.id === S.attendanceId) || lessons[0];
-  if (lesson) S.attendanceId = lesson.id;
-  const students = S.users.filter(
-    (u) =>
-      u.role === "student" &&
-      u.active &&
-      u.groupId === lesson?.groupId &&
-      (lesson.subgroup === "all" || u.subgroup === lesson.subgroup),
-  );
-  return `<div class="toolbar"><label class="field-inline">Дата<input type="date" id="attendance-date" value="${S.date}"></label><label class="field-inline">Занятие<select id="attendance-lesson">${lessons.map((l) => `<option value="${h(l.id)}" ${l.id === lesson?.id ? "selected" : ""}>${h(l.start + " · " + name("subjects", l.subjectId) + " · " + name("groups", l.groupId))}</option>`).join("")}</select></label><span class="spacer"></span>${button("Экспорт CSV", "attendanceCsv", {}, "", "download")}</div><section class="panel"><div class="panel-head"><h2>${lesson ? h(name("groups", lesson.groupId)) : "На эту дату нет занятий"}</h2></div>${
-    students.length
-      ? `<div class="table-scroll"><table class="table"><thead><tr><th>СТУДЕНТ</th><th>ПОДГРУППА</th><th>ОТМЕТКА</th></tr></thead><tbody>${students
-          .map((u) => {
-            const mark =
-              S.data.attendance.find(
-                (a) =>
-                  a.studentId === u.id &&
-                  a.lessonId === lesson.id &&
-                  a.date === S.date,
-              )?.status || "";
-            return `<tr><td>${h(u.name)}</td><td>${h(u.subgroup)}</td><td><select data-attendance="${h(u.id)}" aria-label="Посещаемость ${h(u.name)}"><option value="">Не отмечен</option>${["present", "late", "absent", "excused"].map((s) => `<option value="${s}" ${s === mark ? "selected" : ""}>${attStatus(s)}</option>`).join("")}</select></td></tr>`;
-          })
-          .join("")}</tbody></table></div>`
-      : empty(
-          "Для этой пары нет активных аккаунтов студентов. Администратор может создать их в разделе «Аккаунты».",
-          "users",
-        )
-  }</section>`;
-}
-const attStatus = (s) =>
-  ({
-    present: "Присутствует",
-    late: "Опоздал",
-    absent: "Отсутствует",
-    excused: "Уважительная причина",
-  })[s] || "Не отмечен";
 function catalogs() {
   const kind = S.catalog;
   const labels = {
@@ -1049,23 +777,17 @@ function catalogs() {
     )}</div><span class="spacer"></span>${kind === "rooms" ? button("Найти свободную", "freeRooms", {}, "", "search") : ""}${isAdmin() ? button("Добавить", "catalog", { entity: kind }, "primary", "plus") : ""}</div><section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>НАЗВАНИЕ</th><th>ПОДРОБНОСТИ</th>${isAdmin() ? "<th>ДЕЙСТВИЯ</th>" : ""}</tr></thead><tbody>${S.data[kind].map((x) => `<tr><td><strong>${h(x.name)}</strong></td><td>${h(kind === "groups" ? (x.specialty || "Специальность не указана") + " · " + (x.language === "kk" ? "Казахский" : x.language === "ru" ? "Русский" : "Язык не указан") + " · Подгруппы: " + x.subgroups.join(", ") : kind === "teachers" ? x.subjects.map((id) => name("subjects", id)).join(", ") : kind === "rooms" ? (x.capacityEstimated ? "Вместимость не указана в файле" : "Мест: " + x.capacity) : "Учебная дисциплина")}</td>${isAdmin() ? `<td><div class="actions">${button("Изменить", "catalog", { entity: kind, id: x.id }, "tiny", "edit")}${button("Удалить", "deleteCatalog", { entity: kind, id: x.id }, "tiny danger", "trash")}</div></td>` : ""}</tr>`).join("")}</tbody></table></div>${!S.data[kind].length ? empty("Справочник пока пуст", "layers") : ""}</section>`;
 }
 function historyPage() {
-  return `<div class="notice-info">Сохраняются последние 30 версий. Откат восстанавливает расписание, задания, объявления и журнал. Аккаунты и пароли не откатываются.</div><section class="panel section-space"><div class="panel-head"><h2>Версии пространства</h2></div>${S.versions.length ? `<div class="list">${S.versions.map((v) => `<div class="list-item">${icon("history")}<div><h3>Версия ${v.revision} · ${h(v.reason)}</h3><p>${h(v.actor)} · ${h(new Date(v.created_at).toLocaleString("ru-RU"))}</p></div><div class="end">${button("Восстановить", "rollback", { revision: v.revision }, "tiny")}</div></div>`).join("")}</div>` : empty("После первого изменения здесь появится версия для восстановления", "history")}</section><section class="panel section-space"><div class="panel-head"><h2>Журнал действий</h2></div><div class="list">${S.data.history.map((e) => `<div class="list-item"><div><h3>${h(e.summary)}</h3><p>${h(e.actor)} · ${h(new Date(e.at).toLocaleString("ru-RU"))}</p></div></div>`).join("")}</div></section>`;
-}
-function accounts() {
-  return `<div class="toolbar"><span class="small muted">Роли выдаёт администратор. Самостоятельной регистрации нет.</span><span class="spacer"></span>${button("Создать аккаунт", "account", {}, "primary", "plus")}</div><section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>ИМЯ / ЛОГИН</th><th>РОЛЬ</th><th>ПРИВЯЗКА</th><th>ДОСТУП</th><th></th></tr></thead><tbody><tr><td><strong>Администратор</strong><div class="subline">${ownerSession ? h(ownerSession.owner.email) + " · владелец" : "admin · основной аккаунт"}</div></td><td>Администратор</td><td>Всё пространство</td><td>${tag("Активен", "green")}</td><td>${ownerSession ? "" : button("Пароль", "password", {}, "tiny")}</td></tr>${S.users.map((u) => `<tr><td><strong>${h(u.name)}</strong><div class="subline">${h(u.username)}</div></td><td>${h(ROLES[u.role])}</td><td>${h(u.role === "student" ? name("groups", u.groupId) + " · " + u.subgroup : u.role === "teacher" ? name("teachers", u.teacherId) : "Всё пространство")}</td><td>${tag(u.active ? "Активен" : "Отключён", u.active ? "green" : "red")}</td><td>${button("Изменить", "account", { id: u.id }, "tiny", "edit")}</td></tr>`).join("")}</tbody></table></div></section>`;
+  return `<div class="notice-info">Сохраняются последние 30 версий. Откат восстанавливает расписание, задания, объявления и журнал. Настройки входа владельца не откатываются.</div><section class="panel section-space"><div class="panel-head"><h2>Версии пространства</h2></div>${S.versions.length ? `<div class="list">${S.versions.map((v) => `<div class="list-item">${icon("history")}<div><h3>Версия ${v.revision} · ${h(v.reason)}</h3><p>${h(v.actor)} · ${h(new Date(v.created_at).toLocaleString("ru-RU"))}</p></div><div class="end">${button("Восстановить", "rollback", { revision: v.revision }, "tiny")}</div></div>`).join("")}</div>` : empty("После первого изменения здесь появится версия для восстановления", "history")}</section><section class="panel section-space"><div class="panel-head"><h2>Журнал действий</h2></div><div class="list">${S.data.history.map((e) => `<div class="list-item"><div><h3>${h(e.summary)}</h3><p>${h(e.actor)} · ${h(new Date(e.at).toLocaleString("ru-RU"))}</p></div></div>`).join("")}</div></section>`;
 }
 function guide() {
-  if (ownerSession)
-    return `<section class="panel"><h2>Управление UniFlow</h2><p>Административные действия доступны только владельцу после почты, пароля и 2FA.</p><ul class="guide-list"><li>В расписании выберите нужную группу, день и подгруппу. Постоянное расписание и разовое изменение на дату редактируются отдельно.</li><li>Используйте черновик и предпросмотр перед публикацией. Публикация проверяется сервером; конфликт ревизий не перезаписывает чужую работу.</li><li>Шаблоны дня и недели добавляют пары в черновик. В истории доступен откат версии с подтверждением.</li><li>В кабинете можно завершить все сессии. После закрытия вкладки потребуется новый вход; пароль, коды и токены в браузерное хранилище не записываются.</li><li>Полноценный Telegram-клиент, дополнительные настройки сайта и нормализованные данные входят в следующие этапы релиза.</li></ul></section>`;
-
-  return `<section class="panel guide"><h2>От одной пары до всей учебной недели</h2><p>UniFlow объединяет расписание, задания, объявления и согласование переносов. Учебные часы показываются по времени Казахстана. Автор проекта — Азат Араппаев.</p><h3>Попробовать роли за три минуты</h3><ol><li>Нажми «Демо ролей». Песочница работает отдельно от настоящего сайта.</li><li>Выбери «Администратор»: назначь преподавателя, измени аудиторию или добавь занятие.</li><li>Переключись на «Студент»: в расписании и уведомлениях появится результат.</li><li>Выбери «Преподаватель»: создай задание или запроси перенос своей пары.</li><li>Вернись к администратору и согласуй запрос. Расписание изменится только на выбранную дату.</li></ol><div class="table-scroll"><table><thead><tr><th>Роль</th><th>Что доступно</th></tr></thead><tbody><tr><td>Посетитель</td><td>Открытое расписание, справочники, объявления своей выбранной группы, экспорт календаря.</td></tr><tr><td>Студент</td><td>Своя группа и подгруппа, задания, личные отметки выполнения, уведомления и свои учебные уведомления.</td></tr><tr><td>Преподаватель</td><td>Собственные пары, задания и объявления учебным группам, запросы переносов, объявления своим группам.</td></tr><tr><td>Администратор</td><td>Назначения, справочники, аккаунты и роли, исключения по датам, решения по переносам, история и откат, импорт и экспорт.</td></tr></tbody></table></div><h3>Запустить настоящее пространство</h3><ol><li>Войди под логином <b>admin</b> и действующим админским паролем.</li><li>В справочниках добавь преподавателей и выбери их предметы. Затем создай группы и аудитории, если нужны дополнительные.</li><li>В расписании назначь занятиям преподавателей. Система не сохранит пересечение группы, преподавателя или аудитории.</li><li>В «Аккаунтах» создай логины студентов и преподавателей. Для преподавателя выбери его запись справочника, для студента — группу и подгруппу. Пароли передай участникам самостоятельно.</li><li>Объявления и изменения будут появляться внутри сайта у адресатов. При первом переходе с прежней версии обнови страницу.</li></ol><h3>Обычная пара или изменение по дате?</h3><p>«Изменить» редактирует регулярное занятие на все недели выбранного типа. «По дате» отменяет или переносит только одну встречу. Поддерживаются чётные и нечётные недели по номеру ISO-недели. Запрос преподавателя сам по себе ничего не меняет: требуется решение администратора.</p><h3>Безопасность и сохранение</h3><p>Реальную роль определяет сервер. Переключатель демо не выдаёт права на настоящем сайте. Пароль проверяется сервером; сессия действует два часа и хранится только в памяти вкладки. Отключение аккаунта прекращает его доступ. При одновременном редактировании устаревшие правки не перезапишут новые.</p><h3>Четыре группы и преподаватели</h3><p>В демо студент выбирает 25-11, 25-12, 25-13 или 25-14 и подгруппу. 25-11 сохраняет основное расписание. Дополнительные группы изучают те же предметы в другое время. В роли преподавателя выбери свой предмет и имя: в расписании будут только его группы, кабинеты и время. Для параллельных лабораторных есть отдельные преподаватели одного предмета. Раздел «Конфликты» у администратора показывает занятость кабинета и преподавателя; кнопка примера не меняет данные. Журнал оценок/посещаемости в интерфейсе отключён.</p><h3>Полезные инструменты</h3><ul><li>Поиск по предмету, преподавателю и аудитории; просмотр дня или недели.</li><li>«Найти свободную» в аудиториях — поиск свободного помещения на дату и время.</li><li>«Календарь .ics» — экспорт четырёх ближайших недель с учётом отмен и переносов.</li><li>«Печать» — версия расписания для бумаги или PDF.</li><li>JSON — резервная копия расписания. Перед импортом администратор видит количество записей и подтверждает замену.</li><li>В кабинете: тёмная тема, личные заметки, смена пароля и выход.</li></ul><h3>Границы беты</h3><p>Уведомления доставляются внутри сайта. SMS, WhatsApp, email и фоновые push-уведомления не подключены. Отметка задания означает личный прогресс, а не загрузку работы. Офлайн доступен только сохранённый демо-пример; настоящее редактирование требует интернета. Демо-аккаунты имитируют роли; расписание и имена преподавателей взяты из исходного файла. В настоящем расписании неизвестные преподаватели оставлены неназначенными.</p><div class="row section-space">${button("Попробовать студента", "demoRole", { role: "student" }, "primary", "users")}${button("Попробовать преподавателя", "demoRole", { role: "teacher" }, "", "users")}${button("Попробовать администратора", "demoRole", { role: "admin" }, "", "users")}<a class="btn" href="https://github.com/xan-xz/schedule" target="_blank" rel="noopener">GitHub проекта</a></div></section>`;
+  return `<section class="panel guide"><h2>Управление учебной неделей</h2><p>UniFlow объединяет расписание, задания, объявления и изменения по датам. Время показывается по Казахстану, UTC+5.</p><h3>Публикация расписания</h3><ol><li>Выберите группу, подгруппу и нужный день.</li><li>Создайте черновик. Редактируйте регулярные пары или применяйте изменения только на выбранную дату.</li><li>Проверьте предпросмотр студента и конфликты, затем нажмите «Опубликовать».</li><li>Предыдущая версия остаётся в истории. Восстановление затрагивает весь документ расписания.</li></ol><h3>Шаблоны и справочники</h3><p>Шаблоны дня и недели сохраняются только в этом браузере. Применение добавляет занятия в черновик и проверяет пересечения. В справочниках можно изменять группы, аудитории, предметы и назначения преподавателей. Доступ к управлению есть только у подтверждённого владельца. Публичная регистрация и создание дополнительных аккаунтов через этот экран недоступны.</p><h3>Разовые изменения</h3><p>«Изменить» меняет регулярное занятие. «По дате» отменяет или переносит одну встречу. Перенос сохраняет уведомление на исходную дату и показывает занятие на новой дате.</p><h3>Сохранение и доступ</h3><p>Права проверяет сервер. Вход владельца требует пароль, подтверждение почты и TOTP. Сессия хранится только в памяти вкладки; access token действует 15 минут, refresh token — до одного часа. Перезагрузка потребует повторного входа. Редактирование и публикация требуют связи. При одновременном редактировании устаревшая версия не перезапишет новую.</p><h3>Инструменты</h3><ul><li>Поиск, просмотр дня или недели, подбор свободного кабинета.</li><li>Экспорт календаря .ics и печать расписания.</li><li>Импорт CSV или JSON проходит через черновик и проверку перед публикацией.</li><li>Личные заметки и шаблоны остаются на устройстве; это не облачная резервная копия.</li></ul><h3>Уведомления</h3><p>Изменения и объявления доступны внутри сайта. Внешние уведомления, Telegram-клиент и фоновая доставка пока не подключены.</p><a class="btn" href="https://github.com/xan-xz/schedule" target="_blank" rel="noopener">GitHub проекта</a></section>`;
 }
 function render() {
   if (!S.data) {
     setMarkup(
       $("app"),
       shell(
-        `<section class="panel"><div class="empty">${S.online ? "Загружаем данные…" : "Подключаем учебное пространство…"}<div class="row section-space loading-actions">${button("Повторить", "refresh", {}, "")}${S.base ? button("Открыть демо", "demo", {}, "primary") : ""}</div></div></section>`,
+        `<section class="panel"><div class="empty">${S.online ? "Загружаем данные…" : "Подключаем учебное пространство…"}<div class="row section-space loading-actions">${button("Повторить", "refresh", {}, "")}</div></div></section>`,
       ),
     );
     return;
@@ -1076,12 +798,9 @@ function render() {
     schedule,
     tasks,
     notifications,
-    requests,
-    attendance,
     catalogs,
     conflicts: conflictsPage,
     history: historyPage,
-    accounts,
     guide,
   };
   const search = document.activeElement?.id === "global-search",
@@ -1170,7 +889,6 @@ function lessonForm(id) {
   const old = S.data.lessons.find((l) => l.id === id);
   if (!S.data.subjects.length || !S.data.groups.length)
     throw Error("Сначала добавь предметы и группы в справочники");
-  const g = S.data.groups.find((g) => g.id === old?.groupId) || viewedGroup();
   const fields = [
     selectField(
       "groupId",
@@ -1537,71 +1255,6 @@ function announcementForm() {
     "Сообщение появится внутри сайта у указанных получателей. Внешние сообщения не отправляются.",
   );
 }
-function requestForm(id, date) {
-  const ls = S.data.lessons.filter(
-    (l) => isAdmin() || l.teacherId === S.user.teacherId,
-  );
-  if (!ls.length)
-    throw Error("Сначала администратор должен назначить преподавателю занятия");
-  const l = ls.find((l) => l.id === id) || ls[0];
-  let date_ = date || addDays(monday(S.date), l.day);
-  showForm(
-    "Запрос на перенос",
-    [
-      {
-        name: "lessonId",
-        label: "Занятие",
-        type: "select",
-        value: l.id,
-        full: true,
-        options: ls.map((l) => ({
-          value: l.id,
-          label:
-            DAYS[l.day] +
-            " " +
-            l.start +
-            " · " +
-            name("subjects", l.subjectId) +
-            " · " +
-            name("groups", l.groupId),
-        })),
-      },
-      {
-        name: "date",
-        label: "Дата исходной пары",
-        type: "date",
-        value: date_,
-        required: true,
-      },
-      selectField("roomId", "Предлагаемая аудитория", S.data.rooms, l.roomId),
-      {
-        name: "start",
-        label: "Новое начало",
-        type: "time",
-        value: l.start,
-        required: true,
-      },
-      {
-        name: "end",
-        label: "Новый конец",
-        type: "time",
-        value: l.end,
-        required: true,
-      },
-      {
-        name: "reason",
-        label: "Причина",
-        type: "textarea",
-        required: true,
-        full: true,
-        max: 1000,
-      },
-    ],
-    async (v, rev) => act("request.create", v, rev),
-    "Отправить запрос",
-    "Перенос внутри выбранного дня. До согласования расписание остаётся прежним.",
-  );
-}
 function catalogForm(entity, id) {
   if (!isAdmin()) throw Error("Нужны права администратора");
   const old = S.data[entity].find((x) => x.id === id);
@@ -1669,155 +1322,16 @@ function catalogForm(entity, id) {
     },
   );
 }
-function accountForm(id) {
-  const old = S.users.find((u) => u.id === id);
-  showForm(
-    old ? "Изменить аккаунт" : "Создать аккаунт",
-    [
-      {
-        name: "name",
-        label: "Имя пользователя",
-        required: true,
-        value: old?.name,
-      },
-      {
-        name: "username",
-        label: "Логин",
-        required: true,
-        value: old?.username,
-        help: "Латиница, цифры, точка, дефис. От 3 символов.",
-      },
-      {
-        name: "role",
-        label: "Роль",
-        type: "select",
-        value: old?.role || "student",
-        options: (ownerSession
-          ? ["student", "teacher"]
-          : ["student", "teacher", "admin"]
-        ).map((value) => ({
-          value,
-          label: ROLES[value],
-        })),
-      },
-      {
-        name: "active",
-        label: "Доступ",
-        type: "select",
-        value: old?.active === false ? "false" : "true",
-        options: [
-          { value: "true", label: "Активен" },
-          { value: "false", label: "Отключён" },
-        ],
-      },
-      selectField(
-        "groupId",
-        "Группа студента",
-        S.data.groups,
-        old?.groupId || S.data.groups[0]?.id,
-        false,
-      ),
-      {
-        name: "subgroup",
-        label: "Подгруппа студента",
-        type: "select",
-        value: old?.subgroup || "А",
-        options: [...new Set(S.data.groups.flatMap((g) => g.subgroups))].map(
-          (value) => ({ value, label: value }),
-        ),
-      },
-      selectField(
-        "teacherId",
-        "Запись преподавателя",
-        S.data.teachers,
-        old?.teacherId,
-      ),
-      {
-        name: "password",
-        label: old ? "Новый пароль (пусто — не менять)" : "Пароль",
-        type: "password",
-        required: !old,
-        full: true,
-        help: "От 8 символов. Передай пароль пользователю самостоятельно.",
-      },
-    ],
-    async (v) => {
-      v.active = v.active === "true";
-      if (old) v.id = old.id;
-      if (S.mode === "demo") {
-        if (
-          !/^[a-z0-9._-]{3,60}$/.test(v.username) ||
-          (!old && v.password.length < 8)
-        )
-          throw Error("Проверь логин и пароль");
-        if (S.demoUsers.some((u) => u.username === v.username && u.id !== v.id))
-          throw Error("Логин уже занят");
-        delete v.password;
-        v.id = v.id || uid();
-        S.demoUsers = S.demoUsers.filter((u) => u.id !== v.id);
-        S.demoUsers.push(v);
-        applyDemo();
-      } else {
-        install(await api("account.save", { account: v }));
-        render();
-      }
-      toast("Аккаунт сохранён");
-    },
-    "Сохранить аккаунт",
-    "Для студента обязательны группа и подгруппа; для преподавателя — его запись из справочника.",
-  );
-}
 function loginForm() {
-  if (S.mode === "live") {
-    location.assign(new URL("../admin/", import.meta.url).href);
-    return;
-  }
-  if (S.mode === "demo") {
-    leaveDemo().then(loginForm);
-    return;
-  }
-  showForm(
-    "Вход в UniFlow",
-    [
-      {
-        name: "username",
-        label: "Логин",
-        value: "",
-        required: true,
-        full: true,
-      },
-      {
-        name: "password",
-        label: "Пароль",
-        type: "password",
-        required: true,
-        full: true,
-      },
-    ],
-    async (v) => {
-      const result = await api("login", v);
-      S.token = result.token;
-      S.user = result.user;
-      S.scope = "group";
-      S.teacherId = "";
-      await refresh();
-      toast("Вход выполнен: " + ROLES[S.user.role]);
-    },
-    "Войти",
-    "Основной администратор: логин admin. Пароль администратора сохранён прежний. Остальные аккаунты создаёт администратор.",
-  );
+  location.assign(new URL("../admin/", import.meta.url).href);
 }
 function profile() {
   const notes = storage.get(myKey("notes"), "");
   setMarkup(
     $("modal"),
-    `<div class="dialog-head"><h2>Твой кабинет</h2>${button("Закрыть", "closeModal", {}, "btn-square", "close")}</div><h3>${h(S.user.name)}</h3><p class="dialog-sub profile-subtitle">${h(ROLES[S.user.role])} · ${S.mode === "demo" ? "демо-песочница" : "настоящий аккаунт"}</p><div class="row">${button("Светлая / тёмная тема", "theme", {}, "", "sun")}${S.user.role !== "guest" && S.mode === "live" ? button("Сменить пароль", "password", {}, "", "edit") + button("Выйти из аккаунта", "logout", {}, "", "logout") : ""}</div><label class="form-label section-space">Личные заметки<textarea id="personal-notes" class="profile-notes" maxlength="10000" placeholder="Планы, вопросы к преподавателю, ссылки…">${h(notes)}</textarea><small>Сохраняются автоматически только в этом браузере для текущего профиля.</small></label><div class="notice-info section-space">${S.mode === "demo" ? "Роль, группу и преподавателя можно выбрать вверху страницы. Для настоящего входа сначала выйди из демо." : "Роль выдаёт администратор. После перезагрузки вкладки потребуется войти заново."}</div>`,
+    `<div class="dialog-head"><h2>Твой кабинет</h2>${button("Закрыть", "closeModal", {}, "btn-square", "close")}</div><h3>${h(S.user.name)}</h3><p class="dialog-sub profile-subtitle">${h(ROLES[S.user.role])}</p><div class="row">${button("Светлая / тёмная тема", "theme", {}, "", "sun")}${button("Выйти из аккаунта", "logout", {}, "", "logout")}</div><label class="form-label section-space">Личные заметки<textarea id="personal-notes" class="profile-notes" maxlength="10000" placeholder="Планы, вопросы к преподавателю, ссылки…">${h(notes)}</textarea><small>Сохраняются автоматически только в этом браузере для текущего профиля.</small></label><div class="notice-info section-space">Вход владельца подтверждён почтой, паролем и 2FA. Сессия хранится только в памяти вкладки. После её закрытия потребуется войти заново.</div>`,
   );
-  if (
-    S.mode === "live" &&
-    S.user.role !== "guest" &&
-    S.capabilities?.logoutAll
-  ) {
+  if (S.capabilities?.logoutAll)
     $("modal")
       .querySelector(".row")
       .append(
@@ -1827,56 +1341,7 @@ function profile() {
           "Выйти на всех устройствах",
         ),
       );
-  }
   $("modal").showModal();
-  if (ownerSession) {
-    $("modal").querySelector('[data-action="password"]')?.remove();
-    const notice = $("modal").querySelector(".notice-info");
-    if (notice)
-      notice.textContent =
-        "Вход владельца подтверждён почтой, паролем и 2FA. Сессия хранится только в памяти вкладки. После её закрытия потребуется войти заново.";
-  }
-}
-function passwordForm() {
-  if (S.mode === "demo")
-    throw Error("В демо паролей нет. Используй настоящий аккаунт.");
-  showForm(
-    "Изменить пароль",
-    [
-      {
-        name: "currentPassword",
-        label: "Текущий пароль",
-        type: "password",
-        required: true,
-        full: true,
-      },
-      {
-        name: "password",
-        label: "Новый пароль (от 8 символов)",
-        type: "password",
-        required: true,
-        full: true,
-      },
-      {
-        name: "repeat",
-        label: "Повтори новый пароль",
-        type: "password",
-        required: true,
-        full: true,
-      },
-    ],
-    async (v) => {
-      if (v.password !== v.repeat) throw Error("Пароли не совпадают");
-      if (v.password.length < 8) throw Error("Минимум 8 символов");
-      await api("password.change", v);
-      S.token = "";
-      S.user = { id: "guest", role: "guest", name: "Посетитель" };
-      await refresh();
-      toast("Пароль изменён. Войди с новым паролем.");
-    },
-    "Изменить и выйти",
-    "Все текущие сессии этого аккаунта будут завершены.",
-  );
 }
 function freeRooms() {
   showForm(
@@ -1951,7 +1416,7 @@ function download(filename, text, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function exportJson() {
-  const data = clone(S.mode === "demo" ? S.demoFull : S.data);
+  const data = clone(S.data);
   const allowed = Object.fromEntries(
     [
       "groups",
@@ -1994,7 +1459,7 @@ function importJson() {
         throw Error("Нужен файл экспорта UniFlow 2");
       // The shared import engine validates a cloned candidate and applies the
       // same absent/present/null semantics as the server, without publishing.
-      mutate(S.mode === "demo" ? S.demoFull : S.data, S.user, "import", {
+      mutate(S.data, S.user, "import", {
         data,
       });
       showForm(
@@ -2068,70 +1533,20 @@ function exportIcs() {
   );
   toast("Экспортированы ближайшие 28 дней по текущему фильтру");
 }
-function attendanceCsv() {
-  const rows = [
-    ["Дата", "Предмет", "Студент", "Отметка"],
-    ...S.data.attendance.map((a) => [
-      a.date,
-      name(
-        "subjects",
-        S.data.lessons.find((l) => l.id === a.lessonId)?.subjectId,
-      ),
-      S.users.find((u) => u.id === a.studentId)?.name || a.studentId,
-      attStatus(a.status),
-    ]),
-  ];
-  const safe = (v) => {
-    let s = String(v);
-    if (/^[=+@-]/.test(s)) s = "'" + s;
-    return '"' + s.replace(/"/g, '""') + '"';
-  };
-  download(
-    "uniflow-attendance.csv",
-    "\ufeff" + rows.map((row) => row.map(safe).join(";")).join("\r\n"),
-    "text/csv;charset=utf-8",
-  );
-}
 async function rollback(revision) {
   showForm(
     "Восстановить версию " + revision,
     [],
     async (_values, expected) => {
-      if (S.mode === "demo") {
-        if (expected !== S.revision)
-          throw Error("Данные изменились. Открой подтверждение заново.");
-        const snapshot = S.versions.find((v) => v.revision === revision);
-        if (!snapshot) throw Error("Версия не найдена");
-        const before = clone(S.demoFull);
-        S.demoFull = clone(snapshot.data);
-        validate(S.demoFull);
-        S.versions.unshift({
-          revision: S.revision,
-          data: before,
-          actor: S.user.name,
-          reason: "Откат к версии " + revision,
-          created_at: new Date().toISOString(),
-        });
-        S.revision++;
-        applyDemo();
-      } else {
-        install(
-          await api("rollback", { revision: expected, target: revision }),
-        );
-        render();
-      }
+      install(await api("rollback", { revision: expected, target: revision }));
+      render();
       toast("Версия восстановлена");
     },
     "Восстановить",
-    "Будет восстановлен весь документ: расписания ВСЕХ групп, задания, объявления и посещаемость. Аккаунты и пароли не меняются. Текущая версия сохранится для отката.",
+    "Будет восстановлен весь документ: расписания ВСЕХ групп, задания, объявления и посещаемость. Настройки входа владельца не меняются. Текущая версия сохранится для отката.",
   );
 }
 async function handleAction(action, args, el) {
-  if (
-    ownerSession &&
-    ["demo", "demoRole", "resetDemo", "leaveDemo"].includes(action)
-  )
-    return;
   if (ownerEnding) return;
   if (action === "page") {
     S.page = args.page;
@@ -2141,54 +1556,6 @@ async function handleAction(action, args, el) {
   }
   if (action === "closeModal") {
     closeModal();
-    return;
-  }
-  if (action === "demo") {
-    await enterDemo();
-    return;
-  }
-  if (action === "leaveDemo") {
-    await leaveDemo();
-    return;
-  }
-  if (action === "demoRole") {
-    const role = args.role || el?.dataset.role;
-    if (S.mode !== "demo") await enterDemo(role);
-    else {
-      S.user = demoRoleUser(role);
-      S.scope = "group";
-      S.teacherId = "";
-      S.page = "overview";
-      S.search = "";
-      applyDemo();
-      history.replaceState(null, "", location.pathname + "?demo=" + role);
-    }
-    return;
-  }
-  if (action === "resetDemo") {
-    showForm(
-      "Сбросить демо",
-      [],
-      async () => {
-        storage.set("uf.demo.source.v4", null);
-        await enterDemo(S.user.role);
-      },
-      "Сбросить",
-      "Все изменения в песочнице будут удалены. Настоящий сайт не изменится.",
-    );
-    return;
-  }
-  if (action === "previewConflict") {
-    const data = clone(S.mode === "demo" ? S.demoFull : S.data),
-      source = data.lessons.find((l) => l.teacherId && l.roomId),
-      other = data.groups.find((g) => g.id !== source.groupId);
-    data.lessons.push({
-      ...source,
-      id: "unsaved-conflict-example",
-      groupId: other.id,
-    });
-    S.draftConflicts = findConflicts(data);
-    render();
     return;
   }
   if (action === "clearConflicts") {
@@ -2239,46 +1606,19 @@ async function handleAction(action, args, el) {
     profile();
     return;
   }
-  if (action === "password") {
-    passwordForm();
-    return;
-  }
   if (action === "theme") {
     document.body.classList.toggle("dark");
     storage.set("uf.dark", document.body.classList.contains("dark"));
     return;
   }
   if (action === "logoutAll") {
-    if (
-      S.mode !== "live" ||
-      S.user.role === "guest" ||
-      !S.capabilities?.logoutAll
-    )
-      throw Error("Выйди из демо и войди в настоящий аккаунт.");
+    if (!S.capabilities?.logoutAll)
+      throw Error("Выход на всех устройствах недоступен.");
     await api("logout.all");
-    if (ownerSession) return;
-    S.token = "";
-    S.user = { id: "guest", role: "guest", name: "Посетитель" };
-    S.capabilities = {};
-    S.scope = "group";
-    S.teacherId = "";
-    closeModal();
-    await refresh();
-    toast("Выход выполнен на всех устройствах");
     return;
   }
   if (action === "logout") {
-    try {
-      await api("logout");
-      if (ownerSession) return;
-    } catch {}
-    S.token = "";
-    S.user = { id: "guest", role: "guest", name: "Посетитель" };
-    S.scope = "group";
-    S.teacherId = "";
-    closeModal();
-    await refresh();
-    toast("Выход выполнен");
+    await api("logout");
     return;
   }
   if (action === "lesson") {
@@ -2293,20 +1633,12 @@ async function handleAction(action, args, el) {
     taskForm(args.id);
     return;
   }
-  if (action === "request") {
-    requestForm(args.id, args.date);
-    return;
-  }
   if (action === "announcement") {
     announcementForm();
     return;
   }
   if (action === "catalog") {
     catalogForm(args.entity, args.id);
-    return;
-  }
-  if (action === "account") {
-    accountForm(args.id);
     return;
   }
   if (action === "freeRooms") {
@@ -2346,24 +1678,7 @@ async function handleAction(action, args, el) {
       [],
       async (_, rev) => act("catalog.delete", args, rev),
       "Удалить",
-      "Если запись используется в занятиях или аккаунтах, удаление будет запрещено.",
-    );
-    return;
-  }
-  if (action === "decide") {
-    showForm(
-      args.status === "approved" ? "Согласовать перенос" : "Отклонить перенос",
-      [
-        {
-          name: "response",
-          label: "Комментарий преподавателю",
-          type: "textarea",
-          full: true,
-        },
-      ],
-      async (v, rev) => act("request.decide", { ...args, ...v }, rev),
-      args.status === "approved" ? "Согласовать" : "Отклонить",
-      "При согласовании проверяются все пересечения на выбранную дату.",
+      "Если запись используется в расписании или связанных учебных данных, удаление будет запрещено.",
     );
     return;
   }
@@ -2387,19 +1702,15 @@ async function handleAction(action, args, el) {
     exportIcs();
     return;
   }
-  if (action === "attendanceCsv") {
-    attendanceCsv();
-    return;
-  }
   if (action === "print") {
     window.print();
     return;
   }
   if (action === "share") {
-    const url = new URL(location.href);
+    const url = new URL("../", import.meta.url);
     url.search = "";
-    url.searchParams.set("group", S.groupId);
-    url.searchParams.set("subgroup", S.subgroup);
+    url.searchParams.set("g", S.groupId);
+    url.searchParams.set("sub", S.subgroup);
     url.searchParams.set("date", S.date);
     await navigator.clipboard.writeText(url.toString());
     toast("Ссылка на выбранную группу скопирована");
@@ -2425,31 +1736,14 @@ document.addEventListener("click", (event) => {
   let args = {};
   try {
     args = JSON.parse(decodeURIComponent(el.dataset.args || "%7B%7D"));
-  } catch {}
+  } catch {
+    /* Browser storage or malformed optional UI arguments. */
+  }
   handleAction(el.dataset.action, args, el).catch((e) => toast(e.message));
 });
 document.addEventListener("change", async (event) => {
   const el = event.target;
   try {
-    if (
-      S.mode === "demo" &&
-      (el.hasAttribute("data-demo-group") ||
-        el.hasAttribute("data-demo-subgroup") ||
-        el.hasAttribute("data-demo-teacher") ||
-        el.hasAttribute("data-demo-subject"))
-    ) {
-      if (el.hasAttribute("data-demo-group")) S.groupId = el.value;
-      if (el.hasAttribute("data-demo-subgroup")) S.subgroup = el.value;
-      if (el.hasAttribute("data-demo-teacher")) S.demoTeacherId = el.value;
-      if (el.hasAttribute("data-demo-subject"))
-        S.demoTeacherId =
-          S.demoFull.teachers.find((t) => t.subjects.includes(el.value))?.id ||
-          "";
-      S.user = demoRoleUser(S.user.role);
-      S.search = "";
-      applyDemo();
-      return;
-    }
     if (el.dataset.filter) {
       S[el.dataset.filter] = el.value;
       if (el.dataset.filter === "groupId") {
@@ -2459,12 +1753,7 @@ document.addEventListener("change", async (event) => {
       }
       if (el.dataset.filter === "subgroup")
         storage.set("uf.subgroup", S.subgroup);
-      if (S.mode === "demo" && S.user.role === "student") {
-        S.user = demoRoleUser("student");
-        applyDemo();
-      } else if (S.mode === "live" && S.user.role === "guest")
-        await refresh(true);
-      else render();
+      render();
     }
     if (el.dataset.taskCheck) {
       const done = new Set(storage.get(myKey("tasks"), []));
@@ -2473,23 +1762,6 @@ document.addEventListener("change", async (event) => {
         : done.delete(el.dataset.taskCheck);
       storage.set(myKey("tasks"), [...done]);
       render();
-    }
-    if (el.id === "attendance-date") {
-      S.date = el.value;
-      render();
-    }
-    if (el.id === "attendance-lesson") {
-      S.attendanceId = el.value;
-      render();
-    }
-    if (el.dataset.attendance && el.value) {
-      el.disabled = true;
-      await act("attendance.save", {
-        studentId: el.dataset.attendance,
-        lessonId: S.attendanceId,
-        date: S.date,
-        status: el.value,
-      });
     }
   } catch (e) {
     toast(e.message);
@@ -2523,29 +1795,6 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh(true);
 });
 window.addEventListener("online", () => refresh(true));
-window.addEventListener("storage", (event) => {
-  if (event.key === "uf.demo.source.v4" && S.mode === "demo") {
-    const saved = storage.get("uf.demo.source.v4", null);
-    if (saved && saved.revision > S.revision) {
-      S.demoFull = saved.data;
-      S.demoUsers = saved.users;
-      S.revision = saved.revision;
-      S.versions = saved.versions;
-      install({
-        data: visible(S.demoFull, S.user),
-        revision: S.revision,
-        user: S.user,
-        users: isAdmin()
-          ? S.demoUsers
-          : isTeacher()
-            ? S.demoUsers.filter((u) => u.role === "student")
-            : [],
-        versions: S.versions,
-      });
-      render();
-    }
-  }
-});
 setInterval(() => refresh(true), 20000);
 setInterval(() => {
   if (!document.hidden && !$("modal").open && S.page === "overview" && S.data)
@@ -2560,41 +1809,25 @@ if (
   !Number.isNaN(Date.parse(query.get("date")))
 )
   S.date = query.get("date");
-if (
-  !ownerSession &&
-  !["student", "teacher", "admin"].includes(query.get("demo"))
-) {
+if (!ownerSession) {
+  ownerEnding = true;
   location.replace(new URL("../admin/", import.meta.url).href);
 } else {
-  if (ownerSession) {
-    S.user = {
-      id: ownerSession.owner.id,
-      email: ownerSession.owner.email,
-      name: "Араппаев Азат",
-      role: "admin",
-    };
-  }
+  S.user = {
+    id: ownerSession.owner.id,
+    email: ownerSession.owner.email,
+    name: "Владелец",
+    role: "admin",
+  };
   render();
-  try {
-    const response = await fetch(new URL("../seed.json", import.meta.url));
-    if (response.ok) S.base = await response.json();
-  } catch {}
-  if (
-    !ownerSession &&
-    ["student", "teacher", "admin"].includes(query.get("demo"))
-  ) {
-    await enterDemo(query.get("demo"));
-  } else {
-    await refresh();
-  }
-  if (S.mode === "live") connectRealtime();
+  await refresh();
+  connectRealtime();
 }
 
 function enhanceWorkspace() {
   const main = $("main");
   if (!main) return;
   const returnUrl = new URL("../", import.meta.url);
-  if (S.mode === "demo") returnUrl.searchParams.set("demo", S.user.role);
   const back = dom(
     "a",
     { href: returnUrl.href, class: "student-return" },
@@ -2647,7 +1880,7 @@ function startDraft() {
   if (!isAdmin()) throw Error("Нужны права администратора");
   if (draft) return;
   draft = {
-    data: clone(S.mode === "demo" ? S.demoFull : S.data),
+    data: clone(S.data),
     before: clone(S.data),
     revision: S.revision,
   };
@@ -2686,14 +1919,14 @@ async function templateManager() {
   if (!isAdmin()) return;
   try {
     const tools = await import("./templates.mjs");
-    const templates = tools.loadTemplates(S.mode);
+    const templates = tools.loadTemplates();
     const body = dom(
       "div",
       {},
       dom(
         "p",
         { class: "notice-info" },
-        "Шаблоны сохраняются только в этом браузере, отдельно для демо и настоящего сайта. Сохраняются регулярные пары, тип недели и сроки действия; разовые изменения не включаются. Применение добавляет занятия в черновик и проверяет пересечения; существующие пары не заменяются.",
+        "Шаблоны сохраняются только в этом браузере для управления расписанием. Сохраняются регулярные пары, тип недели и сроки действия; разовые изменения не включаются. Применение добавляет занятия в черновик и проверяет пересечения; существующие пары не заменяются.",
       ),
       domButton("Сохранить новый шаблон", () => templateSaveForm(tools), {
         class: "btn primary section-space",
@@ -2794,17 +2027,14 @@ function templateSaveForm(tools) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     try {
-      const template = tools.createTemplate(
-        draft?.data || (S.mode === "demo" ? S.demoFull : S.data),
-        {
-          name: title.value,
-          kind: kind.value,
-          groupId: S.groupId,
-          subgroup: S.subgroup,
-          day: dayOf(S.date),
-        },
-      );
-      tools.saveTemplate(S.mode, template);
+      const template = tools.createTemplate(draft?.data || S.data, {
+        name: title.value,
+        kind: kind.value,
+        groupId: S.groupId,
+        subgroup: S.subgroup,
+        day: dayOf(S.date),
+      });
+      tools.saveTemplate(template);
       void templateManager();
       toast("Шаблон сохранён на этом устройстве. Расписание не изменилось.");
     } catch (e) {
@@ -2857,11 +2087,11 @@ function templateApplyForm(tools, template) {
     event.preventDefault();
     try {
       // Validate against the complete current draft before creating/modifying it.
-      const result = tools.applyTemplate(
-        draft?.data || (S.mode === "demo" ? S.demoFull : S.data),
-        template,
-        { groupId: S.groupId, subgroup: S.subgroup, toDay: Number(day.value) },
-      );
+      const result = tools.applyTemplate(draft?.data || S.data, template, {
+        groupId: S.groupId,
+        subgroup: S.subgroup,
+        toDay: Number(day.value),
+      });
       if (!draft) startDraft();
       draft.data = result;
       S.data = visible(draft.data, S.user);
@@ -2897,7 +2127,7 @@ function templateRenameForm(tools, template) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     try {
-      tools.renameTemplate(S.mode, template.id, title.value);
+      tools.renameTemplate(template.id, title.value);
       void templateManager();
     } catch (e) {
       error.textContent = e.message;
@@ -2930,7 +2160,7 @@ function templateDeleteForm(tools, template) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     try {
-      tools.deleteTemplate(S.mode, template.id);
+      tools.deleteTemplate(template.id);
       void templateManager();
     } catch (e) {
       error.textContent = e.message;
@@ -2949,36 +2179,15 @@ async function publishDraft() {
   const pending = draft;
   S.busy = true;
   try {
-    if (S.mode === "demo") {
-      if (pending.revision !== S.revision)
-        throw Error(
-          "Песочница изменилась. Сохрани правки отдельно и открой новый черновик.",
-        );
-      const before = clone(S.demoFull),
-        result = mutate(S.demoFull, S.user, "import", { data: pending.data });
-      S.versions.unshift({
-        revision: S.revision,
-        actor: S.user.name,
-        reason: "Опубликован черновик расписания",
-        created_at: new Date().toISOString(),
-        data: before,
-      });
-      S.versions = S.versions.slice(0, 30);
-      S.demoFull = result.data;
-      S.revision++;
-      draft = null;
-      applyDemo();
-    } else {
-      if (!S.online) throw Error("Нет сети. Черновик остаётся в этой вкладке.");
-      const result = await api("mutate", {
-        op: "import",
-        payload: { data: pending.data },
-        revision: pending.revision,
-      });
-      draft = null;
-      install(result);
-      render();
-    }
+    if (!S.online) throw Error("Нет сети. Черновик остаётся в этой вкладке.");
+    const result = await api("mutate", {
+      op: "import",
+      payload: { data: pending.data },
+      revision: pending.revision,
+    });
+    draft = null;
+    install(result);
+    render();
     toast("Черновик опубликован. Предыдущая версия доступна в истории.");
   } catch (error) {
     toast(error.message);
@@ -3107,10 +2316,10 @@ async function csvExport() {
     const { exportScheduleCsv } = await import("./tools.mjs");
     fileDownload(
       "uniflow-schedule.csv",
-      exportScheduleCsv(
-        draft?.data || (S.mode === "demo" ? S.demoFull : S.data),
-        { groupId: S.groupId, subgroup: S.subgroup },
-      ),
+      exportScheduleCsv(draft?.data || S.data, {
+        groupId: S.groupId,
+        subgroup: S.subgroup,
+      }),
       "text/csv;charset=utf-8",
     );
   } catch (e) {

@@ -47,10 +47,7 @@ function scope(data, options) {
     fail("Подгруппа не найдена.");
   return { group, subgroup };
 }
-const keyFor = (mode) => {
-  if (!["live", "demo"].includes(mode)) fail("Неизвестный режим шаблонов.");
-  return "uf.schedule.templates.v1." + mode;
-};
+export const TEMPLATE_STORAGE_KEY = "uf.schedule.templates.v1.live";
 function cleanTemplate(input) {
   if (
     !input ||
@@ -236,12 +233,8 @@ export function applyTemplate(data, input, options) {
   return result;
 }
 
-export function loadTemplates(
-  mode,
-  store = globalThis.localStorage,
-  strict = false,
-) {
-  const key = keyFor(mode);
+export function loadTemplates(store = globalThis.localStorage, strict = false) {
+  const key = TEMPLATE_STORAGE_KEY;
   try {
     const raw = store?.getItem(key);
     if (!raw) return [];
@@ -261,7 +254,7 @@ export function loadTemplates(
     return [];
   }
 }
-function persist(mode, templates, store) {
+function persist(templates, store) {
   if (!store?.setItem)
     fail("Браузер запретил сохранение шаблонов на устройстве.");
   const json = JSON.stringify(templates);
@@ -271,15 +264,15 @@ function persist(mode, templates, store) {
   )
     fail("Хранилище шаблонов заполнено. Удали лишние шаблоны (не больше 20). ");
   try {
-    store.setItem(keyFor(mode), json);
+    store.setItem(TEMPLATE_STORAGE_KEY, json);
   } catch {
     fail("Не удалось сохранить шаблоны. Проверь доступное место в браузере.");
   }
   return templates;
 }
-export function saveTemplate(mode, input, store = globalThis.localStorage) {
+export function saveTemplate(input, store = globalThis.localStorage) {
   const template = cleanTemplate(input),
-    templates = loadTemplates(mode, store, true);
+    templates = loadTemplates(store, true);
   if (
     templates.some(
       (item) =>
@@ -291,15 +284,10 @@ export function saveTemplate(mode, input, store = globalThis.localStorage) {
     fail(
       "Шаблон с таким названием уже есть. Выбери другое имя; существующий шаблон не заменён.",
     );
-  return persist(mode, [...templates, template], store);
+  return persist([...templates, template], store);
 }
-export function renameTemplate(
-  mode,
-  id,
-  name,
-  store = globalThis.localStorage,
-) {
-  const templates = loadTemplates(mode, store, true),
+export function renameTemplate(id, name, store = globalThis.localStorage) {
+  const templates = loadTemplates(store, true),
     nextName = title(name);
   if (!templates.some((item) => item.id === id))
     fail("Шаблон больше не найден.");
@@ -312,7 +300,6 @@ export function renameTemplate(
   )
     fail("Шаблон с таким названием уже есть.");
   return persist(
-    mode,
     templates.map((item) =>
       item.id === id
         ? { ...item, name: nextName, updatedAt: new Date().toISOString() }
@@ -321,12 +308,11 @@ export function renameTemplate(
     store,
   );
 }
-export function deleteTemplate(mode, id, store = globalThis.localStorage) {
-  const templates = loadTemplates(mode, store, true);
+export function deleteTemplate(id, store = globalThis.localStorage) {
+  const templates = loadTemplates(store, true);
   if (!templates.some((item) => item.id === id))
     fail("Шаблон больше не найден.");
   return persist(
-    mode,
     templates.filter((item) => item.id !== id),
     store,
   );

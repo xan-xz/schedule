@@ -16,7 +16,7 @@ async function files(dir) {
   ).flat();
 }
 for (const path of (
-  await Promise.all(["beta", "backend", "scripts", "tests"].map(files))
+  await Promise.all(["app", "backend", "scripts", "tests"].map(files))
 ).flat()) {
   const result = spawnSync(process.execPath, ["--check", path], {
     encoding: "utf8",

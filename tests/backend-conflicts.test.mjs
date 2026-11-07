@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { candidateConflicts } from "../beta/conflicts.mjs";
+import { candidateConflicts } from "../app/conflicts.mjs";
 import { mutate, occurrences } from "../backend/core.mjs";
 
 test("cancelling one Friday occurrence does not flag unchanged imported source conflicts", async () => {
   const d = JSON.parse(
-    await readFile(new URL("../beta/seed.json", import.meta.url), "utf8"),
+    await readFile(new URL("../app/seed.json", import.meta.url), "utf8"),
   );
   const lesson = d.lessons.find(
     (l) => l.groupId === "g-main" && l.day === 4 && l.week === "all",
@@ -31,7 +31,7 @@ test("cancelling one Friday occurrence does not flag unchanged imported source c
 });
 test("grandfathered conflicts do not authorize a new collision from edited lesson fields", async () => {
   const d = JSON.parse(
-    await readFile(new URL("../beta/seed.json", import.meta.url), "utf8"),
+    await readFile(new URL("../app/seed.json", import.meta.url), "utf8"),
   );
   const lesson = d.lessons.find(
     (l) => l.groupId === "g-main" && l.day === 4 && l.week === "all",

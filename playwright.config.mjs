@@ -1,10 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
-const release = process.env.RELEASE_CHANNEL === "production";
-const port = release ? 4175 : 4173;
+const release = process.env.PW_SERVER_ROOT === "dist";
+const port = Number(process.env.PW_PORT || (release ? 4175 : 4173));
 
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
+  testIgnore: release ? [] : ["**/compiled.spec.mjs", "**/release.spec.mjs"],
   workers: 2,
   outputDir: release ? "test-results/production" : "test-results/source",
   forbidOnly: !!process.env.CI,
@@ -45,7 +46,7 @@ export default defineConfig({
   ],
   webServer: {
     command: `node scripts/serve.mjs --port ${port} --root ${process.env.PW_SERVER_ROOT === "dist" ? "dist" : "."}`,
-    url: `http://127.0.0.1:${port}/schedule/beta/`,
+    url: `http://127.0.0.1:${port}/schedule/`,
     reuseExistingServer: !process.env.CI && !release,
   },
 });

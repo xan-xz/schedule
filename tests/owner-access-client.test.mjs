@@ -6,7 +6,7 @@ import {
   consumeBootstrapFragment,
   OwnerAccessError,
   validOwnerPassword,
-} from "../beta/admin/api.mjs";
+} from "../app/admin/api.mjs";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 
@@ -176,7 +176,7 @@ test("identity swap on rotating refresh fails closed", async () => {
 
 test("vendored QR encoder matches the pinned upstream artifact", async () => {
   const source = await readFile(
-    new URL("../beta/admin/vendor/qrcode-generator-2.0.4.mjs", import.meta.url),
+    new URL("../app/admin/vendor/qrcode-generator-2.0.4.mjs", import.meta.url),
   );
   assert.equal(
     createHash("sha256").update(source).digest("hex"),

@@ -5,7 +5,6 @@ import {
   OwnerAccessError,
   validOwnerPassword,
 } from "./api.mjs";
-import { enrollmentQr } from "./qr.mjs";
 
 const MESSAGES = {
   INVALID_REQUEST: "Проверьте заполненные поля и повторите попытку.",
@@ -389,12 +388,15 @@ export function renderOwnerAccess(
       typeof enrollment?.uri !== "string"
     )
       throw new OwnerAccessError();
-    let qr;
-    try {
-      qr = enrollmentQr(enrollment.uri);
-    } catch {
-      throw new OwnerAccessError();
-    }
+    const qr = el(
+      "div",
+      {},
+      el(
+        "p",
+        { class: "owner-note", role: "status" },
+        "Подготавливаем QR-код…",
+      ),
+    );
     const code = codeInput("Код из нового приложения", "totpCode");
     const manual = el(
       "details",
@@ -411,7 +413,7 @@ export function renderOwnerAccess(
       recovering
         ? "Новое приложение аутентификации"
         : "Подключите приложение аутентификации",
-      "Добавьте аккаунт в приложении по QR-коду, затем введите шестизначный код.",
+      "Добавьте аккаунт по QR-коду или введите ключ вручную. Затем подтвердите шестизначный код.",
       qr,
       manual,
       form(
@@ -430,6 +432,23 @@ export function renderOwnerAccess(
       expiry(),
       back(),
     );
+    const ownView = view;
+    import("./qr.mjs")
+      .then(({ enrollmentQr }) => {
+        if (disposed || view !== ownView || !qr.isConnected) return;
+        qr.replaceChildren(enrollmentQr(enrollment.uri));
+      })
+      .catch(() => {
+        if (disposed || view !== ownView || !qr.isConnected) return;
+        qr.replaceChildren(
+          el(
+            "p",
+            { class: "owner-note", role: "status" },
+            "QR-код недоступен. Введите ключ вручную в приложении и подтвердите код.",
+          ),
+        );
+        manual.open = true;
+      });
   }
   async function authenticated(response, requireRecovery = false) {
     if (
