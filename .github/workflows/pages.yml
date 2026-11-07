@@ -102,6 +102,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - uses: actions/download-artifact@v4
         with:
           name: immutable-production-archive
@@ -109,14 +113,4 @@ jobs:
       - name: Record immutable successful production for future beta builds
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="uniflow-production-${GITHUB_RUN_ID}"
-          EXISTING=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq .target_commitish 2>/dev/null || true)
-          if [ -n "$EXISTING" ]; then
-            test "$EXISTING" = "$GITHUB_SHA" || { echo 'Immutable production tag points to another source.'; exit 1; }
-            ASSET_COUNT=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '[.assets[].name | select(. == "production-site.tar" or . == "production.json")] | unique | length')
-            test "$ASSET_COUNT" = "2" || { echo 'Existing immutable release is incomplete; restore its missing assets before recording success.'; exit 1; }
-            echo 'This successful production run was already recorded.'
-          else
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Verified UniFlow production ${GITHUB_RUN_ID}" --notes "Verified production Pages artifact. Future beta builds preserve this production snapshot byte for byte." release-upload/production-site.tar release-upload/production.json
-          fi
+        run: node scripts/record-production.mjs --dir release-upload
