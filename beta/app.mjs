@@ -2,6 +2,7 @@ import { el, button, field, select, download } from "./lib/dom.mjs";
 import { translator, localeFor } from "./lib/i18n.mjs";
 import {
   initialSettings,
+  readPreference,
   writePreference,
   publicState,
   getSnapshot,
@@ -24,6 +25,12 @@ import * as storage from "./lib/storage.mjs";
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
+const CHOICE_KEY = "uf.student.choice.v1";
+const SETTINGS_KEY = "uf.student.settings.v1";
+const CHOICE_BACKUP = "student-choice:live:v1";
+const SETTINGS_BACKUP = "student-settings:live:v1";
+const inviteCode = query.get("g") || query.get("group") || "";
+const inviteSubgroup = query.get("subgroup") || "";
 function openOwnerRoute() {
   const proof = new URLSearchParams(location.hash.slice(1));
   if (proof.has("access_token") || /^#\/?admin(?:[/?]|$)/.test(location.hash)) {
@@ -51,10 +58,17 @@ const S = {
   error: false,
   busy: false,
   epoch: 0,
+  choiceConfirmed: false,
+  needsChoice: false,
+  choiceReason: "",
+  inviteHandled: false,
+  migrateChoice: false,
+  choiceFocus: false,
 };
-if (query.get("group")) S.settings.groupId = query.get("group");
-if (["А", "Б", "all"].includes(query.get("subgroup")))
-  S.settings.subgroup = query.get("subgroup");
+S.settings = cleanSettings(S.settings);
+if (S.demo && query.get("group")) S.settings.groupId = query.get("group");
+if (S.demo && ["А", "Б", "all"].includes(inviteSubgroup))
+  S.settings.subgroup = inviteSubgroup;
 if (validDate(query.get("date"))) {
   S.selected = query.get("date");
   S.week = monday(S.selected);
@@ -67,6 +81,7 @@ let t = translator(S.settings.lang),
   lastDay = localDate();
 const notices = new Set();
 let refreshAgain = false;
+let lastPreferenceWrite = 0;
 const data = () => S.snapshot?.data;
 const scope = () => ({
   groupId: S.settings.groupId,
@@ -118,12 +133,160 @@ function applyTheme() {
   document.documentElement.dataset.theme = S.settings.theme;
   document.documentElement.lang = S.settings.lang;
 }
+function cleanSettings(value = {}) {
+  return {
+    groupId: typeof value.groupId === "string" ? value.groupId : "g-main",
+    subgroup: typeof value.subgroup === "string" ? value.subgroup : "А",
+    lang: ["ru", "kk", "en"].includes(value.lang) ? value.lang : "ru",
+    theme: ["system", "light", "dark"].includes(value.theme)
+      ? value.theme
+      : "system",
+    hour12: value.hour12 === true,
+    reminder: [0, 5, 10, 15, 30, 60].includes(Number(value.reminder))
+      ? Number(value.reminder)
+      : 0,
+  };
+}
+function availableGroups() {
+  return (data()?.groups || []).filter(
+    (g) =>
+      typeof g.id === "string" &&
+      !g.archived &&
+      !g.archivedAt &&
+      !g.archived_at &&
+      !g.deletedAt &&
+      !g.deleted_at &&
+      !["archived", "deleted"].includes(g.status),
+  );
+}
+function validSubgroup(group, value) {
+  return (
+    value === "all" ||
+    (Array.isArray(group?.subgroups) && group.subgroups.includes(value))
+  );
+}
+function newestRecord(...records) {
+  const newest = records
+    .filter(
+      (record) => record?.version === 1 && Number.isFinite(record.updatedAt),
+    )
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  if (newest)
+    lastPreferenceWrite = Math.max(lastPreferenceWrite, newest.updatedAt);
+  return newest;
+}
+async function restoreSettings() {
+  if (S.demo) {
+    S.choiceConfirmed = true;
+    return;
+  }
+  const [settingsBackup, choiceBackup] = await Promise.all([
+    storage.get(SETTINGS_BACKUP),
+    storage.get(CHOICE_BACKUP),
+  ]);
+  const savedSettings = newestRecord(
+    readPreference(SETTINGS_KEY, null),
+    settingsBackup,
+  );
+  const savedChoice = newestRecord(
+    readPreference(CHOICE_KEY, null),
+    choiceBackup,
+  );
+  if (savedSettings?.settings)
+    S.settings = cleanSettings(savedSettings.settings);
+  if (
+    savedChoice &&
+    typeof savedChoice.groupId === "string" &&
+    typeof savedChoice.subgroup === "string"
+  ) {
+    S.settings.groupId = savedChoice.groupId;
+    S.settings.subgroup = savedChoice.subgroup;
+    S.choiceConfirmed = true;
+  } else {
+    const legacy =
+      readPreference("uf.settings.v1", null)?.groupId ||
+      readPreference("uf.group", null);
+    let formerSingleGroup = false;
+    try {
+      formerSingleGroup = ["А", "Б"].includes(
+        localStorage.getItem("para.group"),
+      );
+    } catch {
+      /* restricted browser */
+    }
+    S.choiceConfirmed = typeof legacy === "string" || formerSingleGroup;
+    S.migrateChoice = S.choiceConfirmed;
+  }
+  t = translator(S.settings.lang);
+  S.needsChoice = !S.choiceConfirmed;
+  S.choiceFocus = S.needsChoice;
+}
 function saveSettings() {
-  if (!writePreference("uf.settings.v1", S.settings))
-    toast(t("storageWarning"));
+  const settings = { ...S.settings };
+  const updatedAt = Math.max(Date.now(), lastPreferenceWrite + 1);
+  lastPreferenceWrite = updatedAt;
+  const record = { version: 1, updatedAt, settings };
+  const localSettings = S.demo
+    ? writePreference("uf.settings.v1", settings)
+    : writePreference(SETTINGS_KEY, record);
+  if (!S.demo) writePreference("uf.settings.v1", settings);
   writePreference("uf.group", S.settings.groupId);
   writePreference("uf.subgroup", S.settings.subgroup);
   applyTheme();
+  if (S.demo) {
+    if (!localSettings) toast(t("storageWarning"));
+    return;
+  }
+  const choice = {
+    version: 1,
+    updatedAt,
+    groupId: settings.groupId,
+    subgroup: settings.subgroup,
+  };
+  const localChoice = !S.choiceConfirmed || writePreference(CHOICE_KEY, choice);
+  const writes = Promise.all([
+    storage.set(SETTINGS_BACKUP, record),
+    S.choiceConfirmed ? storage.set(CHOICE_BACKUP, choice) : true,
+  ]);
+  void writes.then(([settingsSaved, choiceSaved]) => {
+    if ((!localSettings && !settingsSaved) || (!localChoice && !choiceSaved))
+      toast(t("storageWarning"));
+  });
+  return writes;
+}
+function invitedGroup() {
+  return availableGroups().find((group) =>
+    [group.id, group.code, group.name].includes(inviteCode),
+  );
+}
+function validateChoice() {
+  if (S.demo) return;
+  const current = availableGroups().find(
+    (group) => group.id === S.settings.groupId,
+  );
+  const invalid = !current || !validSubgroup(current, S.settings.subgroup);
+  S.needsChoice = !S.choiceConfirmed || invalid;
+  S.choiceReason =
+    S.choiceConfirmed && invalid
+      ? current
+        ? "subgroupUnavailable"
+        : "groupUnavailable"
+      : "";
+  if (inviteCode && !S.inviteHandled) {
+    const candidate = invitedGroup();
+    if (!candidate) {
+      S.needsChoice = true;
+      S.choiceReason = "invalidInvite";
+    } else if (
+      !S.choiceConfirmed ||
+      candidate.id !== S.settings.groupId ||
+      (inviteSubgroup && inviteSubgroup !== S.settings.subgroup)
+    ) {
+      S.needsChoice = true;
+      S.choiceReason =
+        S.choiceConfirmed && !invalid ? "inviteHelp" : S.choiceReason;
+    } else S.inviteHandled = true;
+  }
 }
 async function loadPersonal() {
   const epoch = S.epoch;
@@ -145,10 +308,20 @@ function isTyping() {
   );
 }
 function setSnapshot(snapshot) {
+  const wasChoosing = S.needsChoice;
   S.snapshot = snapshot;
+  validateChoice();
+  if (S.migrateChoice && !S.needsChoice) {
+    S.migrateChoice = false;
+    saveSettings();
+  }
   S.error = false;
   updateStatus();
-  if (!isTyping()) render();
+  if (!wasChoosing && S.needsChoice) {
+    S.choiceFocus = true;
+    $("modal").close();
+    render();
+  } else if (!isTyping()) render();
 }
 function updateStatus() {
   const snapshot = S.snapshot;
@@ -205,11 +378,13 @@ function navigate(page) {
   $("main").focus({ preventScroll: true });
 }
 function header() {
-  $("identity").textContent =
-    name("groups", S.settings.groupId, S.settings.groupId) +
-    " · " +
-    (S.settings.subgroup === "all" ? t("both") : S.settings.subgroup) +
-    (S.demo ? " · " + t("demo", { role: t(S.demo) }) : "");
+  $("identity").textContent = S.needsChoice
+    ? t("chooseGroup")
+    : name("groups", S.settings.groupId, S.settings.groupId) +
+      " · " +
+      (S.settings.subgroup === "all" ? t("both") : S.settings.subgroup) +
+      (S.demo ? " · " + t("demo", { role: t(S.demo) }) : "");
+  $("navigation").hidden = S.needsChoice;
   $("navigation").replaceChildren(
     ...["today", "week", "tasks", "more"].map((page) =>
       button(t(page), () => navigate(page), {
@@ -789,16 +964,162 @@ function renderTasks() {
     ...(rows.length ? rows : [empty(t("emptyTasks"))]),
   ];
 }
+function clearInvite() {
+  S.inviteHandled = true;
+  const url = new URL(location.href);
+  for (const key of ["g", "group", "subgroup"]) url.searchParams.delete(key);
+  history.replaceState(null, "", url.pathname + url.search + url.hash);
+}
+function renderGroupChoice() {
+  const groups = availableGroups();
+  const current = groups.find((group) => group.id === S.settings.groupId);
+  const invited = !S.inviteHandled && invitedGroup();
+  let draftGroup =
+    invited?.id ||
+    (S.choiceReason === "subgroupUnavailable" ? current?.id : "") ||
+    "";
+  let draftSubgroup =
+    invited && validSubgroup(invited, inviteSubgroup)
+      ? inviteSubgroup
+      : S.settings.subgroup;
+  const groupSelect = select(
+    [["", t("chooseGroup")], ...groups.map((group) => [group.id, group.name])],
+    draftGroup,
+    () => updateSubgroups(),
+    { required: true },
+  );
+  const subgroupSelect = select(
+    [],
+    "",
+    () => {
+      draftSubgroup = subgroupSelect.value;
+    },
+    { required: true },
+  );
+  const subgroupField = field(t("subgroup"), subgroupSelect);
+  const send = el(
+    "button",
+    { type: "submit", class: "primary wide" },
+    t("saveGroup"),
+  );
+  const error = el("p", { role: "alert", class: "form-error" });
+  function updateSubgroups() {
+    draftGroup = groupSelect.value;
+    const selected = availableGroups().find((group) => group.id === draftGroup);
+    subgroupField.hidden = !selected;
+    send.disabled = !selected;
+    if (!selected) return;
+    const values = [...(selected.subgroups || []), "all"];
+    if (!validSubgroup(selected, draftSubgroup)) draftSubgroup = values[0];
+    subgroupSelect.replaceChildren(
+      ...values.map((value) =>
+        el("option", { value }, value === "all" ? t("both") : value),
+      ),
+    );
+    subgroupSelect.value = draftSubgroup;
+  }
+  const search = el("input", {
+    type: "search",
+    autocomplete: "off",
+    placeholder: t("searchGroup"),
+    oninput: (event) => {
+      const term = event.target.value.trim().toLocaleLowerCase();
+      const matches = groups.filter((group) =>
+        (group.name + " " + (group.specialty || ""))
+          .toLocaleLowerCase()
+          .includes(term),
+      );
+      groupSelect.replaceChildren(
+        el(
+          "option",
+          { value: "" },
+          t(matches.length ? "chooseGroup" : "noGroups"),
+        ),
+        ...matches.map((group) =>
+          el("option", { value: group.id }, group.name),
+        ),
+      );
+      groupSelect.value = matches.some((group) => group.id === draftGroup)
+        ? draftGroup
+        : "";
+      updateSubgroups();
+    },
+  });
+  const form = el(
+    "form",
+    { class: "settings-section" },
+    field(t("searchGroup"), search),
+    field(t("group"), groupSelect),
+    subgroupField,
+    send,
+    error,
+  );
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const selected = availableGroups().find(
+      (group) => group.id === groupSelect.value,
+    );
+    if (!selected || !validSubgroup(selected, subgroupSelect.value)) {
+      error.textContent = t("groupUnavailable");
+      return;
+    }
+    S.choiceConfirmed = true;
+    S.needsChoice = false;
+    S.choiceReason = "";
+    S.settings.subgroup = subgroupSelect.value;
+    S.page = "today";
+    clearInvite();
+    await changeSetting("groupId", selected.id);
+    $("main").focus({ preventScroll: true });
+  });
+  updateSubgroups();
+  const keep =
+    S.choiceConfirmed && current && validSubgroup(current, S.settings.subgroup)
+      ? button(
+          t("keepGroup"),
+          () => {
+            clearInvite();
+            S.needsChoice = false;
+            S.choiceReason = "";
+            render();
+            $("main").focus({ preventScroll: true });
+          },
+          { class: "wide" },
+        )
+      : null;
+  return [
+    el("p", { class: "notice" }, t("onboardingHelp")),
+    S.choiceReason
+      ? el(
+          "p",
+          { class: "notice", role: "status" },
+          t(S.choiceReason, { group: current?.name || S.settings.groupId }),
+        )
+      : null,
+    !navigator.onLine
+      ? el("p", { class: "notice" }, t("onboardingOffline"))
+      : null,
+    ...(!groups.length
+      ? [empty(t("noGroups")), button(t("retry"), refresh)]
+      : []),
+    form,
+    keep,
+  ];
+}
 async function changeSetting(key, value) {
   const scoped = ["groupId", "subgroup"].includes(key);
+  if (scoped && !S.demo) {
+    const group = availableGroups().find(
+      (group) => group.id === (key === "groupId" ? value : S.settings.groupId),
+    );
+    if (!group || (key === "subgroup" && !validSubgroup(group, value))) return;
+    S.choiceConfirmed = true;
+  }
   S.settings[key] = value;
   if (key === "groupId") {
     const group = data().groups.find((g) => g.id === value);
-    if (
-      !group?.subgroups.includes(S.settings.subgroup) &&
-      S.settings.subgroup !== "all"
-    )
-      S.settings.subgroup = group?.subgroups[0] || "А";
+    if (!validSubgroup(group, S.settings.subgroup))
+      S.settings.subgroup = group?.subgroups?.[0] || "all";
   }
   if (key === "lang") t = translator(value);
   saveSettings();
@@ -821,6 +1142,7 @@ async function changeSetting(key, value) {
     const cached = await getSnapshot(S.settings);
     if (epoch !== S.epoch) return;
     if (cached && !S.demo) S.snapshot = cached;
+    validateChoice();
     render();
     await refresh();
   } else render();
@@ -859,7 +1181,7 @@ function staffUrl() {
 }
 function renderMore() {
   const groupSelect = select(
-    data().groups.map((g) => [g.id, g.name]),
+    availableGroups().map((g) => [g.id, g.name]),
     S.settings.groupId,
     (e) => e.target.value && changeSetting("groupId", e.target.value),
     { id: "group-select" },
@@ -869,7 +1191,7 @@ function renderMore() {
     placeholder: t("searchGroup"),
     "aria-label": t("searchGroup"),
     oninput: (event) => {
-      const matches = data().groups.filter((g) =>
+      const matches = availableGroups().filter((g) =>
         (g.name + " " + (g.specialty || ""))
           .toLowerCase()
           .includes(event.target.value.toLowerCase()),
@@ -1051,6 +1373,21 @@ function render() {
       $("main").replaceChildren(el("h1", {}, t(S.page)), empty(t("noData")));
     return;
   }
+  if (S.needsChoice) {
+    const keepFocus =
+      S.choiceFocus || document.activeElement === $("main").querySelector("h1");
+    const heading = el(
+      "h1",
+      { tabindex: "-1" },
+      t(S.choiceReason === "inviteHelp" ? "inviteTitle" : "onboardingTitle"),
+    );
+    $("main").replaceChildren(heading, ...renderGroupChoice().filter(Boolean));
+    if (keepFocus) {
+      S.choiceFocus = false;
+      heading.focus();
+    }
+    return;
+  }
   $("main").replaceChildren(
     el("h1", {}, t(S.page)),
     ...{
@@ -1205,6 +1542,7 @@ function scheduleClockTick() {
   );
 }
 scheduleClockTick();
+await restoreSettings();
 applyTheme();
 header();
 await loadPersonal();
