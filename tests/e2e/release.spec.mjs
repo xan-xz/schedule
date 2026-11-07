@@ -19,9 +19,8 @@ test("compiled migration assets stay inside the deployed project subpath", async
     } else await route.continue();
   });
   await mockState(page);
-  const configResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname.endsWith("/compatibility.json"),
+  const configResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/compatibility.json"),
   );
   await page.goto("/schedule/");
   const response = await configResponse;
