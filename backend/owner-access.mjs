@@ -462,9 +462,23 @@ export function createAuthProvider(
     },
     async setPassword(accessToken, value) {
       assertPassword(value);
-      await verified(accessToken);
+      const bootstrap = await verified(accessToken);
+      // A prior attempt may have saved the password before enrollment/state
+      // persistence failed. Native Auth rejects PUT of that same password.
+      // Authenticate first so this retry never resets an already-valid secret.
+      try {
+        const existing = await password(value);
+        if (existing.identity.user.id !== bootstrap.user.id)
+          throw ownerError("ACCESS_DENIED", 403);
+        return existing;
+      } catch (error) {
+        if (error?.code !== "INVALID_PROOF") throw error;
+      }
       await request("/user", { password: value }, accessToken, "PUT");
-      return password(value);
+      const changed = await password(value);
+      if (changed.identity.user.id !== bootstrap.user.id)
+        throw ownerError("ACCESS_DENIED", 403);
+      return changed;
     },
     async totp(session, factorId, code) {
       assertTotp(code);

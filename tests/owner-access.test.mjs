@@ -366,6 +366,57 @@ test("native password and mail operations always select the fixed owner server-s
   );
 });
 
+test("bootstrap password retry never falls back to an update after provider limits, outages or identity mismatch", async () => {
+  const bootstrapToken = jwt(
+    claims({ amr: [{ method: "invite", timestamp: NOW / 1000 }] }),
+  );
+  for (const nativeStatus of [429, 503]) {
+    let updates = 0;
+    const provider = createAuthProvider(
+      configuration,
+      async (url, init) => {
+        if (url.endsWith("/user") && init.method === "GET") return json(user());
+        if (url.includes("/token?")) return json({}, nativeStatus);
+        if (init.method === "PUT") updates++;
+        throw Error("Unexpected operation");
+      },
+      () => NOW,
+    );
+    await assert.rejects(
+      provider.setPassword(bootstrapToken, "synthetic-password-only"),
+      (error) =>
+        error.code === (nativeStatus === 429 ? "RATE_LIMITED" : "UNAVAILABLE"),
+    );
+    assert.equal(updates, 0);
+  }
+  let updates = 0;
+  const otherToken = jwt(claims({ sub: OTHER }));
+  const provider = createAuthProvider(
+    configuration,
+    async (url, init) => {
+      if (url.includes("/token?"))
+        return json({
+          access_token: otherToken,
+          refresh_token: "synthetic-refresh",
+        });
+      if (url.endsWith("/user") && init.method === "GET")
+        return json(
+          init.headers.Authorization === "Bearer " + bootstrapToken
+            ? user()
+            : user({ id: OTHER }),
+        );
+      if (init.method === "PUT") updates++;
+      throw Error("Unexpected operation");
+    },
+    () => NOW,
+  );
+  await assert.rejects(
+    provider.setPassword(bootstrapToken, "synthetic-password-only"),
+    (error) => error.code === "ACCESS_DENIED",
+  );
+  assert.equal(updates, 0);
+});
+
 test("native TOTP must upgrade the original password session, never another email session", async () => {
   const inputToken = jwt(claims());
   const upgraded = (id) =>
