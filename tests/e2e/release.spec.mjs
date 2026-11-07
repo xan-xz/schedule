@@ -5,6 +5,34 @@ const compatibility = JSON.parse(
   await readFile(new URL("../../compatibility.json", import.meta.url), "utf8"),
 );
 
+test("compiled migration assets stay inside the deployed project subpath", async ({
+  page,
+  baseURL,
+}) => {
+  const origin = new URL(baseURL).origin;
+  const escaped = [];
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && !url.pathname.startsWith("/schedule/")) {
+      escaped.push(url.pathname);
+      await route.fulfill({ status: 404, body: "Outside project subpath" });
+    } else await route.continue();
+  });
+  await mockState(page);
+  const configResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.endsWith("/compatibility.json"),
+  );
+  await page.goto("/schedule/");
+  const response = await configResponse;
+  expect(new URL(response.url()).pathname).toBe("/schedule/compatibility.json");
+  expect(response.ok()).toBe(true);
+  await expect(
+    page.getByRole("navigation", { name: "Основные разделы", exact: true }),
+  ).toBeVisible();
+  expect(escaped).toEqual([]);
+});
+
 test("retired addresses and obsolete query switches resolve to the sole canonical product", async ({
   page,
 }) => {

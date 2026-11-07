@@ -5,10 +5,13 @@ import { migrateRetiredPersonal } from "./personal-migration.mjs";
 /** Retire only the exact public namespaces named by the compatibility manifest. */
 export async function retireCompatibility() {
   try {
-    const response = await fetch(
-      new URL("../compatibility.json", import.meta.url),
-      { cache: "no-store", signal: AbortSignal.timeout(4000) },
-    );
+    // This module is bundled into the root entry in production. Resolve public
+    // assets from the document, never from this source module's former folder.
+    const root = new URL("./", location.href);
+    const response = await fetch(new URL("compatibility.json", root), {
+      cache: "no-store",
+      signal: AbortSignal.timeout(4000),
+    });
     if (!response.ok) return;
     const config = await response.json();
     if (!validateCompatibility(config)) return;
@@ -37,7 +40,6 @@ export async function retireCompatibility() {
     await storage.retirePrefixes(config.storage.publicPrefixes);
     if ("serviceWorker" in navigator)
       void (async () => {
-        const root = new URL("../", import.meta.url);
         for (const registration of await navigator.serviceWorker.getRegistrations()) {
           if (
             !config.cacheScopes.some(
