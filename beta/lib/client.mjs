@@ -150,7 +150,9 @@ export async function saveSnapshot(settings, snapshot) {
   return storage.set(snapshotKey(settings), publicSnapshot(snapshot, settings));
 }
 export async function releaseSnapshot(settings) {
-  const r = await fetch(new URL("../bootstrap.json", import.meta.url));
+  const r = await fetch(
+    new URL("./bootstrap.json", new URL("./", location.href)),
+  );
   if (!r.ok) throw Error("snapshot");
   return publicSnapshot(await r.json(), settings || initialSettings());
 }

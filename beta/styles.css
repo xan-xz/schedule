@@ -191,7 +191,7 @@ main,
 }
 main {
   padding: 0 24px;
-  min-height: calc(100svh - 240px);
+  min-height: calc(100svh - 100px);
 }
 main:focus {
   outline: none;

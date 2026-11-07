@@ -10,6 +10,7 @@ export default [
     ignores: [
       "node_modules/**",
       "dist/**",
+      ".release/**",
       "test-results/**",
       "playwright-report/**",
       "beta/manage/app.mjs",
