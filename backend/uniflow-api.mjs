@@ -4,14 +4,7 @@ import {
   verifyOwnerAccess,
   revokeOwnerAccess,
 } from "./owner-access.mjs";
-import {
-  sha,
-  hashPassword,
-  equal,
-  reserveLogin,
-  delayFailure,
-  revokeSessions,
-} from "./security.mjs";
+import { sha, revokeSessions } from "./security.mjs";
 const cors = {
   "Access-Control-Allow-Origin": "https://xan-xz.github.io",
   "Access-Control-Allow-Headers": "content-type,apikey",
@@ -19,37 +12,29 @@ const cors = {
   "Cache-Control": "no-store",
   Vary: "Origin",
 };
-const hex = (b) =>
-  Array.from(new Uint8Array(b))
-    .map((x) => x.toString(16).padStart(2, "0"))
-    .join("");
-const safeAccount = (a) => ({
-  id: a.id,
-  username: a.username,
-  name: a.name,
-  role: a.role,
-  groupId: a.group_id,
-  subgroup: a.subgroup,
-  teacherId: a.teacher_id,
-  active: a.active,
-});
 const capabilities = {
   modelVersion: 2,
   teacherOverrides: true,
   logoutAll: true,
   allSubgroupTasks: true,
 };
-function answer(data, status = 200) {
+function answer(data, status = 200, publicRead = false) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...cors, "Content-Type": "application/json" },
+    headers: {
+      ...cors,
+      ...(publicRead ? { "Access-Control-Allow-Origin": "*" } : {}),
+      "Content-Type": "application/json",
+    },
   });
 }
 async function db(path, options = {}) {
   let secret;
   try {
     secret = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") || "{}").default;
-  } catch {}
+  } catch {
+    // Older deployments can use the existing server-key fallback below.
+  }
   const key = secret || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const headers = {
     apikey: key,
@@ -70,60 +55,31 @@ async function db(path, options = {}) {
   return raw ? JSON.parse(raw) : null;
 }
 async function actor(token) {
-  if (isAccessToken(token)) return verifyOwnerAccess(db, token);
-  if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token))
-    fail("Нужен вход в аккаунт", 401);
-  const rows = await db(
-    "uf_sessions?token_hash=eq." +
-      (await sha(token)) +
-      "&expires_at=gt." +
-      encodeURIComponent(new Date().toISOString()),
-  );
-  if (!rows.length) fail("Сессия истекла. Войди заново.", 401);
-  if (rows[0].user_id === "admin")
-    fail("Для управления требуется новый вход владельца с 2FA", 401);
-  const accounts = await db(
-    "uf_accounts?id=eq." + rows[0].user_id + "&active=eq.true",
-  );
-  if (!accounts.length) fail("Аккаунт отключён", 401);
-  if (accounts[0].role === "admin")
-    fail("Административный доступ разрешён только владельцу с 2FA", 401);
-  return safeAccount(accounts[0]);
+  if (!isAccessToken(token)) fail("Нужен вход владельца с 2FA", 401);
+  return verifyOwnerAccess(db, token);
 }
 async function responseState(user, row) {
   const data = visible(row.data, user);
-  let users = [];
-  if (user.role === "admin")
-    users = (
-      await db(
-        "uf_accounts?select=id,username,name,role,group_id,subgroup,teacher_id,active&order=created_at.desc",
-      )
-    ).map(safeAccount);
-  else if (user.role === "teacher") {
-    const students = await db(
-      "uf_accounts?role=eq.student&active=eq.true&select=id,name,role,group_id,subgroup,teacher_id,active",
-    );
-    users = students
-      .filter((s) =>
-        row.data.lessons.some(
-          (l) =>
-            l.teacherId === user.teacherId &&
-            l.groupId === s.group_id &&
-            (l.subgroup === "all" || l.subgroup === s.subgroup),
-        ),
-      )
-      .map(safeAccount);
-  }
   let versions = [];
   if (user.role === "admin")
     versions = await db(
       "uf_versions?select=revision,actor,reason,created_at&order=revision.desc&limit=30",
     );
-  return { data, revision: row.revision, user, users, versions, capabilities };
+  return {
+    data,
+    revision: row.revision,
+    user,
+    users: [],
+    versions,
+    capabilities,
+  };
 }
 export async function handle(req) {
   let body;
-  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+  if (req.method === "OPTIONS")
+    return new Response(null, {
+      headers: { ...cors, "Access-Control-Allow-Origin": "*" },
+    });
   if (req.method !== "POST")
     return answer({ error: "Method not allowed" }, 405);
   try {
@@ -138,87 +94,24 @@ export async function handle(req) {
     }
     if (!body || typeof body !== "object" || Array.isArray(body))
       fail("Некорректный запрос");
-    if (body.action === "login") {
-      const username =
-        typeof body.username === "string"
-          ? body.username.trim().toLowerCase()
-          : "";
-      if (
-        !/^[a-z0-9._-]{3,60}$/.test(username) ||
-        typeof body.password !== "string" ||
-        body.password.length > 200
-      )
-        fail("Неверный логин или пароль", 401);
-      if (username === "admin")
-        fail("Открой /schedule/admin/ для входа владельца с 2FA", 410);
-      if (!(await reserveLogin(db, req, username)))
-        fail("Слишком много попыток. Подожди 15 минут.", 429);
-      let account;
-      if (username === "admin") {
-        const [settings] = await db("schedule_settings?id=eq.1");
-        account = {
-          ...settings,
-          id: "admin",
-          name: "Администратор",
-          role: "admin",
-          username: "admin",
-          active: true,
-        };
-      } else
-        [account] = await db(
-          "uf_accounts?username=eq." +
-            encodeURIComponent(username) +
-            "&active=eq.true",
-        );
-      // Perform a derivation even when the user does not exist.
-      const derived = await hashPassword(
-        body.password,
-        account?.salt || "nonexistent-account-padding",
+    if (body.action === "login")
+      fail(
+        "Прежний вход отключён. Открой /schedule/admin/ для входа владельца с 2FA",
+        410,
       );
-      if (
-        !account ||
-        account.role === "admin" ||
-        !equal(derived, account.password_hash)
-      )
-        fail("Неверный логин или пароль", 401);
-      const token = hex(crypto.getRandomValues(new Uint8Array(32))),
-        expires = new Date(Date.now() + 7200000).toISOString();
-      if (
-        !(await db("rpc/uf_create_session", {
-          method: "POST",
-          body: JSON.stringify({
-            p_user_id: account.id,
-            p_token_hash: await sha(token),
-            p_expected_hash: account.password_hash,
-            p_legacy: false,
-          }),
-        }))
-      )
-        fail("Пароль изменился. Войди заново.", 401);
-      await db(
-        "uf_sessions?expires_at=lt." +
-          encodeURIComponent(new Date().toISOString()),
-        { method: "DELETE" },
-      );
-      return answer({
-        token,
-        expiresAt: expires,
-        user:
-          account.id === "admin"
-            ? {
-                id: "admin",
-                role: "admin",
-                username: "admin",
-                name: "Администратор",
-              }
-            : safeAccount(account),
-      });
-    }
+    const publicRead = body.action === "state" && !body.token;
+    const origin = req.headers.get("Origin");
+    if (
+      !publicRead &&
+      origin !== null &&
+      origin !== cors["Access-Control-Allow-Origin"]
+    )
+      fail("Источник запроса не разрешён", 403);
     if (body.action === "state") {
-      const [row] = await db("uf_platform?id=eq.1");
       let user;
       if (body.token) user = await actor(body.token);
-      else {
+      const [row] = await db("uf_platform?id=eq.1");
+      if (!user) {
         const group =
           row.data.groups.find((g) => g.id === body.groupId) ||
           row.data.groups[0];
@@ -235,163 +128,43 @@ export async function handle(req) {
                 : group?.subgroups[0] || "",
         };
       }
-      return answer(await responseState(user, row));
+      return answer(await responseState(user, row), 200, publicRead);
     }
-    // Legacy credentials may revoke themselves, but never regain administrative
-    // reads or writes. New owner sessions use the separate revocation boundary.
-    if (
-      ["logout", "logout.all"].includes(body.action) &&
-      isAccessToken(body.token)
-    ) {
-      await revokeOwnerAccess(db, body.token, body.action === "logout.all");
-      return answer({ ok: true });
-    }
-    if (
-      ["logout", "logout.all"].includes(body.action) &&
-      typeof body.token === "string" &&
-      /^[a-f0-9]{64}$/.test(body.token)
-    ) {
-      const rows = await db(
-        "uf_sessions?token_hash=eq." +
-          (await sha(body.token)) +
-          "&expires_at=gt." +
-          encodeURIComponent(new Date().toISOString()),
-      );
-      if (rows[0]?.user_id === "admin") {
+    // Old credentials can only revoke their own actual session identity.
+    // They never enter actor() or provide access to the timetable workspace.
+    if (["logout", "logout.all"].includes(body.action)) {
+      if (isAccessToken(body.token)) {
+        await revokeOwnerAccess(db, body.token, body.action === "logout.all");
+        return answer({ ok: true });
+      }
+      if (typeof body.token === "string" && /^[a-f0-9]{64}$/.test(body.token)) {
+        const tokenHash = await sha(body.token);
+        const rows = await db(
+          "uf_sessions?token_hash=eq." +
+            tokenHash +
+            "&expires_at=gt." +
+            encodeURIComponent(new Date().toISOString()) +
+            "&select=user_id",
+        );
+        const userId = rows[0]?.user_id;
+        if (typeof userId !== "string" || !userId) fail("Сессия истекла", 401);
         if (body.action === "logout.all")
-          await revokeSessions(db, { id: "admin" });
+          await revokeSessions(db, { id: userId });
         else
-          await db("uf_sessions?token_hash=eq." + (await sha(body.token)), {
+          await db("uf_sessions?token_hash=eq." + tokenHash, {
             method: "DELETE",
           });
         return answer({ ok: true });
       }
     }
     const user = await actor(body.token);
-    if (body.action === "logout") {
-      await db("uf_sessions?token_hash=eq." + (await sha(body.token)), {
-        method: "DELETE",
-      });
-      return answer({ ok: true });
-    }
-    if (body.action === "logout.all") {
-      await revokeSessions(db, user);
-      return answer({ ok: true });
-    }
+    if (
+      typeof body.action === "string" &&
+      (body.action.startsWith("account.") ||
+        body.action.startsWith("password."))
+    )
+      fail("Управление прежними аккаунтами и паролями отключено", 410);
     const [row] = await db("uf_platform?id=eq.1");
-    if (body.action === "account.save") {
-      if (user.role !== "admin")
-        fail("Только администратор создаёт аккаунты", 403);
-      const a = body.account;
-      if (a?.role === "admin")
-        fail(
-          "Новых администраторов создавать нельзя. Управление доступно только владельцу.",
-          403,
-        );
-      if (
-        !a ||
-        !["student", "teacher"].includes(a.role) ||
-        typeof a.name !== "string" ||
-        !a.name.trim() ||
-        a.name.length > 160 ||
-        typeof a.username !== "string" ||
-        !/^[a-z0-9._-]{3,60}$/.test(a.username) ||
-        a.username === "admin"
-      )
-        fail("Проверь логин, имя и роль");
-      const group = row.data.groups.find((g) => g.id === a.groupId);
-      if (
-        a.role === "student" &&
-        (!group || !group.subgroups.includes(a.subgroup))
-      )
-        fail("Укажи группу и подгруппу");
-      if (
-        a.role === "teacher" &&
-        !row.data.teachers.some((t) => t.id === a.teacherId)
-      )
-        fail("Укажи преподавателя");
-      let old;
-      if (a.id) {
-        [old] = await db("uf_accounts?id=eq." + encodeURIComponent(a.id));
-        if (!old) fail("Аккаунт не найден");
-        if (a.id === user.id && a.active === false)
-          fail("Нельзя отключить собственный аккаунт");
-      }
-      const duplicates = await db(
-        "uf_accounts?username=eq." + a.username + "&select=id",
-      );
-      if (duplicates.some((x) => x.id !== a.id)) fail("Такой логин уже занят");
-      const entry = {
-        username: a.username,
-        name: a.name.trim(),
-        role: a.role,
-        group_id: a.role === "student" ? a.groupId : "",
-        subgroup: a.role === "student" ? a.subgroup : "",
-        teacher_id: a.role === "teacher" ? a.teacherId : "",
-        active: a.active !== false,
-      };
-      if (!old || a.password) {
-        if (
-          typeof a.password !== "string" ||
-          a.password.length < 8 ||
-          a.password.length > 200
-        )
-          fail("Пароль: от 8 до 200 символов");
-        entry.salt = hex(crypto.getRandomValues(new Uint8Array(16)));
-        entry.password_hash = await hashPassword(a.password, entry.salt);
-      }
-      await db(old ? "uf_accounts?id=eq." + old.id : "uf_accounts", {
-        method: old ? "PATCH" : "POST",
-        body: JSON.stringify(entry),
-      });
-      if (
-        old &&
-        (a.password ||
-          a.active === false ||
-          old.role !== a.role ||
-          old.teacher_id !== entry.teacher_id ||
-          old.group_id !== entry.group_id ||
-          old.subgroup !== entry.subgroup)
-      )
-        await db("uf_sessions?user_id=eq." + old.id, { method: "DELETE" });
-      return answer(await responseState(user, row));
-    }
-    if (body.action === "password.change") {
-      if (isAccessToken(body.token))
-        fail(
-          "Пароль владельца управляется защищённым входом, прежняя форма отключена",
-          410,
-        );
-      if (
-        typeof body.currentPassword !== "string" ||
-        typeof body.password !== "string" ||
-        body.password.length < 8 ||
-        body.password.length > 200
-      )
-        fail("Проверь текущий и новый пароль");
-      const [current] = await db(
-        user.id === "admin"
-          ? "schedule_settings?id=eq.1"
-          : "uf_accounts?id=eq." + user.id,
-      );
-      if (
-        !equal(
-          await hashPassword(body.currentPassword, current.salt),
-          current.password_hash,
-        )
-      )
-        fail("Текущий пароль неверен", 401);
-      const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
-      await db("rpc/uf_change_password", {
-        method: "POST",
-        body: JSON.stringify({
-          p_user_id: user.id,
-          p_salt: salt,
-          p_hash: await hashPassword(body.password, salt),
-        }),
-      });
-      return answer({ ok: true });
-    }
     if (body.action !== "mutate" && body.action !== "rollback")
       fail("Неизвестное действие");
     if (!Number.isSafeInteger(body.revision) || body.revision !== row.revision)
@@ -448,7 +221,7 @@ export async function handle(req) {
         const [student] = await db(
           "uf_accounts?id=eq." +
             encodeURIComponent(String(body.payload?.studentId || "")) +
-            "&role=eq.student&active=eq.true",
+            "&role=eq.student&active=eq.true&select=id,group_id,subgroup,role,active",
         );
         const lesson = row.data.lessons.find(
           (l) => l.id === body.payload?.lessonId,
@@ -490,8 +263,6 @@ export async function handle(req) {
     });
     return answer(await responseState(user, committed));
   } catch (error) {
-    if (body?.action === "login" && [401, 429].includes(error.status))
-      await delayFailure();
     return answer(
       {
         error: error.status
