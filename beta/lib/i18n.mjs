@@ -310,6 +310,7 @@ const en = {
   status: "Status",
 };
 Object.assign(ru, {
+  chooseGroup: "Выбери группу",
   subscriptionHelp:
     "Подписка обновляется из общего расписания. Частоту обновления выбирает приложение календаря; скачанный .ics остаётся снимком.",
   subscription: "Ссылка для подписки",
@@ -319,6 +320,7 @@ Object.assign(ru, {
     "В демо доступно скачивание .ics. Подписка относится только к настоящему расписанию.",
 });
 Object.assign(kk, {
+  chooseGroup: "Топты таңда",
   subscriptionHelp:
     "Жазылым жалпы кестеден жаңартылады. Жаңарту жиілігін күнтізбе қолданбасы таңдайды; жүктелген .ics өзгермейтін көшірме болып қалады.",
   subscription: "Жазылым сілтемесі",
@@ -328,6 +330,7 @@ Object.assign(kk, {
     "Демода .ics жүктеуге болады. Жазылым тек нақты кестеге қатысты.",
 });
 Object.assign(en, {
+  chooseGroup: "Choose a group",
   subscriptionHelp:
     "The subscription updates from the shared timetable. Your calendar app controls refresh frequency; a downloaded .ics remains a snapshot.",
   subscription: "Subscription link",
