@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { get, set, del, clear } from "../beta/lib/storage.mjs";
+import { get, set, del, clear } from "../app/lib/storage.mjs";
 
 test("storage remains usable when persistent browser APIs are absent", async () => {
   await clear();
@@ -113,7 +113,7 @@ function fakeLocalStorage(saved = new Map()) {
 
 let moduleCase = 0;
 async function freshStorage() {
-  return import(`../beta/lib/storage.mjs?storage-case=${++moduleCase}`);
+  return import(`../app/lib/storage.mjs?storage-case=${++moduleCase}`);
 }
 
 test("a readable old IDB row cannot replace a newer fallback after quota failure or reload", async () => {

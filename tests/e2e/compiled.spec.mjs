@@ -5,11 +5,6 @@ import { fileURLToPath } from "node:url";
 import { mockState } from "./fixtures.mjs";
 
 test.describe("compiled inline student entry", () => {
-  test.skip(
-    process.env.PW_SERVER_ROOT !== "dist",
-    "Requires the built artifact; the source development entry stays modular.",
-  );
-
   test("the strict CSP authorizes exact inline bytes and no external critical modules", async ({
     page,
   }) => {
@@ -25,7 +20,7 @@ test.describe("compiled inline student entry", () => {
       });
     });
     await mockState(page);
-    await page.goto("/schedule/beta/");
+    await page.goto("/schedule/");
     await expect(
       page.getByRole("heading", { name: "Алгоритмы", exact: true }).first(),
     ).toBeVisible();
@@ -92,7 +87,7 @@ test.describe("compiled inline student entry", () => {
     page,
   }) => {
     const requests = await mockState(page);
-    await page.goto("/schedule/beta/");
+    await page.goto("/schedule/");
     await expect(page.locator(".room-number")).toHaveText("204");
     await page.getByRole("button", { name: "Ещё", exact: true }).click();
     const calendar = page.locator(".settings-section").filter({
@@ -120,11 +115,11 @@ test.describe("compiled inline student entry", () => {
   }) => {
     // The first Lighthouse run found a shift on Saturday, not on the longer
     // Friday fixture. Read the real public bootstrap, with no production POST.
-    await page.clock.setFixedTime(new Date("2026-11-07T04:00:00Z"));
-    await page.goto("/schedule/beta/?demo=student");
+    await mockState(page, { time: new Date("2026-11-07T04:00:00Z") });
+    await page.goto("/schedule/");
     await expect(page.locator(".hero")).toBeVisible();
     await expect(page.locator("#navigation button")).toHaveCount(4);
-    await expect(page.locator("#identity")).toContainText("Демо");
+    await expect(page.locator("#identity")).toContainText("06-057-25-11");
     const position = await page.locator(".statusbar").boundingBox();
     expect(position.y).toBeGreaterThanOrEqual(page.viewportSize().height);
     expect(
@@ -141,7 +136,7 @@ test.describe("compiled inline student entry", () => {
     const runtimeErrors = [];
     page.on("pageerror", (error) => runtimeErrors.push(error.message));
     const requests = await mockState(page);
-    await page.goto("/schedule/beta/");
+    await page.goto("/schedule/");
     await expect(page.locator(".room-number")).toHaveText("204");
     await page.getByRole("button", { name: "Задания", exact: true }).click();
     await page

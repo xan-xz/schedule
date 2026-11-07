@@ -137,7 +137,7 @@ test("published source check fails closed on stale/deleted releases and unexpect
       channel: "production",
       sourceRef: "b".repeat(40),
     },
-    { format: "uniflow-scope-v1", channel: "beta", sourceRef: SOURCE },
+    { format: "uniflow-scope-v1", channel: "staging", sourceRef: SOURCE },
     { format: "other", channel: "production", sourceRef: SOURCE },
     null,
   ])

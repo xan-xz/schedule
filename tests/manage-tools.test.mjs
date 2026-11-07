@@ -5,7 +5,7 @@ import {
   exportScheduleCsv,
   copyDay,
   copyWeek,
-} from "../beta/manage/tools.mjs";
+} from "../app/manage/tools.mjs";
 import { conflictPairKey } from "../backend/core.mjs";
 function fixture() {
   return {

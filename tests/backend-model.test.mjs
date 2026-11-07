@@ -53,7 +53,7 @@ function fixture() {
 
 test("existing 524 imported lessons and source metadata remain valid", () => {
   const source = JSON.parse(
-    fs.readFileSync(new URL("../beta/seed.json", import.meta.url), "utf8"),
+    fs.readFileSync(new URL("../app/seed.json", import.meta.url), "utf8"),
   );
   assert.equal(source.lessons.length, 524);
   assert.equal(source.groups.length, 19);

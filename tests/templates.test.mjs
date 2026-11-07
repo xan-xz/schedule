@@ -7,7 +7,8 @@ import {
   saveTemplate,
   renameTemplate,
   deleteTemplate,
-} from "../beta/manage/templates.mjs";
+  TEMPLATE_STORAGE_KEY,
+} from "../app/manage/templates.mjs";
 
 function fixture() {
   return {
@@ -182,76 +183,78 @@ test("applying invalid catalog refs and all-subgroup audiences fails without imp
   assert.equal(clean.lessons[1].sharedSessionId, undefined);
   assert.deepEqual(clean.sourceConflictPairs, []);
 });
-test("save/rename/delete are local, bounded, mode-separated and never silently overwrite same-name templates", () => {
+test("save/rename/delete are local, bounded, use the existing canonical namespace and never silently overwrite same-name templates", () => {
   const store = memory(),
     first = createTemplate(fixture(), options),
     second = createTemplate(fixture(), { ...options, name: "Tuesday" });
-  saveTemplate("demo", first, store);
-  saveTemplate("demo", second, store);
-  assert.equal(loadTemplates("live", store).length, 0);
-  assert.equal(loadTemplates("demo", store).length, 2);
+  saveTemplate(first, store);
+  saveTemplate(second, store);
+  assert.equal(loadTemplates(store).length, 2);
   assert.throws(
     () =>
       saveTemplate(
-        "demo",
         createTemplate(fixture(), { ...options, name: "monday" }),
         store,
       ),
     /уже есть/,
   );
-  assert.throws(
-    () => renameTemplate("demo", second.id, "MONDAY", store),
-    /уже есть/,
-  );
-  renameTemplate("demo", first.id, "Renamed", store);
-  assert.equal(loadTemplates("demo", store)[0].name, "Renamed");
-  deleteTemplate("demo", first.id, store);
-  assert.equal(loadTemplates("demo", store).length, 1);
-  assert.equal(loadTemplates("demo", store)[0].id, second.id);
-  assert.throws(() => deleteTemplate("demo", "missing", store), /не найден/);
+  assert.throws(() => renameTemplate(second.id, "MONDAY", store), /уже есть/);
+  renameTemplate(first.id, "Renamed", store);
+  assert.equal(loadTemplates(store)[0].name, "Renamed");
+  deleteTemplate(first.id, store);
+  assert.equal(loadTemplates(store).length, 1);
+  assert.equal(loadTemplates(store)[0].id, second.id);
+  assert.throws(() => deleteTemplate("missing", store), /не найден/);
+});
+test("existing owner templates remain in the same canonical key when adding a new template", () => {
+  const store = memory();
+  const original = createTemplate(fixture(), options);
+  assert.equal(TEMPLATE_STORAGE_KEY, "uf.schedule.templates.v1.live");
+  store.setItem(TEMPLATE_STORAGE_KEY, JSON.stringify([original]));
+  assert.deepEqual(loadTemplates(store), [original]);
+  const next = createTemplate(fixture(), { ...options, name: "Second" });
+  saveTemplate(next, store);
+  assert.deepEqual(loadTemplates(store), [original, next]);
 });
 test("malformed, overlarge or unavailable storage is safe and does not erase recoverable old data", () => {
   const store = memory(),
-    key = "uf.schedule.templates.v1.demo",
+    key = "uf.schedule.templates.v1.live",
     template = createTemplate(fixture(), options);
   store.setItem(key, "{broken");
-  assert.deepEqual(loadTemplates("demo", store), []);
-  assert.throws(() => saveTemplate("demo", template, store), /не перезаписаны/);
+  assert.deepEqual(loadTemplates(store), []);
+  assert.throws(() => saveTemplate(template, store), /не перезаписаны/);
   assert.equal(store.getItem(key), "{broken");
   store.setItem(key, "x".repeat(250001));
-  assert.deepEqual(loadTemplates("demo", store), []);
-  assert.throws(() => saveTemplate("demo", template, store), /не перезаписаны/);
+  assert.deepEqual(loadTemplates(store), []);
+  assert.throws(() => saveTemplate(template, store), /не перезаписаны/);
   const quota = {
     getItem: () => null,
     setItem: () => {
       throw Error("quota");
     },
   };
-  assert.throws(() => saveTemplate("live", template, quota), /место/);
+  assert.throws(() => saveTemplate(template, quota), /место/);
   assert.throws(
     () => createTemplate(fixture(), { ...options, name: "   " }),
     /Название/,
   );
-  assert.throws(() => loadTemplates("unknown", store), /режим/);
 });
 test("template catalog caps are enforced without deleting existing templates", () => {
   const store = memory();
   for (let i = 0; i < 20; i++)
     saveTemplate(
-      "demo",
       createTemplate(fixture(), { ...options, name: "Template " + i }),
       store,
     );
   assert.throws(
     () =>
       saveTemplate(
-        "demo",
         createTemplate(fixture(), { ...options, name: "Extra" }),
         store,
       ),
     /не больше 20/,
   );
-  assert.equal(loadTemplates("demo", store).length, 20);
+  assert.equal(loadTemplates(store).length, 20);
   const d = fixture();
   d.lessons = Array.from({ length: 101 }, (_, i) => ({
     ...d.lessons[0],

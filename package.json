@@ -1,6 +1,6 @@
 {
   "name": "uniflow-schedule",
-  "version": "3.0.0-beta.1",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,15 +9,17 @@
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "lint": "eslint . && node scripts/check-syntax.mjs",
-    "format": "prettier --write scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"beta/lib/*.mjs\" beta/app.mjs beta/styles.css beta/index.html \"beta/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"beta/admin/*.{mjs,css,html}\"",
-    "format:check": "prettier --check scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"beta/lib/*.mjs\" beta/app.mjs beta/styles.css beta/index.html \"beta/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"beta/admin/*.{mjs,css,html}\"",
+    "format": "prettier --write scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"app/lib/*.mjs\" app/app.mjs app/styles.css app/index.html \"app/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"app/admin/*.{mjs,css,html}\"",
+    "format:check": "prettier --check scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"app/lib/*.mjs\" app/app.mjs app/styles.css app/index.html \"app/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"app/admin/*.{mjs,css,html}\"",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "playwright test",
-    "build": "node scripts/build.mjs --channel production --data-decision-reviewed",
-    "build:beta": "node scripts/build.mjs --channel beta",
-    "production:base": "node scripts/production-base.mjs",
+    "build": "node scripts/build.mjs",
     "budget": "node scripts/budgets.mjs",
-    "perf": "node scripts/lighthouse.mjs"
+    "perf": "node scripts/lighthouse.mjs",
+    "preview": "node scripts/serve.mjs --root dist",
+    "release:restore": "node scripts/production-base.mjs",
+    "guard": "node scripts/check-retirement.mjs",
+    "guard:artifact": "node scripts/check-retirement.mjs --dist"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.15",

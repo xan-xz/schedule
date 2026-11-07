@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { foldLine, generateIcs, icsEscape } from "../beta/lib/calendar.mjs";
+import { foldLine, generateIcs, icsEscape } from "../app/lib/calendar.mjs";
 
 const data = {
   groups: [{ id: "g", name: "Группа А" }],

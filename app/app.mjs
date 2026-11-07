@@ -8,7 +8,6 @@ import {
   getSnapshot,
   saveSnapshot,
   releaseSnapshot,
-  demoSnapshot,
   legacyTaskStatuses,
 } from "./lib/client.mjs";
 import {
@@ -22,6 +21,7 @@ import {
   changesForDate,
 } from "./lib/time.mjs";
 import * as storage from "./lib/storage.mjs";
+import { retireCompatibility } from "./lib/compatibility.mjs";
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -52,9 +52,6 @@ const S = {
   week: monday(localDate()),
   selected: localDate(),
   subject: "",
-  demo: ["student", "teacher", "admin"].includes(query.get("demo"))
-    ? query.get("demo")
-    : "",
   error: false,
   busy: false,
   epoch: 0,
@@ -66,9 +63,6 @@ const S = {
   choiceFocus: false,
 };
 S.settings = cleanSettings(S.settings);
-if (S.demo && query.get("group")) S.settings.groupId = query.get("group");
-if (S.demo && ["А", "Б", "all"].includes(inviteSubgroup))
-  S.settings.subgroup = inviteSubgroup;
 if (validDate(query.get("date"))) {
   S.selected = query.get("date");
   S.week = monday(S.selected);
@@ -81,6 +75,7 @@ let t = translator(S.settings.lang),
   lastDay = localDate();
 const notices = new Set();
 let refreshAgain = false;
+let retirement = Promise.resolve();
 let lastPreferenceWrite = 0;
 const data = () => S.snapshot?.data;
 const scope = () => ({
@@ -116,9 +111,9 @@ const clock = (time) =>
       }).format(new Date("2026-01-01T" + time + ":00+05:00"))
     : time;
 const personalKey = () =>
-  `personal:${S.demo ? "demo" : "live"}:${S.settings.groupId}:${S.settings.subgroup}`;
+  `personal:live:${S.settings.groupId}:${S.settings.subgroup}`;
 const statusKey = () =>
-  `statuses:${S.demo ? "demo" : "live"}:${S.settings.groupId}:${S.settings.subgroup}`;
+  `statuses:live:${S.settings.groupId}:${S.settings.subgroup}`;
 const taskDue = (task) =>
   new Date(task.due + "T" + (task.dueTime || "23:59") + ":00+05:00").getTime();
 const taskStatus = (task) => S.statuses[task.id] || "new";
@@ -176,10 +171,6 @@ function newestRecord(...records) {
   return newest;
 }
 async function restoreSettings() {
-  if (S.demo) {
-    S.choiceConfirmed = true;
-    return;
-  }
   const [settingsBackup, choiceBackup] = await Promise.all([
     storage.get(SETTINGS_BACKUP),
     storage.get(CHOICE_BACKUP),
@@ -226,17 +217,11 @@ function saveSettings() {
   const updatedAt = Math.max(Date.now(), lastPreferenceWrite + 1);
   lastPreferenceWrite = updatedAt;
   const record = { version: 1, updatedAt, settings };
-  const localSettings = S.demo
-    ? writePreference("uf.settings.v1", settings)
-    : writePreference(SETTINGS_KEY, record);
-  if (!S.demo) writePreference("uf.settings.v1", settings);
+  const localSettings = writePreference(SETTINGS_KEY, record);
+  writePreference("uf.settings.v1", settings);
   writePreference("uf.group", S.settings.groupId);
   writePreference("uf.subgroup", S.settings.subgroup);
   applyTheme();
-  if (S.demo) {
-    if (!localSettings) toast(t("storageWarning"));
-    return;
-  }
   const choice = {
     version: 1,
     updatedAt,
@@ -260,7 +245,6 @@ function invitedGroup() {
   );
 }
 function validateChoice() {
-  if (S.demo) return;
   const current = availableGroups().find(
     (group) => group.id === S.settings.groupId,
   );
@@ -297,8 +281,7 @@ async function loadPersonal() {
   ]);
   if (epoch !== S.epoch) return;
   S.personal = tasks;
-  S.statuses =
-    statuses ?? legacyTaskStatuses(S.settings, S.demo ? "demo" : "live");
+  S.statuses = statuses ?? legacyTaskStatuses();
   if (statuses === null) await storage.set(key, S.statuses);
 }
 function isTyping() {
@@ -325,19 +308,25 @@ function setSnapshot(snapshot) {
 }
 function updateStatus() {
   const snapshot = S.snapshot;
-  let message =
-    snapshot?.source === "demo"
-      ? t("demo", { role: t(S.demo) })
-      : snapshot
-        ? t(snapshot.source === "live" ? "updated" : "snapshot", {
-            date: niceStamp(snapshot.updatedAt),
-          })
-        : "";
+  let message = snapshot
+    ? t(snapshot.source === "live" ? "updated" : "snapshot", {
+        date: niceStamp(snapshot.updatedAt),
+      })
+    : "";
   if (!navigator.onLine) message += " · " + t("offline");
   else if (S.error) message += " · " + t("error");
   $("sync-status").textContent = message;
   $("refresh").textContent = t("retry");
   $("refresh").disabled = S.busy;
+}
+function pruneWorkerCaches() {
+  try {
+    navigator.serviceWorker?.controller?.postMessage({
+      type: "CLEAN_INACTIVE",
+    });
+  } catch {
+    /* restricted browser */
+  }
 }
 async function refresh() {
   if (S.busy) {
@@ -349,13 +338,12 @@ async function refresh() {
   const epoch = S.epoch,
     settings = { ...S.settings };
   try {
-    const snapshot = S.demo
-      ? await demoSnapshot(S.demo, settings)
-      : await publicState(settings.groupId, settings.subgroup);
+    const snapshot = await publicState(settings.groupId, settings.subgroup);
     if (epoch !== S.epoch) return;
-    if (!S.demo) await saveSnapshot(settings, snapshot);
+    await saveSnapshot(settings, snapshot);
     if (epoch !== S.epoch) return;
     setSnapshot(snapshot);
+    pruneWorkerCaches();
   } catch {
     if (epoch === S.epoch) {
       S.error = true;
@@ -382,8 +370,7 @@ function header() {
     ? t("chooseGroup")
     : name("groups", S.settings.groupId, S.settings.groupId) +
       " · " +
-      (S.settings.subgroup === "all" ? t("both") : S.settings.subgroup) +
-      (S.demo ? " · " + t("demo", { role: t(S.demo) }) : "");
+      (S.settings.subgroup === "all" ? t("both") : S.settings.subgroup);
   $("navigation").hidden = S.needsChoice;
   $("navigation").replaceChildren(
     ...["today", "week", "tasks", "more"].map((page) =>
@@ -803,11 +790,20 @@ function renderWeek() {
   ];
 }
 async function changeStatus(id, status) {
-  S.statuses = { ...S.statuses, [id]: status };
-  if (!(await storage.set(statusKey(), S.statuses))) toast(t("storageWarning"));
+  const key = statusKey();
+  await retirement;
+  const result = await storage.update(
+    key,
+    (current) => ({ ...current, [id]: status }),
+    {},
+  );
+  await loadPersonal();
+  if (!result.persisted) toast(t("storageWarning"));
   render();
 }
-function personalForm() {
+async function personalForm() {
+  await retirement;
+  await loadPersonal();
   const dialog = $("modal");
   const title = el("input", {
     name: "title",
@@ -841,6 +837,7 @@ function personalForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!title.value.trim()) return;
+    const key = personalKey();
     const task = {
       id: crypto.randomUUID(),
       title: title.value.trim(),
@@ -849,12 +846,17 @@ function personalForm() {
       description: "",
       groupId: S.settings.groupId,
     };
-    S.personal = [...S.personal, task];
     try {
-      const persisted = await storage.set(personalKey(), S.personal);
+      await retirement;
+      const result = await storage.update(
+        key,
+        (current) => [...current, task],
+        [],
+      );
+      await loadPersonal();
       dialog.close();
       render();
-      if (!persisted) toast(t("storageWarning"));
+      if (!result.persisted) toast(t("storageWarning"));
     } catch {
       error.textContent = t("storageWarning");
     }
@@ -920,9 +922,15 @@ function renderTasks() {
           ? button(
               t("delete"),
               async () => {
-                S.personal = S.personal.filter((item) => item.id !== task.id);
-                const persisted = await storage.set(personalKey(), S.personal);
-                if (!persisted) toast(t("storageWarning"));
+                const key = personalKey();
+                await retirement;
+                const result = await storage.update(
+                  key,
+                  (current) => current.filter((item) => item.id !== task.id),
+                  [],
+                );
+                await loadPersonal();
+                if (!result.persisted) toast(t("storageWarning"));
                 render();
               },
               {
@@ -1108,7 +1116,7 @@ function renderGroupChoice() {
 }
 async function changeSetting(key, value) {
   const scoped = ["groupId", "subgroup"].includes(key);
-  if (scoped && !S.demo) {
+  if (scoped) {
     const group = availableGroups().find(
       (group) => group.id === (key === "groupId" ? value : S.settings.groupId),
     );
@@ -1141,7 +1149,7 @@ async function changeSetting(key, value) {
     if (epoch !== S.epoch) return;
     const cached = await getSnapshot(S.settings);
     if (epoch !== S.epoch) return;
-    if (cached && !S.demo) S.snapshot = cached;
+    if (cached) S.snapshot = cached;
     validateChoice();
     render();
     await refresh();
@@ -1171,13 +1179,6 @@ async function reminderChange(value) {
     return;
   }
   await changeSetting("reminder", Number(value));
-}
-function staffUrl() {
-  const url = new URL("./manage/", location.href);
-  if (S.demo) url.searchParams.set("demo", S.demo);
-  url.searchParams.set("group", S.settings.groupId);
-  url.searchParams.set("subgroup", S.settings.subgroup);
-  return url.href;
 }
 function renderMore() {
   const groupSelect = select(
@@ -1228,7 +1229,7 @@ function renderMore() {
   feed.searchParams.set("group", S.settings.groupId);
   feed.searchParams.set("subgroup", S.settings.subgroup);
   feed.searchParams.set("reminder", String(S.settings.reminder));
-  if (!S.demo) {
+  {
     const urlInput = el("input", {
       type: "url",
       value: feed.href,
@@ -1247,7 +1248,7 @@ function renderMore() {
         }
       }),
     );
-  } else calendar.append(el("p", { class: "notice" }, t("subscriptionDemo")));
+  }
   const reminder = el(
     "section",
     { class: "settings-section" },
@@ -1289,30 +1290,6 @@ function renderMore() {
       },
       t("bug"),
     ),
-  );
-  const roles = el(
-    "section",
-    { class: "settings-section" },
-    el("a", { href: staffUrl() }, S.demo ? t("manage") : t("staff")),
-    el(
-      "div",
-      { class: "actions" },
-      ["student", "teacher", "admin"].map((role) =>
-        el("a", { href: "?demo=" + role }, t(role)),
-      ),
-    ),
-    S.demo ? el("a", { href: "./" }, t("live")) : null,
-    S.demo
-      ? button(t("resetDemo"), async () => {
-          if (!window.confirm(t("resetConfirm"))) return;
-          try {
-            localStorage.removeItem("uf.demo.source.v4");
-          } catch {
-            /* restricted browser */
-          }
-          await refresh();
-        })
-      : null,
   );
   return [
     field(t("searchGroup"), search),
@@ -1362,7 +1339,6 @@ function renderMore() {
     calendar,
     reminder,
     installation,
-    S.demo ? roles : null,
   ];
 }
 function render() {
@@ -1405,6 +1381,7 @@ async function setupWorker() {
       new URL("./sw.js", import.meta.url),
       { scope: new URL("./", import.meta.url).pathname },
     );
+    registration.active?.postMessage({ type: "CLEAN_INACTIVE" });
     function offer(worker) {
       waitingWorker = worker;
       const bar = $("update-bar");
@@ -1516,11 +1493,11 @@ window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
   installPrompt = event;
 });
-window.addEventListener("online", () => refresh());
-window.addEventListener("offline", updateStatus);
-window.addEventListener("storage", (event) => {
-  if (event.key === "uf.demo.source.v4" && S.demo) void refresh();
+window.addEventListener("online", () => {
+  void refresh();
+  beginRetirement();
 });
+window.addEventListener("offline", updateStatus);
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     tick();
@@ -1528,7 +1505,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 setInterval(() => {
-  if (!document.hidden && navigator.onLine && !S.demo) void refresh();
+  if (!document.hidden && navigator.onLine) void refresh();
 }, 60000);
 // Lesson times have minute precision. Align to their boundary rather than
 // keeping a stale "current" lesson for up to 30 seconds after it ended.
@@ -1542,13 +1519,23 @@ function scheduleClockTick() {
   );
 }
 scheduleClockTick();
+function beginRetirement() {
+  retirement = retirement
+    .then(() => retireCompatibility())
+    .then(async (result) => {
+      if (result?.ok === false) toast(t("storageWarning"));
+      if (result?.migrated) {
+        await loadPersonal();
+        if (data() && !isTyping()) render();
+      }
+    });
+}
+beginRetirement();
 await restoreSettings();
 applyTheme();
 header();
 await loadPersonal();
-if (S.demo) {
-  await refresh();
-} else {
+{
   const saved = await getSnapshot(S.settings);
   if (saved) setSnapshot(saved);
   else

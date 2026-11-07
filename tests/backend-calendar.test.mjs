@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { handle } from "../backend/calendar.mjs";
-import { icsEscape } from "../beta/lib/calendar.mjs";
-import { localDate, dayOf } from "../beta/lib/time.mjs";
+import { icsEscape } from "../app/lib/calendar.mjs";
+import { localDate, dayOf } from "../app/lib/time.mjs";
 function setup(t) {
   const old = globalThis.Deno;
   globalThis.Deno = {

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
-const path = "/schedule/beta/admin/";
+const path = "/schedule/admin/";
 const password = "owner-test-password-unique";
 const secret = "JBSWY3DPEHPK3PXP";
 const enrollment = {
@@ -32,17 +32,21 @@ const session = (withCodes = false) => ({
     : {}),
 });
 
-async function fixture(page, { setup = false, handler } = {}) {
+async function fixture(
+  page,
+  { setup = false, handler, realEntry = false } = {},
+) {
   const calls = [];
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   // Exercise the shipped UI/transport in isolation from management integration.
-  await page.route("**/admin/app.mjs", (route) =>
-    route.fulfill({
-      contentType: "text/javascript",
-      body: `import { consumeBootstrapFragment } from './api.mjs'; import { renderOwnerAccess } from './access.mjs'; let bootstrapToken=consumeBootstrapFragment(); const access=renderOwnerAccess(document.getElementById('owner-main'),{bootstrapToken}); bootstrapToken=''; window.addEventListener('pagehide',()=>access.dispose(),{once:true});`,
-    }),
-  );
+  if (!realEntry)
+    await page.route("**/admin/app.mjs", (route) =>
+      route.fulfill({
+        contentType: "text/javascript",
+        body: `import { consumeBootstrapFragment } from './api.mjs'; import { renderOwnerAccess } from './access.mjs'; let bootstrapToken=consumeBootstrapFragment(); const access=renderOwnerAccess(document.getElementById('owner-main'),{bootstrapToken}); bootstrapToken=''; window.addEventListener('pagehide',()=>access.dispose(),{once:true});`,
+      }),
+    );
   await page.route("**/functions/v1/owner-access", async (route) => {
     const request = route.request();
     const body = request.postDataJSON();
@@ -173,6 +177,192 @@ async function beginLogin(page) {
     page.getByRole("heading", { name: "Подтвердите вход" }),
   ).toBeVisible();
 }
+
+async function beginEnrollment(page) {
+  await page.getByLabel("Одноразовый код приглашения").fill("fixture-invite");
+  await page.getByRole("button", { name: "Подтвердить приглашение" }).click();
+  await page.getByLabel("Новый пароль", { exact: true }).fill(password);
+  await page.getByLabel("Повторите пароль").fill(password);
+  await page
+    .getByRole("button", { name: "Подключить приложение", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Подключите приложение аутентификации" }),
+  ).toBeVisible();
+}
+
+test("regular owner login never requests the local QR encoder", async ({
+  page,
+}) => {
+  const { calls, errors } = await fixture(page, { realEntry: true });
+  const qrRequests = [];
+  await page.route("**/admin/vendor/**", (route) => {
+    qrRequests.push(route.request().url());
+    return route.abort("failed");
+  });
+  await page.goto(path);
+  await expect(page).toHaveTitle("Вход владельца · UniFlow");
+  await expect(
+    page.getByRole("heading", { name: "Вход владельца" }),
+  ).toBeVisible();
+  await beginLogin(page);
+  await expect(page.getByLabel("Код или ссылка из письма")).toBeVisible();
+  expect(calls.map((call) => call.action)).toEqual(["status", "login.begin"]);
+  expect(qrRequests).toEqual([]);
+  expect(errors).toEqual([]);
+  await audit(page);
+  if (process.env.OWNER_QA_DIR)
+    await page.screenshot({
+      path: join(
+        process.env.OWNER_QA_DIR,
+        `owner-login-lazy-${test.info().project.name}.png`,
+      ),
+      fullPage: true,
+    });
+});
+
+test("bootstrap fragment is scrubbed before a delayed owner UI module can load", async ({
+  page,
+}) => {
+  const { errors } = await fixture(page, { setup: true, realEntry: true });
+  let release,
+    requested = false;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/admin/access.mjs", async (route) => {
+    requested = true;
+    await gate;
+    await route.continue();
+  });
+  const vendorRequests = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/admin/vendor/"))
+      vendorRequests.push(request.url());
+  });
+  await page.goto(
+    path +
+      "#access_token=fixture-invite&refresh_token=must-discard&type=invite",
+    { waitUntil: "commit" },
+  );
+  try {
+    await expect.poll(() => requested).toBe(true);
+    await expect(page).toHaveURL(new RegExp("/admin/$"));
+    expect(await page.evaluate(() => location.hash)).toBe("");
+    await expect(page.getByRole("status")).toContainText(
+      "Открываем защищённый вход",
+    );
+    expect(vendorRequests).toEqual([]);
+  } finally {
+    release();
+  }
+  await expect(page.getByLabel("Одноразовый код приглашения")).toHaveValue(
+    "fixture-invite",
+  );
+  expect(errors).toEqual([]);
+});
+
+test("manual TOTP enrollment remains usable when the local QR module fails to load", async ({
+  page,
+}) => {
+  const { calls, errors } = await fixture(page, {
+    setup: true,
+    realEntry: true,
+  });
+  let blocked = 0;
+  await page.route("**/admin/vendor/**", (route) => {
+    blocked++;
+    return route.fulfill({
+      status: 503,
+      contentType: "text/javascript",
+      body: "/* controlled local QR loading failure */",
+    });
+  });
+  await page.goto(path);
+  await beginEnrollment(page);
+  await expect(
+    page.getByText(
+      "QR-код недоступен. Введите ключ вручную в приложении и подтвердите код.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByText(secret, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "QR-код для приложения аутентификации" }),
+  ).toHaveCount(0);
+  expect(blocked).toBe(1);
+  await audit(page);
+  if (process.env.OWNER_QA_DIR)
+    await page.screenshot({
+      path: join(
+        process.env.OWNER_QA_DIR,
+        `owner-manual-fallback-${test.info().project.name}.png`,
+      ),
+      fullPage: true,
+    });
+  await page.getByLabel("Код из нового приложения").fill("123456");
+  await page.getByRole("button", { name: "Завершить настройку" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Сохраните резервные коды" }),
+  ).toBeVisible();
+  expect(calls.find((call) => call.action === "setup.verify").totpCode).toBe(
+    "123456",
+  );
+  expect(errors).toEqual([]);
+});
+
+for (const action of ["reset", "dispose"])
+  test(`late local QR completion cannot repopulate enrollment after ${action}`, async ({
+    page,
+  }) => {
+    const { calls, errors } = await fixture(page, {
+      setup: true,
+      realEntry: true,
+    });
+    let release,
+      requested = false;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/admin/qr.mjs", async (route) => {
+      requested = true;
+      await gate;
+      await route.fulfill({
+        contentType: "text/javascript",
+        body: "globalThis.fixtureQrModuleLoaded=true; export function enrollmentQr(){globalThis.fixtureQrRenderCalled=true;return document.createElement('div');}",
+      });
+    });
+    await page.goto(path);
+    await beginEnrollment(page);
+    try {
+      await expect.poll(() => requested).toBe(true);
+      if (action === "reset") {
+        await page.getByRole("button", { name: "Начать заново" }).click();
+        await expect(
+          page.getByRole("heading", { name: "Настройка владельца" }),
+        ).toBeVisible();
+      } else {
+        await page.evaluate(() =>
+          window.dispatchEvent(new window.PageTransitionEvent("pagehide")),
+        );
+        await expect(page.locator("#owner-main")).toBeEmpty();
+      }
+    } finally {
+      release();
+    }
+    await page.waitForFunction(() => globalThis.fixtureQrModuleLoaded === true);
+    expect(
+      await page.evaluate(() => globalThis.fixtureQrRenderCalled),
+    ).toBeUndefined();
+    await expect(page.getByText(secret, { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("img", { name: "QR-код для приложения аутентификации" }),
+    ).toHaveCount(0);
+    expect(calls.filter((call) => call.action === "setup.verify")).toHaveLength(
+      0,
+    );
+    expect(errors).toEqual([]);
+  });
 
 test("a failed TOTP or unavailable retry keeps email proof without sending another letter", async ({
   page,

@@ -44,7 +44,7 @@ const ru = {
   bug: "Сообщить об ошибке",
   staff: "Вход для преподавателя и администратора",
   ownerAccess: "Управление сайтом",
-  demo: "Демо · {role}",
+
   student: "Студент",
   teacher: "Преподаватель",
   admin: "Администратор",
@@ -99,8 +99,7 @@ const ru = {
     "Браузер ограничил хранилище. Данные могут не сохраниться после закрытия.",
   preview: "Предпросмотр студента",
   manage: "Управление",
-  resetDemo: "Сбросить демо",
-  resetConfirm: "Сбросить только локальную демо-песочницу?",
+
   status: "Статус",
 };
 const kk = {
@@ -148,7 +147,7 @@ const kk = {
   bug: "Қате туралы хабарлау",
   staff: "Оқытушы мен әкімшіге кіру",
   ownerAccess: "Сайтты басқару",
-  demo: "Демо · {role}",
+
   student: "Студент",
   teacher: "Оқытушы",
   admin: "Әкімші",
@@ -203,9 +202,7 @@ const kk = {
     "Браузер сақтау орнын шектеді. Қолданба жабылғаннан кейін деректер сақталмауы мүмкін.",
   preview: "Студент көрінісін алдын ала қарау",
   manage: "Басқару",
-  resetDemo: "Демоны қалпына келтіру",
-  resetConfirm:
-    "Тек осы құрылғыдағы демо деректерін бастапқы күйге қайтару керек пе?",
+
   status: "Күйі",
 };
 const en = {
@@ -253,7 +250,7 @@ const en = {
   bug: "Report an issue",
   staff: "Teacher and administrator sign in",
   ownerAccess: "Site management",
-  demo: "Demo · {role}",
+
   student: "Student",
   teacher: "Teacher",
   admin: "Administrator",
@@ -308,8 +305,7 @@ const en = {
     "Browser storage is restricted. Your changes may not survive closing.",
   preview: "Student preview",
   manage: "Manage",
-  resetDemo: "Reset demo",
-  resetConfirm: "Reset the local demo sandbox only?",
+
   status: "Status",
 };
 Object.assign(ru, {
@@ -319,8 +315,6 @@ Object.assign(ru, {
   subscription: "Ссылка для подписки",
   copyLink: "Скопировать ссылку",
   copied: "Ссылка скопирована",
-  subscriptionDemo:
-    "В демо доступно скачивание .ics. Подписка относится только к настоящему расписанию.",
 });
 Object.assign(kk, {
   chooseGroup: "Топты таңда",
@@ -329,8 +323,6 @@ Object.assign(kk, {
   subscription: "Жазылым сілтемесі",
   copyLink: "Сілтемені көшіру",
   copied: "Сілтеме көшірілді",
-  subscriptionDemo:
-    "Демода .ics жүктеуге болады. Жазылым тек нақты кестеге қатысты.",
 });
 Object.assign(en, {
   chooseGroup: "Choose a group",
@@ -339,8 +331,6 @@ Object.assign(en, {
   subscription: "Subscription link",
   copyLink: "Copy link",
   copied: "Link copied",
-  subscriptionDemo:
-    "Demo supports .ics downloads. Subscriptions use the live timetable only.",
 });
 Object.assign(ru, {
   onboardingTitle: "Выбери свою группу",

@@ -132,7 +132,7 @@ async function main() {
           "--title",
           `Verified UniFlow production ${run}`,
           "--notes",
-          "Verified production Pages artifact. Future beta builds preserve this production snapshot byte for byte.",
+          "Verified immutable production Pages artifact for deployment and rollback.",
           archive,
           manifest,
         ],

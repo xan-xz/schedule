@@ -1,76 +1,65 @@
 import { test, expect } from "@playwright/test";
+import { mockManager } from "./manager-fixture.mjs";
 import { mockState } from "./fixtures.mjs";
 
-test("incorrect owner password is rejected without receiving a session", async ({
+test("management requires owner login and rejects an incorrect password without a session", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.route("https://cdn.jsdelivr.net/**", (route) => route.abort());
-  await page.goto("/schedule/beta/manage/");
+  const manager = await mockManager(page, { rejectPassword: true });
+  await page.goto("/schedule/manage/");
   await expect(page).toHaveURL(/\/admin\/$/);
-  await page
-    .getByLabel("Пароль владельца", { exact: true })
-    .fill("incorrect-test-password");
-  await page.getByRole("button", { name: "Продолжить", exact: true }).click();
+  await manager.login({ navigate: false });
   await expect(page.getByRole("alert")).toBeVisible();
-  expect(requests.some((req) => req.action === "login.begin")).toBe(true);
-  expect(requests.some((req) => req.action === "login")).toBe(false);
-  expect(
-    requests.every((req) => !["mutate", "rollback"].includes(req.action)),
-  ).toBe(true);
-  const stored = await page.evaluate(() =>
-    Object.entries(localStorage).filter(([key]) => /token|session/i.test(key)),
+  expect(manager.calls.some((call) => call.action === "login.begin")).toBe(
+    true,
   );
-  expect(stored).toEqual([]);
+  expect(manager.calls.some((call) => call.action === "login.verify")).toBe(
+    false,
+  );
+  expect(manager.writes()).toEqual([]);
+  expect(
+    await page.evaluate(() =>
+      Object.entries(localStorage).filter(([key]) =>
+        /token|session/i.test(key),
+      ),
+    ),
+  ).toEqual([]);
 });
 
-test("admin can preview and publish a one-date draft and restore the previous demo version", async ({
+test("owner previews and publishes a one-date draft, then restores the server version", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.route("https://cdn.jsdelivr.net/**", (route) => route.abort());
-  await page.goto("/schedule/beta/manage/?demo=admin");
+  const manager = await mockManager(page);
+  await manager.login();
   await page.locator('[data-page="schedule"]').click();
   await page
     .getByRole("button", { name: "Создать черновик", exact: true })
     .click();
-  const revision = await page.evaluate(
-    () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-  );
+  const revision = manager.state().revision;
   await page.locator('[data-action="exception"]').first().click();
-  await page
-    .getByRole("dialog")
+  const dialog = page.getByRole("dialog");
+  await dialog
     .getByRole("combobox", { name: "Действие", exact: true })
     .selectOption("cancelled");
-  await page
-    .getByRole("dialog")
+  await dialog
     .getByLabel("Причина / комментарий", { exact: true })
-    .fill("Тестовая отмена в изолированном демо");
-  await page
-    .getByRole("dialog")
+    .fill("Тестовая отмена");
+  await dialog
     .getByRole("button", { name: "Применить на дату", exact: true })
     .click();
   await expect(
     page.getByText("Отменено", { exact: true }).first(),
   ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-    ),
-  ).toBe(revision);
+  expect(manager.state().revision).toBe(revision);
+  expect(manager.writes()).toEqual([]);
   await page
     .getByRole("button", { name: "Предпросмотр студента", exact: true })
     .click();
   await expect(
-    page
-      .getByRole("dialog")
-      .getByRole("heading", { name: "Предпросмотр студента", exact: true }),
+    dialog.getByRole("heading", { name: "Предпросмотр студента", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("dialog").getByText(/Отменено/)).toBeVisible();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Закрыть", exact: true })
-    .click();
+  await expect(dialog.getByText(/Отменено/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
   await page.getByRole("button", { name: "Опубликовать", exact: true }).click();
   await expect(
     page.getByText(
@@ -78,15 +67,12 @@ test("admin can preview and publish a one-date draft and restore the previous de
       { exact: true },
     ),
   ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-    ),
-  ).toBe(revision + 1);
+  expect(manager.state().revision).toBe(revision + 1);
+  expect(manager.writes()).toHaveLength(1);
+  expect(manager.writes()[0].op).toBe("import");
   await page.locator('[data-page="history"]').click();
   await page.locator('[data-action="rollback"]').first().click();
-  await page
-    .getByRole("dialog")
+  await dialog
     .getByRole("button", { name: "Восстановить", exact: true })
     .click();
   await expect(
@@ -94,15 +80,17 @@ test("admin can preview and publish a one-date draft and restore the previous de
   ).toBeVisible();
   await page.locator('[data-page="schedule"]').click();
   await expect(page.getByText("Отменено", { exact: true })).toHaveCount(0);
-  expect(requests).toEqual([]);
+  expect(manager.state().revision).toBe(revision + 2);
+  expect(manager.state().data.exceptions).toEqual([]);
 });
 
-test("copying onto the same day fails validation and does not publish a draft", async ({
+test("copying onto the same day fails without sending a publish request", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.goto("/schedule/beta/manage/?demo=admin");
+  const manager = await mockManager(page);
+  await manager.login();
   await page.locator('[data-page="schedule"]').click();
+  const before = manager.state();
   await page
     .getByRole("button", { name: "Копировать день", exact: true })
     .click();
@@ -117,19 +105,15 @@ test("copying onto the same day fails validation and does not publish a draft", 
     .getByRole("button", { name: "Добавить в черновик", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).not.toBeEmpty();
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-    ),
-  ).toBe(1);
-  expect(requests).toEqual([]);
+  expect(manager.state()).toEqual(before);
+  expect(manager.writes()).toEqual([]);
 });
 
-test("staff assignment title stays text through escaped template rendering", async ({
+test("assignment title remains literal text through server mutation and escaped rendering", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.goto("/schedule/beta/manage/?demo=admin");
+  const manager = await mockManager(page);
+  await manager.login();
   await page.locator('[data-page="tasks"]').click();
   await page.locator('[data-action="task"]').first().click();
   const title = '<img src=x onerror="window.xssExecuted=true">';
@@ -143,14 +127,17 @@ test("staff assignment title stays text through escaped template rendering", asy
   ).toBeVisible();
   expect(await page.locator("main img, main script").count()).toBe(0);
   expect(await page.evaluate(() => globalThis.xssExecuted)).toBeUndefined();
-  expect(requests).toEqual([]);
+  expect(manager.state().data.tasks.some((task) => task.title === title)).toBe(
+    true,
+  );
+  expect(manager.writes()).toHaveLength(1);
 });
 
-test("moving a date keeps a student notice on the source day and shows the lesson on its target day", async ({
+test("moving one date keeps a source notice and renders the lesson on its target day", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.goto("/schedule/beta/manage/?demo=admin");
+  const manager = await mockManager(page);
+  await manager.login();
   await page.locator('[data-page="schedule"]').click();
   await page
     .getByRole("button", { name: "Создать черновик", exact: true })
@@ -172,7 +159,7 @@ test("moving a date keeps a student notice on the source day and shows the lesso
       { exact: true },
     ),
   ).toBeVisible();
-  await page.goto("/schedule/beta/?demo=student");
+  await page.goto("/schedule/");
   await expect(
     page.getByRole("heading", { name: "Изменения", exact: true }),
   ).toBeVisible();
@@ -182,16 +169,132 @@ test("moving a date keeps a student notice on the source day and shows the lesso
   await expect(page.getByText(/6 нояб.*→.*8 нояб/)).toBeVisible();
   await page.getByRole("button", { name: "Неделя", exact: true }).click();
   await expect(
-    page.locator("#day-2026-11-08").getByRole("heading", {
-      name: "Алгоритмдер және деректер құрылымы",
-      exact: true,
-    }),
+    page
+      .locator("#day-2026-11-08")
+      .getByRole("heading", { name: "Алгоритмы", exact: true }),
   ).toBeVisible();
   await expect(
-    page.locator("#day-2026-11-06").getByRole("heading", {
-      name: "Алгоритмдер және деректер құрылымы",
-      exact: true,
-    }),
+    page
+      .locator("#day-2026-11-06")
+      .getByRole("heading", { name: "Алгоритмы", exact: true }),
   ).toHaveCount(0);
-  expect(requests).toEqual([]);
+  expect(manager.writes()).toHaveLength(1);
+});
+
+test("owner workspace omits retired role workflows and publishing retains archived records", async ({
+  page,
+}) => {
+  const manager = await mockManager(page, { archived: true });
+  const before = manager.state();
+  await manager.login();
+  for (const section of [
+    "overview",
+    "schedule",
+    "tasks",
+    "notifications",
+    "catalogs",
+    "conflicts",
+    "history",
+    "guide",
+  ]) {
+    await page.locator(`[data-page="${section}"]`).click();
+    await expect(
+      page.locator(
+        '[data-page="requests"], [data-page="attendance"], [data-action="request"], [data-action="decide"], [data-action="attendanceCsv"], [data-attendance]',
+      ),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", {
+        name: /Запрос переноса|Запросить перенос|Согласовать перенос/,
+      }),
+    ).toHaveCount(0);
+  }
+  await page.locator('[data-page="schedule"]').click();
+  await page
+    .getByRole("button", { name: "Создать черновик", exact: true })
+    .click();
+  await page.locator('[data-action="exception"]').first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog
+    .getByRole("combobox", { name: "Действие", exact: true })
+    .selectOption("cancelled");
+  await dialog
+    .getByRole("button", { name: "Применить на дату", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Опубликовать", exact: true }).click();
+  await expect(
+    page.getByText(
+      "Черновик опубликован. Предыдущая версия доступна в истории.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(manager.state().data.attendance).toEqual(before.data.attendance);
+  expect(manager.state().data.requests).toEqual(before.data.requests);
+  expect(manager.writes()).toHaveLength(1);
+  expect(manager.writes()[0].op).toBe("import");
+});
+
+test("owner shares subgroup Б through a canonical link that a fresh student confirms", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        async writeText(value) {
+          globalThis.managerCopiedUrl = String(value);
+        },
+      },
+    });
+  });
+  const manager = await mockManager(page);
+  await manager.login();
+  await page.locator('[data-page="schedule"]').click();
+  await page.locator('[data-filter="subgroup"]').last().selectOption("Б");
+  await page.getByRole("button", { name: "Поделиться", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => globalThis.managerCopiedUrl))
+    .toBeTruthy();
+  const copied = new URL(
+    await page.evaluate(() => globalThis.managerCopiedUrl),
+  );
+  expect(copied.origin).toBe(new URL(baseURL).origin);
+  expect(copied.pathname).toBe("/schedule/");
+  expect(copied.searchParams.get("g")).toBe("g-main");
+  expect(copied.searchParams.get("subgroup")).toBe("Б");
+  expect(copied.searchParams.has("sub")).toBe(false);
+  expect(manager.writes()).toEqual([]);
+
+  const freshContext = await browser.newContext({
+    viewport: page.viewportSize(),
+    timezoneId: "Pacific/Honolulu",
+  });
+  try {
+    const student = await freshContext.newPage();
+    const requests = await mockState(student, { savedChoice: false });
+    await student.goto(copied.href);
+    await expect(
+      student.getByRole("heading", { name: "Выбери свою группу", exact: true }),
+    ).toBeVisible();
+    await expect(
+      student.getByRole("combobox", { name: "Группа", exact: true }),
+    ).toHaveValue("g-main");
+    await expect(
+      student.getByRole("combobox", { name: "Подгруппа", exact: true }),
+    ).toHaveValue("Б");
+    await expect(student.locator("#navigation")).toBeHidden();
+    await student
+      .getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      })
+      .click();
+    await expect(student.locator("#identity")).toHaveText("06-057-25-11 · Б");
+    await expect(student.locator("#navigation")).toBeVisible();
+    expect(requests.every((request) => request.action === "state")).toBe(true);
+  } finally {
+    await freshContext.close();
+  }
 });

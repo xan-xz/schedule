@@ -317,46 +317,6 @@ h3 {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
-.demo-banner {
-  background: #eee8fc;
-  border: 1px solid #d8caf5;
-  color: #6f509f;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 13px 17px;
-  border-radius: 11px;
-  margin-bottom: 23px;
-  font-size: 12px;
-}
-.demo-banner strong {
-  font-weight: 650;
-}
-.demo-banner .right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.role-switch {
-  display: flex;
-  background: white;
-  border: 1px solid #dfd7eb;
-  border-radius: 9px;
-  overflow: hidden;
-}
-.role-switch button {
-  padding: 9px 13px;
-  font-size: 12px;
-  border-right: 1px solid #e9e2f2;
-}
-.role-switch button:last-child {
-  border: 0;
-}
-.role-switch button.active {
-  background: #7957d5;
-  color: white;
-}
 .dashboard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 290px;
@@ -543,7 +503,10 @@ h3 {
 }
 .table tr.current td:first-child {
   box-shadow: inset 3px 0 #9c76dd;
-  color: #7957d5;
+  color: #6440b0;
+}
+body.dark .table tr.current td:first-child {
+  color: #e0c9ff;
 }
 .table tr.cancelled {
   opacity: 0.65;
@@ -659,7 +622,7 @@ input[type="checkbox"] {
 }
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 22px;
 }
@@ -1056,7 +1019,6 @@ body.dark input,
 body.dark select,
 body.dark textarea,
 body.dark .global-search,
-body.dark .role-switch,
 body.dark .week-col {
   background: #272132;
   color: #d9cce7;
@@ -1070,7 +1032,6 @@ body.dark .week-col h3 {
   border-color: #3f334c;
 }
 body.dark .live,
-body.dark .demo-banner,
 body.dark .notice-info,
 body.dark .nav button.active,
 body.dark .table tr.current {
@@ -1078,8 +1039,7 @@ body.dark .table tr.current {
   border-color: #60437b;
 }
 body.dark .btn.primary,
-body.dark .days button.active,
-body.dark .role-switch button.active {
+body.dark .days button.active {
   background: #8961db;
   color: white;
 }
@@ -1162,22 +1122,12 @@ body.dark .tag {
   .heading-actions {
     justify-content: flex-start;
   }
-  .demo-banner {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-  .demo-banner .right {
-    margin-left: 0;
-  }
   .global-search {
     max-width: 50%;
     width: 100%;
   }
   .two-col {
     grid-template-columns: 1fr;
-  }
-  .role-switch button {
-    padding: 9px;
   }
 }
 @media (max-width: 760px) {
@@ -1274,27 +1224,6 @@ body.dark .tag {
   }
   .heading-actions {
     gap: 7px;
-  }
-  .demo-banner {
-    padding: 12px;
-    font-size: 11px;
-    gap: 8px;
-  }
-  .demo-banner > .icon {
-    display: none;
-  }
-  .demo-banner .right {
-    width: 100%;
-    justify-content: space-between;
-    flex-wrap: wrap;
-  }
-  .role-switch {
-    width: 100%;
-  }
-  .role-switch button {
-    flex: 1;
-    min-height: 42px;
-    font-size: 11px;
   }
   .hero-grid {
     grid-template-columns: 1fr;
@@ -1543,10 +1472,6 @@ body.dark .tag {
   .brand-sub {
     display: none;
   }
-  .role-switch button {
-    font-size: 10px;
-    padding: 9px 5px;
-  }
   h1 {
     font-size: 25px;
   }
@@ -1555,7 +1480,6 @@ body.dark .tag {
   .sidebar,
   .topbar,
   .heading-actions,
-  .demo-banner,
   .toolbar,
   .sync,
   .footer,
@@ -1650,9 +1574,7 @@ body:not(.dark)
     .week-lesson small,
     .guide p,
     .guide li,
-    .profile-notes,
-    .demo-selectors label,
-    .demo-selectors p
+    .profile-notes
   ) {
   color: #665570;
 }
@@ -1701,8 +1623,6 @@ body.dark
     .guide p,
     .guide li,
     .profile-notes,
-    .demo-selectors label,
-    .demo-selectors p,
     .heading p,
     .sync,
     .footer
@@ -1722,7 +1642,6 @@ body.dark .live .tag {
 .nav button,
 .days button,
 .tabs button,
-.role-switch button,
 input:not([type="checkbox"]),
 select {
   min-height: 44px;
@@ -1743,7 +1662,6 @@ body.dark :focus-visible {
 }
 body.dark .nav button,
 body.dark .nav button.active,
-body.dark .demo-banner,
 body.dark .notice-info,
 body.dark .day-caption,
 body.dark .tabs button.active,
@@ -1752,8 +1670,7 @@ body.dark a {
   color: #e0c9ff;
 }
 body.dark .btn.primary,
-body.dark .days button.active,
-body.dark .role-switch button.active {
+body.dark .days button.active {
   background: #b899f4;
   color: #211a30;
 }
@@ -1776,62 +1693,8 @@ body.dark .nav button:hover {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-
-.demo-selectors {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
-  flex-wrap: wrap;
-  background: #fff;
-  border: 1px solid #e4dfed;
-  padding: 16px 18px;
-  border-radius: 12px;
-  margin-bottom: 22px;
-}
-.demo-selectors label {
-  display: grid;
-  gap: 6px;
-  color: #887699;
-  font-size: 11px;
-  min-width: 155px;
-}
-.demo-selectors select {
-  min-height: 42px;
-  max-width: 430px;
-}
-.demo-selectors p {
-  font-size: 12px;
-  color: #9c89ab;
-  align-self: center;
-  flex: 1;
-  min-width: 180px;
-}
 .form-error {
   white-space: pre-line;
-}
-body.dark .demo-selectors {
-  background: #272132;
-  border-color: #3f334c;
-}
-@media (max-width: 760px) {
-  .demo-selectors {
-    gap: 12px;
-    padding: 14px;
-  }
-  .demo-selectors label {
-    min-width: 0;
-    flex: 1 1 150px;
-  }
-  .demo-selectors select {
-    width: 100%;
-    max-width: 100%;
-    font-size: 14px;
-    min-height: 44px;
-  }
-  .demo-selectors p {
-    flex-basis: 100%;
-    font-size: 11px;
-  }
 } /* Shared accessibility corrections and compact draft controls. */
 :root {
   --staff-ink: #30243f;
@@ -1854,6 +1717,10 @@ body.dark .demo-selectors {
   margin: 8px 0 12px;
   font-size: 13px;
   color: #61536c;
+}
+body.dark .draft-controls p,
+body.dark .notice h3 {
+  color: #d3c8e0;
 }
 .draft-controls .btn {
   min-height: 44px;

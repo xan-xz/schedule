@@ -114,7 +114,7 @@ async function signedFixture(page) {
       json: { error: "Unsupported fixture action" },
     });
   });
-  await page.goto("/schedule/beta/admin/");
+  await page.goto("/schedule/admin/");
   await page
     .getByLabel("Пароль владельца", { exact: true })
     .fill("fixture-only-password");
@@ -190,8 +190,8 @@ test("the canonical owner hash route loads a network-only sign-in without exposi
   page,
 }) => {
   await mockState(page);
-  await page.goto("/schedule/beta/#/admin");
-  await expect(page).toHaveURL(/\/beta\/admin\/$/);
+  await page.goto("/schedule/#/admin");
+  await expect(page).toHaveURL(/\/admin\/$/);
   await expect(
     page.getByRole("heading", { name: "Вход владельца", exact: true }),
   ).toBeVisible();
@@ -211,7 +211,7 @@ test("the canonical owner hash route loads a network-only sign-in without exposi
   expect(cachesContainAdmin).toBe(false);
 });
 
-test("the verified owner workspace has no role simulation and cannot offer a second administrator", async ({
+test("the verified owner workspace manages schedules without account or role editors", async ({
   page,
 }, testInfo) => {
   const consoleErrors = [];
@@ -229,24 +229,14 @@ test("the verified owner workspace has no role simulation and cannot offer a sec
     });
   });
   const { calls } = await signedFixture(page);
+  await expect(page.locator('[data-page="accounts"]')).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Демо ролей", exact: true }),
+    page.getByRole("button", { name: "Создать аккаунт", exact: true }),
   ).toHaveCount(0);
-  await page.locator('[data-page="accounts"]').click();
-  await expect(page.getByText("arappayevv@gmail.com · владелец")).toBeVisible();
-  await page
-    .getByRole("button", { name: "Создать аккаунт", exact: true })
-    .click();
-  const roleSelect = page.getByRole("combobox", { name: "Роль", exact: true });
-  await expect(roleSelect).toBeVisible();
-  const roles = await roleSelect
-    .locator("option")
-    .evaluateAll((options) => options.map((option) => option.value));
-  expect(roles).toEqual(["student", "teacher"]);
-  await page
-    .getByRole("button", { name: "Закрыть", exact: true })
-    .last()
-    .click();
+  await expect(
+    page.getByRole("combobox", { name: "Роль", exact: true }),
+  ).toHaveCount(0);
+  await page.locator('[data-page="schedule"]').click();
   expect(consoleErrors).toEqual([]);
   expect(await page.evaluate(() => window.ownerCspViolations)).toEqual([]);
   expect(

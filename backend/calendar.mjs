@@ -1,5 +1,5 @@
-import { generateIcs } from "../beta/lib/calendar.mjs";
-import { localDate } from "../beta/lib/time.mjs";
+import { generateIcs } from "../app/lib/calendar.mjs";
+import { localDate } from "../app/lib/time.mjs";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",

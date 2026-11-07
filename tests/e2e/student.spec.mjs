@@ -12,7 +12,7 @@ test("first screen answers current and next room without a tap", async ({
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByRole("navigation", { name: "Основные разделы" }),
   ).toBeVisible();
@@ -36,7 +36,7 @@ test("all four student screens have no WCAG A/AA violations", async ({
   page,
 }) => {
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -64,16 +64,16 @@ test("all four student screens have no WCAG A/AA violations", async ({
   }
 });
 
-test("demo never sends a production mutation", async ({ page }) => {
+test("guest navigation never sends a timetable mutation", async ({ page }) => {
   const requests = await mockState(page);
-  await page.goto("/schedule/beta/?demo=student");
+  await page.goto("/schedule/");
   await expect(
     page.getByRole("button", { name: "Сегодня", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Неделя", exact: true }).click();
   await page.getByRole("button", { name: "Задания", exact: true }).click();
   await page.getByRole("button", { name: "Ещё", exact: true }).click();
-  expect(requests).toEqual([]);
+  expect(requests.every((request) => request.action === "state")).toBe(true);
 });
 
 test("offline reload uses a public IndexedDB snapshot and cached application", async ({
@@ -81,7 +81,7 @@ test("offline reload uses a public IndexedDB snapshot and cached application", a
   context,
 }) => {
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -106,7 +106,7 @@ test("personal assignment and own progress survive reload without a server write
   page,
 }) => {
   const requests = await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -159,7 +159,7 @@ test("subgroup, theme and language persist and the dark theme remains accessible
   page,
 }) => {
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -201,7 +201,7 @@ test("personal assignment text is rendered literally without creating HTML", asy
   page,
 }) => {
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -230,7 +230,7 @@ test("the student service worker does not replace the staff route with the stude
 }) => {
   await mockState(page);
   await page.route("https://cdn.jsdelivr.net/**", (route) => route.abort());
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -238,7 +238,7 @@ test("the student service worker does not replace the staff route with the stude
     await navigator.serviceWorker.ready;
   });
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-  await page.goto("/schedule/beta/manage/");
+  await page.goto("/schedule/manage/");
   await expect(page).toHaveURL(/\/admin\/$/);
   await expect(
     page.getByRole("heading", { name: "Вход владельца", exact: true }),
@@ -253,7 +253,7 @@ test("keyboard skip link and 200 percent text preserve all student screens", asy
   page,
 }) => {
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -277,13 +277,13 @@ test("keyboard skip link and 200 percent text preserve all student screens", asy
   }
 });
 
-test("calendar subscription contains only public scope and demo offers downloads", async ({
+test("calendar subscription and downloads contain only public scope", async ({
   page,
   context,
 }) => {
   await context.grantPermissions(["notifications"]);
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();
@@ -308,17 +308,18 @@ test("calendar subscription contains only public scope and demo offers downloads
     reminder: "15",
   });
   expect(url.href).not.toMatch(/token|apikey|password|session/i);
-  await page.goto("/schedule/beta/?demo=student");
-  await page.getByRole("button", { name: "Ещё", exact: true }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Ссылка для подписки", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText(
-      "В демо доступно скачивание .ics. Подписка относится только к настоящему расписанию.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  const downloadEvent = page.waitForEvent("download");
+  await page
+    .locator("section")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Экспорт календаря",
+        exact: true,
+      }),
+    })
+    .getByRole("button", { name: "Неделя", exact: true })
+    .click();
+  expect((await downloadEvent).suggestedFilename()).toBe("uniflow-week.ics");
 });
 
 test("legacy completion IDs migrate once and newer progress wins on later loads", async ({
@@ -331,7 +332,7 @@ test("legacy completion IDs migrate once and newer progress wins on later loads"
     ),
   );
   await mockState(page);
-  await page.goto("/schedule/beta/");
+  await page.goto("/schedule/");
   await expect(
     page.getByText("Алгоритмы", { exact: true }).first(),
   ).toBeVisible();

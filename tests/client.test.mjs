@@ -6,8 +6,8 @@ import {
   publicState,
   snapshotKey,
   legacyTaskStatuses,
-} from "../beta/lib/client.mjs";
-import { get, clear } from "../beta/lib/storage.mjs";
+} from "../app/lib/client.mjs";
+import { get, clear } from "../app/lib/storage.mjs";
 
 const base = () => ({
   groups: [{ id: "g", subgroups: ["А", "Б"] }],
@@ -144,91 +144,34 @@ function withLegacy(values, run) {
   }
 }
 
-test("legacy completion IDs migrate into done statuses without mixing live and demo or deleting old lists", () => {
+test("legacy completion IDs migrate without changing the original stored list", () => {
   withLegacy(
-    {
-      "uf.tasks.live.guest": ["live-id", "stable-uuid"],
-      "uf.tasks.demo.demo-student-a": ["demo-a"],
-      "uf.tasks.demo.demo-student-b": ["demo-b"],
-    },
+    { "uf.tasks.live.guest": ["first", "stable-uuid", "first"] },
     (saved) => {
       const before = [...saved];
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-main", subgroup: "А" }, "live"),
-        { "live-id": "done", "stable-uuid": "done" },
-      );
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-main", subgroup: "А" }, "demo"),
-        { "demo-a": "done" },
-      );
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-main", subgroup: "Б" }, "demo"),
-        { "demo-b": "done" },
-      );
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-main", subgroup: "all" }, "demo"),
-        { "demo-a": "done", "demo-b": "done" },
-      );
+      assert.deepEqual(legacyTaskStatuses(), {
+        first: "done",
+        "stable-uuid": "done",
+      });
       assert.deepEqual([...saved], before);
     },
   );
 });
-
-test("other demo groups use their actual generated account IDs and both-subgroup union deduplicates shared tasks", () => {
-  withLegacy(
-    {
-      "uf.tasks.demo.demo-student-g-25-12-0": ["first", "common"],
-      "uf.tasks.demo.demo-student-g-25-12-1": ["second", "common"],
-      "uf.tasks.demo.demo-student-a": ["wrong-group"],
-    },
-    () => {
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-25-12", subgroup: "А" }, "demo"),
-        { first: "done", common: "done" },
-      );
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-25-12", subgroup: "all" }, "demo"),
-        { first: "done", common: "done", second: "done" },
-      );
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-25-13", subgroup: "all" }, "demo"),
-        {},
-      );
-    },
-  );
+test("corrupt legacy JSON and wrong value types do not invent completion records", () => {
+  for (const value of ["{bad json", { id: "wrong" }, null])
+    withLegacy({ "uf.tasks.live.guest": value }, () =>
+      assert.deepEqual(legacyTaskStatuses(), {}),
+    );
 });
-
-test("corrupt legacy JSON and wrong value types are ignored without inventing completion records", () => {
+test("legacy completion values are bounded to nonempty string IDs without prototype injection", () => {
   withLegacy(
-    {
-      "uf.tasks.live.guest": "{invalid json",
-      "uf.tasks.demo.demo-student-a": [
-        null,
-        4,
-        "",
-        "valid",
-        "valid",
-        "__proto__",
-      ],
-      "uf.tasks.demo.demo-student-b": { id: "not-an-array" },
-    },
+    { "uf.tasks.live.guest": [null, 4, "", "valid", "valid", "__proto__"] },
     () => {
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-main", subgroup: "А" }, "live"),
-        {},
-      );
-      const statuses = legacyTaskStatuses(
-        { groupId: "g-main", subgroup: "all" },
-        "demo",
-      );
+      const statuses = legacyTaskStatuses();
       assert.equal(statuses.valid, "done");
       assert.equal(Object.hasOwn(statuses, "__proto__"), true);
       assert.equal(Object.getPrototypeOf(statuses), Object.prototype);
       assert.equal(Object.keys(statuses).length, 2);
-      assert.deepEqual(
-        legacyTaskStatuses({ groupId: "g-main", subgroup: "А" }, "unknown"),
-        {},
-      );
     },
   );
 });

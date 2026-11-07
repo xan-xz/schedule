@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dictionaries, translator, localeFor } from "../beta/lib/i18n.mjs";
+import { dictionaries, translator, localeFor } from "../app/lib/i18n.mjs";
 
 const placeholders = (value) =>
   [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();

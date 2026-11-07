@@ -1,15 +1,13 @@
 import { test, expect } from "@playwright/test";
-import { mockState } from "./fixtures.mjs";
+import { mockManager } from "./manager-fixture.mjs";
 
 test("named day templates save locally, survive reload, validate conflicts and apply only to a publishable draft", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.goto("/schedule/beta/manage/?demo=admin");
+  const manager = await mockManager(page);
+  await manager.login();
   await page.locator('[data-page="schedule"]').click();
-  const before = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("uf.demo.source.v4")),
-  );
+  const before = manager.state();
   const title = '<img src=x onerror="window.templateXss=1">';
   await page.getByRole("button", { name: "Шаблоны", exact: true }).click();
   let dialog = page.getByRole("dialog");
@@ -24,17 +22,14 @@ test("named day templates save locally, survive reload, validate conflicts and a
   expect(await dialog.locator("img,script").count()).toBe(0);
   expect(await page.evaluate(() => window.templateXss)).toBeUndefined();
   const stored = await page.evaluate(() =>
-    localStorage.getItem("uf.schedule.templates.v1.demo"),
+    localStorage.getItem("uf.schedule.templates.v1.live"),
   );
   expect(stored).not.toContain('"accounts"');
   expect(stored).not.toContain('"attendance"');
   expect(stored).not.toContain('"password"');
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-    ),
-  ).toBe(before.revision);
+  expect(manager.state().revision).toBe(before.revision);
   await page.reload();
+  await manager.login({ navigate: false });
   await page.locator('[data-page="schedule"]').click();
   await page.getByRole("button", { name: "Шаблоны", exact: true }).click();
   dialog = page.getByRole("dialog");
@@ -59,11 +54,7 @@ test("named day templates save locally, survive reload, validate conflicts and a
     .getByRole("button", { name: "Добавить в черновик", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).not.toBeEmpty();
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-    ),
-  ).toBe(before.revision);
+  expect(manager.state().revision).toBe(before.revision);
   await dialog.getByLabel("День назначения", { exact: true }).selectOption("6");
   await dialog
     .getByRole("button", { name: "Добавить в черновик", exact: true })
@@ -72,13 +63,7 @@ test("named day templates save locally, survive reload, validate conflicts and a
   await expect(
     page.getByText("Черновик · не опубликован", { exact: true }),
   ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        JSON.parse(localStorage.getItem("uf.demo.source.v4")).data.lessons
-          .length,
-    ),
-  ).toBe(before.data.lessons.length);
+  expect(manager.state().data.lessons.length).toBe(before.data.lessons.length);
   await page
     .getByRole("button", { name: "Предпросмотр студента", exact: true })
     .click();
@@ -92,9 +77,7 @@ test("named day templates save locally, survive reload, validate conflicts and a
     .getByRole("button", { name: "Закрыть", exact: true })
     .click();
   await page.getByRole("button", { name: "Опубликовать", exact: true }).click();
-  const after = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("uf.demo.source.v4")),
-  );
+  const after = manager.state();
   expect(after.revision).toBe(before.revision + 1);
   expect(after.data.lessons.length).toBeGreaterThan(before.data.lessons.length);
   expect(
@@ -119,35 +102,29 @@ test("named day templates save locally, survive reload, validate conflicts and a
       .getByRole("dialog")
       .getByText("Сохранённых шаблонов пока нет.", { exact: true }),
   ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-    ),
-  ).toBe(after.revision);
-  expect(requests).toEqual([]);
+  expect(manager.state().revision).toBe(after.revision);
+  expect(manager.writes()).toHaveLength(1);
 });
 
 test("staff without admin role does not get template controls", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.goto("/schedule/beta/manage/?demo=teacher");
+  const manager = await mockManager(page, { role: "teacher" });
+  await manager.login();
   await page.locator('[data-page="schedule"]').click();
   await expect(
     page.getByRole("button", { name: "Шаблоны", exact: true }),
   ).toHaveCount(0);
-  expect(requests).toEqual([]);
+  expect(manager.writes()).toEqual([]);
 });
 
 test("week template keeps the whole selected scope and refuses to overwrite occupied week", async ({
   page,
 }) => {
-  const requests = await mockState(page);
-  await page.goto("/schedule/beta/manage/?demo=admin");
+  const manager = await mockManager(page);
+  await manager.login();
   await page.locator('[data-page="schedule"]').click();
-  const before = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("uf.demo.source.v4")),
-  );
+  const before = manager.state();
   await page.getByRole("button", { name: "Шаблоны", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog
@@ -161,7 +138,7 @@ test("week template keeps the whole selected scope and refuses to overwrite occu
     .getByRole("button", { name: "Сохранить шаблон", exact: true })
     .click();
   const template = await page.evaluate(
-    () => JSON.parse(localStorage.getItem("uf.schedule.templates.v1.demo"))[0],
+    () => JSON.parse(localStorage.getItem("uf.schedule.templates.v1.live"))[0],
   );
   expect(template.kind).toBe("week");
   expect(template.lessons.length).toBe(
@@ -190,10 +167,6 @@ test("week template keeps the whole selected scope and refuses to overwrite occu
   await expect(
     page.getByText("Черновик · не опубликован", { exact: true }),
   ).toHaveCount(0);
-  expect(
-    await page.evaluate(
-      () => JSON.parse(localStorage.getItem("uf.demo.source.v4")).revision,
-    ),
-  ).toBe(before.revision);
-  expect(requests).toEqual([]);
+  expect(manager.state().revision).toBe(before.revision);
+  expect(manager.writes()).toEqual([]);
 });

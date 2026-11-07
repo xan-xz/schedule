@@ -1,8 +1,6 @@
 node_modules/
 dist/
-beta/seed.json
-beta/demo.mjs
-beta/core.mjs
-beta/conflicts.mjs
-/index.html
+app/seed.json
+app/core.mjs
+app/conflicts.mjs
 test-results/
