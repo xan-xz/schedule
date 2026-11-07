@@ -94,6 +94,30 @@ test("IP hashes are keyed and tokens use independent opaque namespaces", async (
   assert.doesNotThrow(() => assertPassword("x".repeat(12)));
 });
 
+test("password policy counts Unicode codepoints and enforces bcrypt's 72 UTF-8 bytes without altering input", () => {
+  for (const password of [
+    "a".repeat(72),
+    "Ж".repeat(36),
+    "🙂".repeat(18),
+    " ".repeat(12),
+  ])
+    assert.doesNotThrow(() => assertPassword(password));
+  for (const password of [
+    "a".repeat(73),
+    "Ж".repeat(37),
+    "🙂".repeat(19),
+    "🙂".repeat(6),
+    "a".repeat(11),
+  ])
+    assert.throws(() => assertPassword(password));
+  // Canonically equivalent text is not silently normalized; its original
+  // codepoints and UTF-8 bytes are what the provider will hash.
+  const combining = "e\u0301".repeat(24);
+  assert.equal(new TextEncoder().encode(combining).length, 72);
+  assert.doesNotThrow(() => assertPassword(combining));
+  assert.throws(() => assertPassword(combining + "a"));
+});
+
 test("email links are parsed as data, allowlisted by project and verification path", () => {
   const token = "a".repeat(64);
   const valid =
@@ -340,6 +364,57 @@ test("native password and mail operations always select the fixed owner server-s
     sent.find((entry) => entry.url.includes("/otp?")).body.create_user,
     false,
   );
+});
+
+test("bootstrap password retry never falls back to an update after provider limits, outages or identity mismatch", async () => {
+  const bootstrapToken = jwt(
+    claims({ amr: [{ method: "invite", timestamp: NOW / 1000 }] }),
+  );
+  for (const nativeStatus of [429, 503]) {
+    let updates = 0;
+    const provider = createAuthProvider(
+      configuration,
+      async (url, init) => {
+        if (url.endsWith("/user") && init.method === "GET") return json(user());
+        if (url.includes("/token?")) return json({}, nativeStatus);
+        if (init.method === "PUT") updates++;
+        throw Error("Unexpected operation");
+      },
+      () => NOW,
+    );
+    await assert.rejects(
+      provider.setPassword(bootstrapToken, "synthetic-password-only"),
+      (error) =>
+        error.code === (nativeStatus === 429 ? "RATE_LIMITED" : "UNAVAILABLE"),
+    );
+    assert.equal(updates, 0);
+  }
+  let updates = 0;
+  const otherToken = jwt(claims({ sub: OTHER }));
+  const provider = createAuthProvider(
+    configuration,
+    async (url, init) => {
+      if (url.includes("/token?"))
+        return json({
+          access_token: otherToken,
+          refresh_token: "synthetic-refresh",
+        });
+      if (url.endsWith("/user") && init.method === "GET")
+        return json(
+          init.headers.Authorization === "Bearer " + bootstrapToken
+            ? user()
+            : user({ id: OTHER }),
+        );
+      if (init.method === "PUT") updates++;
+      throw Error("Unexpected operation");
+    },
+    () => NOW,
+  );
+  await assert.rejects(
+    provider.setPassword(bootstrapToken, "synthetic-password-only"),
+    (error) => error.code === "ACCESS_DENIED",
+  );
+  assert.equal(updates, 0);
 });
 
 test("native TOTP must upgrade the original password session, never another email session", async () => {

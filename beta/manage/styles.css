@@ -1012,6 +1012,9 @@ dialog::backdrop {
 #toast.show {
   transform: translateX(-50%) translateY(0);
 }
+#toast:not(.show) {
+  visibility: hidden;
+}
 .profile-notes {
   width: 100%;
   min-height: 130px;
@@ -1880,6 +1883,26 @@ body.dark .demo-selectors {
 }
 .dialog-sub {
   color: #665570;
+}
+.scope-filter {
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.conflict-summary {
+  margin-top: 0;
+  margin-bottom: 20px;
+}
+.source-explanation {
+  padding: 0 18px;
+}
+.notice-action {
+  margin-top: 12px;
+}
+.loading-actions {
+  justify-content: center;
+}
+.profile-subtitle {
+  margin: 8px 0 20px;
 }
 @media (prefers-reduced-motion: reduce) {
   * {

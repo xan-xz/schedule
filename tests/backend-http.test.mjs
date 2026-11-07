@@ -7,6 +7,8 @@ import {
 } from "../backend/admin.mjs";
 import { hashPassword, sha } from "../backend/security.mjs";
 const token = "a".repeat(64);
+const ownerToken = "ow1a." + "b".repeat(64);
+const ownerId = "11111111-1111-4111-8111-111111111111";
 const state = () => ({
   revision: 7,
   data: {
@@ -70,7 +72,17 @@ function backend(t, options = {}) {
       if (custom) return custom;
     }
     let result = [];
-    if (path.startsWith("uf_platform?")) result = [row];
+    if (path === "rpc/owner_access_command") {
+      result = options.expired
+        ? { error: "INVALID_PROOF" }
+        : {
+            id: "22222222-2222-4222-8222-222222222222",
+            owner_uid: ownerId,
+            owner_email: "arappayevv@gmail.com",
+            native_session_id: "33333333-3333-4333-8333-333333333333",
+            expires_at: "2099-01-01T00:00:00Z",
+          };
+    } else if (path.startsWith("uf_platform?")) result = [row];
     else if (path.startsWith("uf_sessions?") && init.method !== "DELETE")
       result = options.expired ? [] : [{ user_id: options.userId || "admin" }];
     else if (path.startsWith("schedule_sessions?") && init.method !== "DELETE")
@@ -84,12 +96,24 @@ function backend(t, options = {}) {
       result = [
         {
           id: "account-t",
-          role: "teacher",
+          role: options.accountRole || "teacher",
           teacher_id: options.teacherId || "t1",
           name: "Teacher",
           active: true,
+          ...options.settings,
         },
       ];
+    else if (path.startsWith("uf_accounts?username="))
+      result = options.settings
+        ? [
+            {
+              id: "account-t",
+              role: "teacher",
+              name: "Teacher",
+              ...options.settings,
+            },
+          ]
+        : [];
     else if (path === "rpc/uf_commit")
       result = { data: payload.p_data, revision: row.revision + 1 };
     return new Response(result === null ? "" : JSON.stringify(result), {
@@ -151,7 +175,7 @@ test("HTTP stale revisions fail before save, and a commit race maps to 409", asy
   const stale = await handle(
     request({
       action: "mutate",
-      token,
+      token: ownerToken,
       revision: 6,
       op: "exception.save",
       payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
@@ -165,7 +189,7 @@ test("HTTP stale revisions fail before save, and a commit race maps to 409", asy
   const race = await handle(
     request({
       action: "mutate",
-      token,
+      token: ownerToken,
       revision: 7,
       op: "exception.save",
       payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
@@ -178,7 +202,7 @@ test("HTTP expired sessions cannot mutate and do not reach commit", async (t) =>
   const res = await handle(
     request({
       action: "mutate",
-      token,
+      token: ownerToken,
       revision: 7,
       op: "lesson.delete",
       payload: { id: "l" },
@@ -209,12 +233,12 @@ test("logout.all uses one transactional revocation for both admin session stores
     2,
   );
 });
-test("password rotation is atomic and never sends plaintext new password to the database", async (t) => {
+test("non-admin password rotation remains atomic and never sends plaintext new password to the database", async (t) => {
   const current = "test-fixture-current",
     next = "test-fixture-replacement",
     salt = "0".repeat(32);
   const settings = { salt, password_hash: await hashPassword(current, salt) };
-  const { calls } = backend(t, { settings });
+  const { calls } = backend(t, { settings, userId: "account-t" });
   const res = await handle(
     request({
       action: "password.change",
@@ -225,7 +249,7 @@ test("password rotation is atomic and never sends plaintext new password to the 
   );
   assert.equal(res.status, 200);
   const call = calls.find((c) => c.path === "rpc/uf_change_password");
-  assert.equal(call.payload.p_user_id, "admin");
+  assert.equal(call.payload.p_user_id, "account-t");
   assert.match(call.payload.p_hash, /^[a-f0-9]{64}$/);
   assert.equal(
     call.payload.p_hash,
@@ -233,13 +257,13 @@ test("password rotation is atomic and never sends plaintext new password to the 
   );
   assert.equal(JSON.stringify(calls).includes(next), false);
 });
-test("login reserves atomic limiter slot and stores only token hash via race-safe RPC", async (t) => {
+test("non-admin login reserves atomic limiter slot and stores only token hash via race-safe RPC", async (t) => {
   const pass = "test-fixture-current",
     salt = "0".repeat(32),
     password_hash = await hashPassword(pass, salt);
   const { calls } = backend(t, { settings: { salt, password_hash } });
   const res = await handle(
-    request({ action: "login", username: "admin", password: pass }),
+    request({ action: "login", username: "teacher-fixture", password: pass }),
   );
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -257,7 +281,7 @@ test("limited login returns 429 after delay without reading credentials", async 
   const res = await handle(
     request({
       action: "login",
-      username: "admin",
+      username: "teacher-fixture",
       password: "test-fixture-wrong",
     }),
   );
@@ -298,7 +322,7 @@ test("import cannot orphan existing role accounts", async (t) => {
   const res = await handle(
     request({
       action: "mutate",
-      token,
+      token: ownerToken,
       revision: 7,
       op: "import",
       payload: { data: row.data },
@@ -320,7 +344,7 @@ test("archived legacy editor rejects authenticated saves before any timetable wr
   assert.equal(response.status, 410);
   assert.equal(
     (await response.json()).error,
-    "Редактор переехал в UniFlow. Обнови страницу: https://xan-xz.github.io/schedule/manage/",
+    "Прежний редактор отключён. Открой /schedule/admin/.",
   );
   assert.equal(calls.length, 1);
   assert.match(calls[0].path, /^schedule_sessions\?/);
@@ -346,23 +370,98 @@ test("archived legacy editor still verifies a session before explaining save cut
   );
 });
 
-test("archive policy preserves legacy login limiter and hashed session issuance", async (t) => {
+test("legacy password login is retired without reading a password or issuing a session", async (t) => {
   const password = "test-fixture-legacy",
     salt = "0".repeat(32);
   const password_hash = await hashPassword(password, salt);
   const { calls } = backend(t, { settings: { salt, password_hash } });
   const response = await legacyHandle(request({ action: "login", password }));
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 410);
   const body = await response.json();
-  assert.match(body.token, /^[a-f0-9]{64}$/);
-  assert.equal(calls[0].path, "rpc/uf_login_attempt");
-  const issued = calls.find((call) => call.path === "rpc/uf_create_session");
-  assert.equal(issued.payload.p_legacy, true);
-  assert.equal(issued.payload.p_token_hash, await sha(body.token));
+  assert.equal(body.token, undefined);
+  assert.deepEqual(calls, []);
+});
+
+test("the old shared admin token and additional admin roles cannot read protected state or mutate", async (t) => {
+  const { calls } = backend(t);
+  for (const action of ["state", "mutate", "account.save", "rollback"]) {
+    const response = await handle(
+      request({
+        action,
+        token,
+        revision: 7,
+        role: "admin",
+        user: { id: ownerId, role: "admin" },
+      }),
+    );
+    assert.equal(response.status, 401);
+  }
   assert.equal(
-    calls.some((call) => call.path.startsWith("group_schedule")),
+    calls.some(
+      (call) => call.path === "rpc/uf_commit" || call.method === "PATCH",
+    ),
     false,
   );
+});
+
+test("a legacy account carrying admin role cannot become the owner", async (t) => {
+  const { calls } = backend(t, { userId: "shadow", accountRole: "admin" });
+  const response = await handle(request({ action: "state", token }));
+  assert.equal(response.status, 401);
+  assert.equal(
+    calls.some((call) => call.path === "rpc/owner_access_command"),
+    false,
+  );
+});
+
+test("only a verified owner session supplies administrative identity and cannot create another admin", async (t) => {
+  const { calls } = backend(t);
+  const stateResponse = await handle(
+    request({ action: "state", token: ownerToken, user: { id: "attacker" } }),
+  );
+  assert.equal(stateResponse.status, 200);
+  const snapshot = await stateResponse.json();
+  assert.equal(snapshot.user.id, ownerId);
+  assert.equal(snapshot.user.email, "arappayevv@gmail.com");
+  assert.equal(snapshot.user.role, "admin");
+  const create = await handle(
+    request({
+      action: "account.save",
+      token: ownerToken,
+      account: { role: "admin", username: "another-admin" },
+    }),
+  );
+  assert.equal(create.status, 403);
+  assert.equal(
+    calls.some((call) => call.path === "uf_accounts" && call.method === "POST"),
+    false,
+  );
+  const retiredPasswordForm = await handle(
+    request({
+      action: "password.change",
+      token: ownerToken,
+      currentPassword: "fixture",
+      password: "replacement-fixture",
+    }),
+  );
+  assert.equal(retiredPasswordForm.status, 410);
+  assert.equal(
+    calls.some(
+      (call) =>
+        call.path === "rpc/uf_change_password" ||
+        call.path.startsWith("schedule_settings?"),
+    ),
+    false,
+  );
+});
+
+test("the shared admin password route cannot bypass owner authentication", async (t) => {
+  const { calls } = backend(t);
+  const response = await handle(
+    request({ action: "login", username: "admin", password: "fixture" }),
+  );
+  assert.equal(response.status, 410);
+  assert.deepEqual(calls, []);
 });
 
 test("archive policy preserves logout of the current legacy session", async (t) => {

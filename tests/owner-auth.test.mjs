@@ -4,6 +4,7 @@ import { createOwnerHandler } from "../backend/owner-auth.mjs";
 import {
   OWNER_EMAIL,
   createSecretBox,
+  createAuthProvider,
   tokenHash,
   ownerError,
   verifyOwnerAccess,
@@ -518,6 +519,94 @@ test("saved setup enrollment can be returned after a lost reply without changing
     f.state.providerCalls.filter((call) => call.op === "setPassword").length,
     1,
   );
+});
+
+test("a native password saved before enrollment failure can be retried with the same password", async () => {
+  const f = await fixture({ configured: false });
+  const api = "https://isolated.supabase.co";
+  const encode = (value) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const token = (method, id) =>
+    encode({ alg: "synthetic" }) +
+    "." +
+    encode({
+      sub: UID,
+      iss: api + "/auth/v1",
+      aud: "authenticated",
+      exp: START / 1000 + 900,
+      session_id: id,
+      aal: "aal1",
+      amr: [{ method, timestamp: START / 1000 }],
+    }) +
+    ".synthetic";
+  const bootstrap = token("invite", EMAIL_SESSION);
+  const passwordToken = token("password", PASS_SESSION);
+  let saved = false,
+    updates = 0,
+    grants = 0,
+    enrollments = 0;
+  const provider = createAuthProvider(
+    { api, key: "synthetic-server-key", adminKey: "synthetic-admin-key" },
+    async (url, init) => {
+      assert.ok(url.startsWith(api + "/auth/v1/"));
+      if (url.endsWith("/user") && init.method === "GET")
+        return Response.json({
+          id: UID,
+          email: OWNER_EMAIL,
+          phone: "",
+          email_confirmed_at: new Date(START).toISOString(),
+          factors: [],
+        });
+      if (url.includes("/token?grant_type=password")) {
+        grants++;
+        return saved
+          ? Response.json({
+              access_token: passwordToken,
+              refresh_token: "synthetic-provider-refresh",
+            })
+          : Response.json({ code: "invalid_credentials" }, { status: 400 });
+      }
+      if (url.endsWith("/user") && init.method === "PUT") {
+        updates++;
+        if (saved)
+          return Response.json({ code: "same_password" }, { status: 422 });
+        saved = true;
+        return Response.json({ id: UID });
+      }
+      if (url.endsWith("/factors") && init.method === "POST") {
+        enrollments++;
+        if (enrollments === 1)
+          return Response.json(
+            { code: "synthetic_temporary_failure" },
+            { status: 503 },
+          );
+        return Response.json({
+          id: NEW_FACTOR,
+          totp: {
+            secret: "SYNTHETICSEED",
+            uri: "otpauth://totp/UniFlow?secret=SYNTHETICSEED",
+          },
+        });
+      }
+      throw Error("Unexpected isolated native Auth operation");
+    },
+    () => START,
+  );
+  f.auth.email = provider.email;
+  f.auth.setPassword = provider.setPassword;
+  f.auth.enroll = provider.enroll;
+  const started = await f.post("setup.start", { bootstrapToken: bootstrap });
+  assert.equal(started.status, 200);
+  const data = { challengeId: started.body.challengeId, password: PASSWORD };
+  assert.equal((await f.post("setup.password", data)).status, 503);
+  assert.equal(saved, true);
+  assert.equal(f.state.cfg.setup_complete, false);
+  const retry = await f.post("setup.password", data);
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.step, "totp");
+  assert.equal(updates, 1);
+  assert.equal(grants, 3);
+  assert.equal(enrollments, 2);
 });
 
 test("login requires password, fresh email proof and the approved TOTP on the original session", async () => {

@@ -50,7 +50,13 @@ export const isRefreshToken = (value) =>
 export const isChallenge = (value) =>
   typeof value === "string" && /^ow1c\.[a-f0-9]{64}$/.test(value);
 export function assertPassword(value) {
-  if (typeof value !== "string" || value.length < 12 || value.length > 128)
+  // Native Auth uses bcrypt and checks the UTF-8 byte length, not JS UTF-16
+  // units. Keep the exact input: trimming or normalization changes the secret.
+  if (
+    typeof value !== "string" ||
+    Array.from(value).length < 12 ||
+    encoder.encode(value).length > 72
+  )
     throw ownerError("INVALID_REQUEST", 400);
 }
 export function assertTotp(value) {
@@ -456,9 +462,23 @@ export function createAuthProvider(
     },
     async setPassword(accessToken, value) {
       assertPassword(value);
-      await verified(accessToken);
+      const bootstrap = await verified(accessToken);
+      // A prior attempt may have saved the password before enrollment/state
+      // persistence failed. Native Auth rejects PUT of that same password.
+      // Authenticate first so this retry never resets an already-valid secret.
+      try {
+        const existing = await password(value);
+        if (existing.identity.user.id !== bootstrap.user.id)
+          throw ownerError("ACCESS_DENIED", 403);
+        return existing;
+      } catch (error) {
+        if (error?.code !== "INVALID_PROOF") throw error;
+      }
       await request("/user", { password: value }, accessToken, "PUT");
-      return password(value);
+      const changed = await password(value);
+      if (changed.identity.user.id !== bootstrap.user.id)
+        throw ownerError("ACCESS_DENIED", 403);
+      return changed;
     },
     async totp(session, factorId, code) {
       assertTotp(code);

@@ -71,7 +71,7 @@ jobs:
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
           PW_SERVER_ROOT: dist
-        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs
+        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs tests/e2e/owner-access.spec.mjs tests/e2e/session.spec.mjs
       - name: Archive verified production artifact
         if: inputs.channel == 'production'
         run: node scripts/archive-production.mjs

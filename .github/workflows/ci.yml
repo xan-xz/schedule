@@ -27,7 +27,7 @@ jobs:
         env:
           PW_SERVER_ROOT: dist
           RELEASE_CHANNEL: production
-        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs
+        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs tests/e2e/owner-access.spec.mjs tests/e2e/session.spec.mjs
       - name: Lighthouse mobile budgets
         run: |
           node scripts/serve.mjs --root dist --port 4174 &

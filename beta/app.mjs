@@ -24,6 +24,18 @@ import * as storage from "./lib/storage.mjs";
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
+function openOwnerRoute() {
+  const proof = new URLSearchParams(location.hash.slice(1));
+  if (proof.has("access_token") || /^#\/?admin(?:[/?]|$)/.test(location.hash)) {
+    const target = new URL("./admin/", location.href);
+    // Auth may use the project's canonical site URL as its callback. Forward
+    // the one-time bootstrap fragment to the uncached owner page for scrubbing.
+    if (proof.has("access_token")) target.hash = location.hash;
+    location.replace(target.href);
+  }
+}
+openOwnerRoute();
+window.addEventListener("hashchange", openOwnerRoute);
 const S = {
   settings: initialSettings(),
   page: "today",
@@ -945,6 +957,7 @@ function renderMore() {
     }),
     el("h2", {}, t("about")),
     el("p", { class: "notice" }, t("aboutText")),
+    el("a", { href: "#admin" }, t("ownerAccess")),
     el(
       "a",
       {
@@ -1027,7 +1040,7 @@ function renderMore() {
     calendar,
     reminder,
     installation,
-    roles,
+    S.demo ? roles : null,
   ];
 }
 function render() {

@@ -1,25 +1,20 @@
 import { test, expect } from "@playwright/test";
 import { mockState } from "./fixtures.mjs";
 
-test("incorrect staff password is rejected without receiving a session", async ({
+test("incorrect owner password is rejected without receiving a session", async ({
   page,
 }) => {
   const requests = await mockState(page);
   await page.route("https://cdn.jsdelivr.net/**", (route) => route.abort());
   await page.goto("/schedule/beta/manage/");
-  await page.locator('[data-action="login"]').click();
-  await page.getByLabel("Логин", { exact: true }).fill("admin");
+  await expect(page).toHaveURL(/\/admin\/$/);
   await page
-    .getByLabel("Пароль", { exact: true })
+    .getByLabel("Пароль владельца", { exact: true })
     .fill("incorrect-test-password");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Войти", exact: true })
-    .click();
-  await expect(
-    page.getByRole("dialog").getByText("Неверный логин или пароль"),
-  ).toBeVisible();
-  expect(requests.some((req) => req.action === "login")).toBe(true);
+  await page.getByRole("button", { name: "Продолжить", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  expect(requests.some((req) => req.action === "login.begin")).toBe(true);
+  expect(requests.some((req) => req.action === "login")).toBe(false);
   expect(
     requests.every((req) => !["mutate", "rollback"].includes(req.action)),
   ).toBe(true);

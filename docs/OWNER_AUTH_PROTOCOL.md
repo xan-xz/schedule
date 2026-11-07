@@ -39,7 +39,7 @@ Bootstrap fragment, появившийся после native email callback, у�
 
 ## Проверка и развёртывание
 
-- Перед DDL: приватный snapshot вне репозитория, хеши/счётчики, исходный native Auth users0. Миграция20261107203429_owner_access создана CLI; реальные timetable rows не меняет.
+- Перед DDL: приватный snapshot вне репозитория, хеши/счётчики, исходный native Auth users0. Миграция создана CLI и применена штатным Supabase MCP apply_migration; имя локального файла синхронизировано с записанной провайдером версией20261107212017_owner_access. Реальные timetable rows не меняет.
 - owner-access-probes.sql запускается только вместе с DDL в BEGIN/ROLLBACK и пустым изолированным Auth baseline. Синтетические UID/факторы/сессии не являются настоящим логином. Проверяются replay, ACL, native-factor/session revocation, телефон/чужой email, атомарность, expiry/rotation/recovery. Managed supabase_auth_admin нельзя переключить через SQL-коннектор; его callback grants проверены как метаданные, реальный native invite остаётся отдельным тестом.
 - owner-access-rollback.sql — только pre-activation rehearsal, с отказом после активации. Сохраняет минимальные запреты регистрации и другой административной личности; не восстанавливает старые пароли/сессии. Проверен rollback→повторное применение внутри внешней откатываемой транзакции.
 - Новая функция owner-access выкладывается с verify_jwt=false, поскольку сама проверяет многофакторный протокол/opaque credentials. Старые API обновляются согласованно с UI; гостевое чтение и источник расписания сохраняются.
