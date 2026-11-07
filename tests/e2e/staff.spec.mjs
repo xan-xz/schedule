@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { mockManager } from "./manager-fixture.mjs";
+import { mockState } from "./fixtures.mjs";
 
 test("management requires owner login and rejects an incorrect password without a session", async ({
   page,
@@ -231,4 +232,69 @@ test("owner workspace omits retired role workflows and publishing retains archiv
   expect(manager.state().data.requests).toEqual(before.data.requests);
   expect(manager.writes()).toHaveLength(1);
   expect(manager.writes()[0].op).toBe("import");
+});
+
+test("owner shares subgroup Б through a canonical link that a fresh student confirms", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        async writeText(value) {
+          globalThis.managerCopiedUrl = String(value);
+        },
+      },
+    });
+  });
+  const manager = await mockManager(page);
+  await manager.login();
+  await page.locator('[data-page="schedule"]').click();
+  await page.locator('[data-filter="subgroup"]').last().selectOption("Б");
+  await page.getByRole("button", { name: "Поделиться", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => globalThis.managerCopiedUrl))
+    .toBeTruthy();
+  const copied = new URL(
+    await page.evaluate(() => globalThis.managerCopiedUrl),
+  );
+  expect(copied.origin).toBe(new URL(baseURL).origin);
+  expect(copied.pathname).toBe("/schedule/");
+  expect(copied.searchParams.get("g")).toBe("g-main");
+  expect(copied.searchParams.get("subgroup")).toBe("Б");
+  expect(copied.searchParams.has("sub")).toBe(false);
+  expect(manager.writes()).toEqual([]);
+
+  const freshContext = await browser.newContext({
+    viewport: page.viewportSize(),
+    timezoneId: "Pacific/Honolulu",
+  });
+  try {
+    const student = await freshContext.newPage();
+    const requests = await mockState(student, { savedChoice: false });
+    await student.goto(copied.href);
+    await expect(
+      student.getByRole("heading", { name: "Выбери свою группу", exact: true }),
+    ).toBeVisible();
+    await expect(
+      student.getByRole("combobox", { name: "Группа", exact: true }),
+    ).toHaveValue("g-main");
+    await expect(
+      student.getByRole("combobox", { name: "Подгруппа", exact: true }),
+    ).toHaveValue("Б");
+    await expect(student.locator("#navigation")).toBeHidden();
+    await student
+      .getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      })
+      .click();
+    await expect(student.locator("#identity")).toHaveText("06-057-25-11 · Б");
+    await expect(student.locator("#navigation")).toBeVisible();
+    expect(requests.every((request) => request.action === "state")).toBe(true);
+  } finally {
+    await freshContext.close();
+  }
 });

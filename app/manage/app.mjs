@@ -1710,7 +1710,7 @@ async function handleAction(action, args, el) {
     const url = new URL("../", import.meta.url);
     url.search = "";
     url.searchParams.set("g", S.groupId);
-    url.searchParams.set("sub", S.subgroup);
+    url.searchParams.set("subgroup", S.subgroup);
     url.searchParams.set("date", S.date);
     await navigator.clipboard.writeText(url.toString());
     toast("Ссылка на выбранную группу скопирована");
