@@ -5,7 +5,7 @@ import {
   handle as legacyHandle,
   LEGACY_WRITES_ENABLED,
 } from "../backend/admin.mjs";
-import { hashPassword, sha } from "../backend/security.mjs";
+import { sha } from "../backend/security.mjs";
 const token = "a".repeat(64);
 const ownerToken = "ow1a." + "b".repeat(64);
 const ownerId = "11111111-1111-4111-8111-111111111111";
@@ -39,10 +39,10 @@ const state = () => ({
     history: [],
   },
 });
-const request = (body) =>
+const request = (body, headers = {}) =>
   new Request("https://edge.invalid/uniflow-api", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 function backend(t, options = {}) {
@@ -138,32 +138,354 @@ test("HTTP guest cannot impersonate admin or write with no token", async (t) => 
   assert.equal(res.status, 401);
   assert.equal(calls.length, 0);
 });
-test("HTTP teacher can cancel own lesson but cross-teacher attempt fails", async (t) => {
-  const { calls } = backend(t, { userId: "account-t", teacherId: "other" });
+test("HTTP legacy teacher cannot cancel even their own lesson or impersonate the owner", async (t) => {
+  const { calls } = backend(t, { userId: "account-t", teacherId: "t1" });
+  for (const teacherId of ["t1", "other"])
+    assert.equal(
+      (
+        await handle(
+          request({
+            action: "mutate",
+            token,
+            revision: 7,
+            op: "exception.save",
+            role: "admin",
+            user: { id: ownerId, role: "admin", teacherId },
+            payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
+          }),
+        )
+      ).status,
+      401,
+    );
+  assert.deepEqual(calls, []);
+});
+
+test("HTTP public all subgroup is preserved and returns no session/account lists", async (t) => {
+  const { calls } = backend(t);
   const res = await handle(
     request({
-      action: "mutate",
-      token,
-      revision: 7,
-      op: "exception.save",
-      payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
+      action: "state",
+      groupId: "g",
+      subgroup: "all",
+      role: "admin",
+      user: { id: ownerId, role: "admin" },
     }),
-  );
-  assert.equal(res.status, 403);
-  assert.equal(
-    calls.some((c) => c.path === "rpc/uf_commit"),
-    false,
-  );
-});
-test("HTTP public all subgroup is preserved and returns no session/account lists", async (t) => {
-  backend(t);
-  const res = await handle(
-    request({ action: "state", groupId: "g", subgroup: "all" }),
   );
   const body = await res.json();
   assert.equal(body.user.subgroup, "all");
   assert.deepEqual(body.users, []);
   assert.deepEqual(body.versions, []);
+  assert.equal(body.user.id, "guest");
+  assert.equal(body.user.role, "guest");
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["uf_platform?id=eq.1"],
+  );
+});
+
+test("localhost preview can preflight and read only the fixed guest projection", async (t) => {
+  const { calls, row } = backend(t);
+  const origin = "http://127.0.0.1:4173";
+  const preflight = await handle(
+    new Request("https://edge.invalid/uniflow-api", {
+      method: "OPTIONS",
+      headers: {
+        Origin: origin,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type,apikey",
+      },
+    }),
+  );
+  assert.equal(preflight.status, 200);
+  assert.equal(preflight.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.equal(
+    preflight.headers.has("Access-Control-Allow-Credentials"),
+    false,
+  );
+  assert.deepEqual(calls, []);
+  row.data.history = [{ id: "private", summary: "private audit" }];
+  row.data.requests = [{ id: "private", teacherId: "t1" }];
+  row.data.attendance = [{ studentId: "former-student", lessonId: "l" }];
+  const response = await handle(
+    request(
+      {
+        action: "state",
+        groupId: "g",
+        subgroup: "all",
+        role: "admin",
+        user: { id: ownerId, role: "admin" },
+      },
+      { Origin: origin },
+    ),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.equal(response.headers.has("Access-Control-Allow-Credentials"), false);
+  const snapshot = await response.json();
+  assert.equal(snapshot.user.id, "guest");
+  assert.equal(snapshot.user.role, "guest");
+  for (const key of ["history", "requests", "attendance"])
+    assert.deepEqual(snapshot.data[key], []);
+  assert.deepEqual(snapshot.users, []);
+  assert.deepEqual(snapshot.versions, []);
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["uf_platform?id=eq.1"],
+  );
+});
+
+test("every protected POST rejects an untrusted Origin before actor or database IO", async (t) => {
+  const { calls } = backend(t);
+  const operations = [
+    { action: "state", token: ownerToken },
+    { action: "state", token },
+    {
+      action: "mutate",
+      token: ownerToken,
+      revision: 7,
+      op: "lesson.delete",
+      payload: { id: "l" },
+    },
+    { action: "rollback", token: ownerToken, revision: 7, target: 3 },
+    { action: "account.save", token: ownerToken },
+    { action: "password.change", token: ownerToken },
+    { action: "logout", token: ownerToken },
+    { action: "logout.all", token },
+  ];
+  for (const origin of [
+    "http://127.0.0.1:4173",
+    "https://other.test",
+    "https://xan-xz.github.io.attacker.test",
+    "null",
+    "",
+  ])
+    for (const body of operations) {
+      const response = await handle(request(body, { Origin: origin }));
+      assert.equal(response.status, 403, origin + " " + body.action);
+      assert.equal(
+        response.headers.get("Access-Control-Allow-Origin"),
+        "https://xan-xz.github.io",
+      );
+      assert.equal(
+        response.headers.has("Access-Control-Allow-Credentials"),
+        false,
+      );
+    }
+  assert.deepEqual(calls, []);
+});
+
+test("the exact production Origin retains verified owner reads and writes", async (t) => {
+  const { calls } = backend(t);
+  const headers = { Origin: "https://xan-xz.github.io" };
+  for (const body of [
+    { action: "state", token: ownerToken },
+    {
+      action: "mutate",
+      token: ownerToken,
+      revision: 7,
+      op: "exception.save",
+      payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
+    },
+  ]) {
+    const response = await handle(request(body, headers));
+    assert.equal(response.status, 200);
+    assert.equal(
+      response.headers.get("Access-Control-Allow-Origin"),
+      headers.Origin,
+    );
+    assert.equal(
+      response.headers.has("Access-Control-Allow-Credentials"),
+      false,
+    );
+    assert.equal((await response.json()).user.id, ownerId);
+  }
+  assert.equal(calls.filter((call) => call.path === "rpc/uf_commit").length, 1);
+});
+
+test("retired login keeps its constant no-IO response even for a foreign Origin", async (t) => {
+  const { calls } = backend(t);
+  const response = await handle(
+    request(
+      { action: "login", username: "admin", password: "fixture" },
+      { Origin: "https://other.test" },
+    ),
+  );
+  assert.equal(response.status, 410);
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Origin"),
+    "https://xan-xz.github.io",
+  );
+  assert.deepEqual(calls, []);
+});
+
+test("failed public reads retain restrictive error CORS instead of exposing server failures", async (t) => {
+  const { calls } = backend(t, {
+    respond: (path) =>
+      path.startsWith("uf_platform?")
+        ? new Response("provider failure", { status: 500 })
+        : null,
+  });
+  const response = await handle(
+    request({ action: "state" }, { Origin: "http://127.0.0.1:4173" }),
+  );
+  assert.equal(response.status, 503);
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Origin"),
+    "https://xan-xz.github.io",
+  );
+  assert.equal(response.headers.has("Access-Control-Allow-Credentials"), false);
+  assert.equal(
+    (await response.json()).error.includes("provider failure"),
+    false,
+  );
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["uf_platform?id=eq.1"],
+  );
+});
+
+test("legacy logout revokes only the actual session identity for every former role", async (t) => {
+  let actualId;
+  const { calls } = backend(t, {
+    respond: (path, _payload, init) =>
+      path.startsWith("uf_sessions?") && init.method !== "DELETE"
+        ? Response.json([{ user_id: actualId }])
+        : null,
+  });
+  for (const id of [
+    "admin",
+    "former-teacher",
+    "former-student",
+    "former-disabled",
+  ])
+    for (const action of ["logout", "logout.all"]) {
+      actualId = id;
+      const before = calls.length;
+      const response = await handle(
+        request({
+          action,
+          token,
+          userId: "victim",
+          user: { id: ownerId },
+          role: "admin",
+        }),
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { ok: true });
+      const actions = calls.slice(before);
+      assert.equal(actions.length, 2);
+      assert.match(actions[0].path, /&select=user_id$/u);
+      if (action === "logout.all")
+        assert.deepEqual(actions[1], {
+          path: "rpc/uf_revoke_sessions",
+          method: "POST",
+          payload: { p_user_id: id },
+        });
+      else
+        assert.deepEqual(actions[1], {
+          path: "uf_sessions?token_hash=eq." + (await sha(token)),
+          method: "DELETE",
+          payload: null,
+        });
+    }
+  assert.equal(
+    calls.some(
+      (call) =>
+        call.path.startsWith("uf_accounts") ||
+        call.path.startsWith("uf_platform"),
+    ),
+    false,
+  );
+  assert.equal(JSON.stringify(calls).includes(token), false);
+});
+
+test("expired legacy credentials cannot revoke another identity or access account data", async (t) => {
+  const { calls } = backend(t, { expired: true });
+  assert.equal(
+    (await handle(request({ action: "logout.all", token, userId: "victim" })))
+      .status,
+    401,
+  );
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].path, /^uf_sessions\?/u);
+  assert.equal(calls[0].method, "GET");
+});
+
+test("owner revocation keeps the native boundary and ignores a supplied user identity", async (t) => {
+  const { calls } = backend(t);
+  assert.equal(
+    (
+      await handle(
+        request({ action: "logout.all", token: ownerToken, userId: "victim" }),
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["rpc/owner_access_command", "rpc/owner_access_command"],
+  );
+  assert.equal(calls[0].payload.p_op, "session.verify");
+  assert.deepEqual(calls[1].payload, {
+    p_op: "session.revoke",
+    p: { id: "22222222-2222-4222-8222-222222222222", all: true },
+  });
+});
+
+test("verified owner edits, imports and rolls back through the existing CAS transaction", async (t) => {
+  let archived;
+  const { calls, row } = backend(t, {
+    respond: (path) =>
+      path === "uf_versions?revision=eq.3"
+        ? Response.json([{ revision: 3, data: archived }])
+        : null,
+  });
+  archived = structuredClone(row.data);
+  for (const body of [
+    {
+      action: "mutate",
+      op: "exception.save",
+      payload: { lessonId: "l", date: "2026-11-09", status: "cancelled" },
+    },
+    {
+      action: "mutate",
+      op: "import",
+      payload: { data: structuredClone(row.data) },
+    },
+    { action: "rollback", target: 3 },
+  ]) {
+    const response = await handle(
+      request({
+        ...body,
+        token: ownerToken,
+        revision: 7,
+        user: { id: "attacker", name: "attacker" },
+      }),
+    );
+    assert.equal(response.status, 200, JSON.stringify(body));
+    const snapshot = await response.json();
+    assert.equal(snapshot.revision, 8);
+    assert.equal(snapshot.user.id, ownerId);
+    assert.deepEqual(snapshot.users, []);
+  }
+  const commits = calls.filter((call) => call.path === "rpc/uf_commit");
+  assert.equal(commits.length, 3);
+  assert.equal(
+    commits.every(
+      (call) =>
+        call.payload.p_expected === 7 &&
+        call.payload.p_actor === "Араппаев Азат",
+    ),
+    true,
+  );
+  assert.equal(
+    calls.some(
+      (call) =>
+        call.path.includes("password") ||
+        call.path.startsWith("schedule_settings"),
+    ),
+    false,
+  );
 });
 test("HTTP stale revisions fail before save, and a commit race maps to 409", async (t) => {
   const { calls } = backend(t, {
@@ -233,81 +555,94 @@ test("logout.all uses one transactional revocation for both admin session stores
     2,
   );
 });
-test("non-admin password rotation remains atomic and never sends plaintext new password to the database", async (t) => {
-  const current = "test-fixture-current",
-    next = "test-fixture-replacement",
-    salt = "0".repeat(32);
-  const settings = { salt, password_hash: await hashPassword(current, salt) };
-  const { calls } = backend(t, { settings, userId: "account-t" });
-  const res = await handle(
-    request({
-      action: "password.change",
-      token,
-      currentPassword: current,
-      password: next,
-    }),
-  );
-  assert.equal(res.status, 200);
-  const call = calls.find((c) => c.path === "rpc/uf_change_password");
-  assert.equal(call.payload.p_user_id, "account-t");
-  assert.match(call.payload.p_hash, /^[a-f0-9]{64}$/);
-  assert.equal(
-    call.payload.p_hash,
-    await hashPassword(next, call.payload.p_salt),
-  );
-  assert.equal(JSON.stringify(calls).includes(next), false);
+test("legacy credentials cannot access any retired account or password route", async (t) => {
+  const { calls } = backend(t, { userId: "account-t" });
+  for (const action of [
+    "account.save",
+    "account.password",
+    "account.delete",
+    "account.reset",
+    "password.change",
+    "password.reset",
+  ])
+    assert.equal(
+      (
+        await handle(
+          request({
+            action,
+            token,
+            currentPassword: "fixture",
+            password: "replacement-fixture",
+            userId: ownerId,
+          }),
+        )
+      ).status,
+      401,
+    );
+  assert.deepEqual(calls, []);
 });
-test("non-admin login reserves atomic limiter slot and stores only token hash via race-safe RPC", async (t) => {
-  const pass = "test-fixture-current",
-    salt = "0".repeat(32),
-    password_hash = await hashPassword(pass, salt);
-  const { calls } = backend(t, { settings: { salt, password_hash } });
-  const res = await handle(
-    request({ action: "login", username: "teacher-fixture", password: pass }),
-  );
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.match(body.token, /^[a-f0-9]{64}$/);
-  const created = calls.find((c) => c.path === "rpc/uf_create_session");
-  assert.equal(created.payload.p_token_hash, await sha(body.token));
-  assert.equal(created.payload.p_expected_hash, password_hash);
-  assert.equal(created.payload.p_legacy, false);
-  assert.match(calls[0].payload.p_ip_hash, /^[a-f0-9]{64}$/);
-  assert.equal(JSON.stringify(calls).includes(body.token), false);
-});
-test("limited login returns 429 after delay without reading credentials", async (t) => {
+
+test("every legacy username/password login is retired before credentials or session storage are read", async (t) => {
   const { calls } = backend(t, { allowLogin: false });
-  const start = performance.now();
-  const res = await handle(
-    request({
-      action: "login",
-      username: "teacher-fixture",
-      password: "test-fixture-wrong",
-    }),
-  );
-  assert.equal(res.status, 429);
-  assert.ok(performance.now() - start >= 400);
-  assert.deepEqual(
-    calls.map((c) => c.path),
-    ["rpc/uf_login_attempt"],
-  );
+  const errors = [];
+  for (const username of [
+    "admin",
+    "teacher-fixture",
+    "student-fixture",
+    "unknown",
+    "bad username",
+    "",
+    null,
+    { role: "admin" },
+  ]) {
+    const response = await handle(
+      request({
+        action: "login",
+        username,
+        password: "test-fixture",
+        token: ownerToken,
+      }),
+    );
+    assert.equal(response.status, 410);
+    const body = await response.json();
+    assert.equal(body.token, undefined);
+    errors.push(body.error);
+  }
+  assert.equal(new Set(errors).size, 1);
+  assert.deepEqual(calls, []);
 });
-test("unknown accounts do not issue a session and share generic login error", async (t) => {
+
+test("retired login never evaluates credential shape or invokes the former limiter", async (t) => {
   const { calls } = backend(t);
-  const res = await handle(
-    request({
-      action: "login",
-      username: "unknown",
-      password: "test-fixture-wrong",
+  for (const password of [null, [], {}, true, "x".repeat(10000)])
+    assert.equal(
+      (await handle(request({ action: "login", password }))).status,
+      410,
+    );
+  assert.deepEqual(calls, []);
+});
+
+test("malformed JSON, unsupported methods and preflight remain separate from retired login", async (t) => {
+  const { calls } = backend(t);
+  const invalid = await handle(
+    new Request("https://edge.invalid/uniflow-api", {
+      method: "POST",
+      body: "{",
     }),
   );
-  assert.equal(res.status, 401);
+  assert.equal(invalid.status, 400);
   assert.equal(
-    calls.some((c) => c.path === "rpc/uf_create_session"),
-    false,
+    (await handle(new Request("https://edge.invalid/uniflow-api"))).status,
+    405,
   );
-  assert.match((await res.json()).error, /Неверный логин или пароль/);
+  const preflight = await handle(
+    new Request("https://edge.invalid/uniflow-api", { method: "OPTIONS" }),
+  );
+  assert.equal(preflight.status, 200);
+  assert.equal(preflight.headers.get("Access-Control-Allow-Origin"), "*");
+  assert.deepEqual(calls, []);
 });
+
 test("import cannot orphan existing role accounts", async (t) => {
   const { row, calls } = backend(t, {
     respond: (path) =>
@@ -371,85 +706,104 @@ test("archived legacy editor still verifies a session before explaining save cut
 });
 
 test("legacy password login is retired without reading a password or issuing a session", async (t) => {
-  const password = "test-fixture-legacy",
-    salt = "0".repeat(32);
-  const password_hash = await hashPassword(password, salt);
-  const { calls } = backend(t, { settings: { salt, password_hash } });
-  const response = await legacyHandle(request({ action: "login", password }));
+  const { calls } = backend(t);
+  const response = await legacyHandle(
+    request({ action: "login", password: "test-fixture-legacy" }),
+  );
   assert.equal(response.status, 410);
-  const body = await response.json();
-  assert.equal(body.token, undefined);
+  assert.equal((await response.json()).token, undefined);
   assert.deepEqual(calls, []);
 });
 
-test("the old shared admin token and additional admin roles cannot read protected state or mutate", async (t) => {
+test("all legacy roles and forged identity claims are rejected before any protected state lookup", async (t) => {
   const { calls } = backend(t);
-  for (const action of ["state", "mutate", "account.save", "rollback"]) {
-    const response = await handle(
-      request({
-        action,
-        token,
-        revision: 7,
-        role: "admin",
-        user: { id: ownerId, role: "admin" },
-      }),
-    );
-    assert.equal(response.status, 401);
-  }
-  assert.equal(
-    calls.some(
-      (call) => call.path === "rpc/uf_commit" || call.method === "PATCH",
-    ),
-    false,
-  );
+  for (const role of ["admin", "teacher", "student", "guest"])
+    for (const action of ["state", "mutate", "account.save", "rollback"])
+      assert.equal(
+        (
+          await handle(
+            request({
+              action,
+              token,
+              revision: 7,
+              role,
+              user: { id: ownerId, role: "admin" },
+            }),
+          )
+        ).status,
+        401,
+      );
+  assert.deepEqual(calls, []);
 });
 
-test("a legacy account carrying admin role cannot become the owner", async (t) => {
-  const { calls } = backend(t, { userId: "shadow", accountRole: "admin" });
-  const response = await handle(request({ action: "state", token }));
+test("a rejected opaque owner token cannot trigger a platform or account read", async (t) => {
+  const { calls } = backend(t, { expired: true });
+  const response = await handle(
+    request({
+      action: "state",
+      token: ownerToken,
+      role: "admin",
+      user: { id: ownerId, role: "admin" },
+    }),
+  );
   assert.equal(response.status, 401);
-  assert.equal(
-    calls.some((call) => call.path === "rpc/owner_access_command"),
-    false,
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ["rpc/owner_access_command"],
   );
+  assert.equal(calls[0].payload.p_op, "session.verify");
 });
 
-test("only a verified owner session supplies administrative identity and cannot create another admin", async (t) => {
+test("only verified owner identity is returned and every former account/password operation is retired", async (t) => {
   const { calls } = backend(t);
-  const stateResponse = await handle(
-    request({ action: "state", token: ownerToken, user: { id: "attacker" } }),
+  const response = await handle(
+    request({
+      action: "state",
+      token: ownerToken,
+      user: { id: "attacker", role: "teacher" },
+    }),
   );
-  assert.equal(stateResponse.status, 200);
-  const snapshot = await stateResponse.json();
+  assert.equal(response.status, 200);
+  const snapshot = await response.json();
   assert.equal(snapshot.user.id, ownerId);
   assert.equal(snapshot.user.email, "arappayevv@gmail.com");
   assert.equal(snapshot.user.role, "admin");
-  const create = await handle(
-    request({
-      action: "account.save",
-      token: ownerToken,
-      account: { role: "admin", username: "another-admin" },
-    }),
-  );
-  assert.equal(create.status, 403);
-  assert.equal(
-    calls.some((call) => call.path === "uf_accounts" && call.method === "POST"),
-    false,
-  );
-  const retiredPasswordForm = await handle(
-    request({
-      action: "password.change",
-      token: ownerToken,
-      currentPassword: "fixture",
-      password: "replacement-fixture",
-    }),
-  );
-  assert.equal(retiredPasswordForm.status, 410);
+  assert.deepEqual(snapshot.users, []);
+  for (const action of [
+    "account.save",
+    "account.password",
+    "account.delete",
+    "account.reset",
+    "account.future",
+    "password.change",
+    "password.reset",
+  ]) {
+    const before = calls.length;
+    assert.equal(
+      (
+        await handle(
+          request({
+            action,
+            token: ownerToken,
+            account: { role: "admin" },
+            currentPassword: "fixture",
+            password: "replacement-fixture",
+          }),
+        )
+      ).status,
+      410,
+    );
+    assert.deepEqual(
+      calls.slice(before).map((call) => call.path),
+      ["rpc/owner_access_command"],
+    );
+  }
   assert.equal(
     calls.some(
       (call) =>
-        call.path === "rpc/uf_change_password" ||
-        call.path.startsWith("schedule_settings?"),
+        call.path.startsWith("uf_accounts") ||
+        call.path.startsWith("schedule_settings") ||
+        call.path === "rpc/uf_change_password",
     ),
     false,
   );
