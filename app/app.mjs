@@ -790,10 +790,15 @@ function renderWeek() {
   ];
 }
 async function changeStatus(id, status) {
+  const key = statusKey();
   await retirement;
+  const result = await storage.update(
+    key,
+    (current) => ({ ...current, [id]: status }),
+    {},
+  );
   await loadPersonal();
-  S.statuses = { ...S.statuses, [id]: status };
-  if (!(await storage.set(statusKey(), S.statuses))) toast(t("storageWarning"));
+  if (!result.persisted) toast(t("storageWarning"));
   render();
 }
 async function personalForm() {
@@ -832,6 +837,7 @@ async function personalForm() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!title.value.trim()) return;
+    const key = personalKey();
     const task = {
       id: crypto.randomUUID(),
       title: title.value.trim(),
@@ -840,12 +846,17 @@ async function personalForm() {
       description: "",
       groupId: S.settings.groupId,
     };
-    S.personal = [...S.personal, task];
     try {
-      const persisted = await storage.set(personalKey(), S.personal);
+      await retirement;
+      const result = await storage.update(
+        key,
+        (current) => [...current, task],
+        [],
+      );
+      await loadPersonal();
       dialog.close();
       render();
-      if (!persisted) toast(t("storageWarning"));
+      if (!result.persisted) toast(t("storageWarning"));
     } catch {
       error.textContent = t("storageWarning");
     }
@@ -911,11 +922,15 @@ function renderTasks() {
           ? button(
               t("delete"),
               async () => {
+                const key = personalKey();
                 await retirement;
+                const result = await storage.update(
+                  key,
+                  (current) => current.filter((item) => item.id !== task.id),
+                  [],
+                );
                 await loadPersonal();
-                S.personal = S.personal.filter((item) => item.id !== task.id);
-                const persisted = await storage.set(personalKey(), S.personal);
-                if (!persisted) toast(t("storageWarning"));
+                if (!result.persisted) toast(t("storageWarning"));
                 render();
               },
               {

@@ -4,6 +4,10 @@ import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+const compatibility = JSON.parse(
+  await readFile(new URL("../../compatibility.json", import.meta.url), "utf8"),
+);
+
 const initialGroups = [
   { id: "g-main", code: "MAIN", name: "06-057-25-11", subgroups: ["А", "Б"] },
   { id: "g-other", code: "OTHER", name: "06-057-25-18", subgroups: ["А", "Б"] },
@@ -456,4 +460,339 @@ test("searching for a single group never changes the selection until it is expli
   await expect(group).toHaveValue("");
   await expect(identity).toContainText("06-057-25-18");
   expect(calls.every((call) => call.action === "state")).toBe(true);
+});
+
+test.describe("personal data migration and concurrent actions", () => {
+  // HTTP gates control the exact interleaving; IDB remains the real browser
+  // store. Worker lifecycle is exercised separately against a real worker.
+  test.use({ serviceWorkers: "block" });
+
+  test("a queued native origin lock reads the completed checkpoint before considering an older source", async ({
+    page,
+    context,
+  }) => {
+    const second = await context.newPage();
+    await mockState(page);
+    await mockState(second);
+    await page.goto(studentPath);
+    await second.goto(studentPath);
+    await page.evaluate(async (config) => {
+      const { migrateRetiredPersonal } =
+        await import("./lib/personal-migration.mjs");
+      await migrateRetiredPersonal(config);
+      localStorage.setItem(
+        "uf.public.v1." +
+          config.personalMigrations[0].personalFrom +
+          "g-main:А",
+        JSON.stringify([
+          {
+            id: "queued-human",
+            title: "Не возвращать удалённое",
+            due: "2026-11-08",
+            groupId: "g-main",
+          },
+        ]),
+      );
+    }, compatibility.storage);
+    const first = page.evaluate(async (config) => {
+      const storage = await import("./lib/storage.mjs");
+      const { migrateRetiredPersonal } =
+        await import("./lib/personal-migration.mjs");
+      let writes = 0;
+      const controlled = {
+        ...storage,
+        update: async (key, ...args) => {
+          if (key === "personal-history:live:g-main:А" && ++writes === 2) {
+            window.checkpointPaused = true;
+            await new Promise((resolve) => {
+              window.releaseCheckpoint = resolve;
+            });
+          }
+          return storage.update(key, ...args);
+        },
+      };
+      return migrateRetiredPersonal(config, controlled, localStorage);
+    }, compatibility.storage);
+    await expect
+      .poll(() => page.evaluate(() => window.checkpointPaused === true))
+      .toBe(true);
+    const queued = second.evaluate(async (config) => {
+      const { migrateRetiredPersonal } =
+        await import("./lib/personal-migration.mjs");
+      return migrateRetiredPersonal(config);
+    }, compatibility.storage);
+    await expect
+      .poll(() =>
+        second.evaluate(async () =>
+          (await navigator.locks.query()).pending.some(
+            (lock) => lock.name === "uniflow-personal-retirement-v1",
+          ),
+        ),
+      )
+      .toBe(true);
+    await second.evaluate(async () => {
+      const storage = await import("./lib/storage.mjs");
+      await storage.update("personal:live:g-main:А", () => [], []);
+    });
+    await page.evaluate(() => window.releaseCheckpoint());
+    expect((await first).ok).toBe(true);
+    expect(await queued).toEqual({ ok: true, migrated: false });
+    expect(
+      await second.evaluate(async () => {
+        const storage = await import("./lib/storage.mjs");
+        return storage.get("personal:live:g-main:А");
+      }),
+    ).toEqual([]);
+    await second.close();
+  });
+
+  async function openPersonal(page, title) {
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await page
+      .getByRole("button", { name: "+ Личное задание", exact: true })
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByLabel("Что нужно сделать", { exact: true })
+      .fill(title);
+    await page
+      .getByRole("dialog")
+      .getByLabel("Срок", { exact: true })
+      .fill("2026-11-08");
+  }
+  const submitPersonal = (page) =>
+    page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Добавить", exact: true })
+      .click();
+
+  test("an open personal form waits for a newly started migration and keeps both imported and typed entries", async ({
+    page,
+  }) => {
+    await mockState(page);
+    let hold = false,
+      release,
+      arrived;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const requested = new Promise((resolve) => {
+      arrived = resolve;
+    });
+    await page.route("**/compatibility.json", async (route) => {
+      if (hold) {
+        arrived();
+        await gate;
+      }
+      await route.fulfill({ json: compatibility });
+    });
+    await page.goto(studentPath);
+    await openPersonal(page, "Моё открытое задание");
+    await page.evaluate(async (from) => {
+      const storage = await import("./lib/storage.mjs");
+      await storage.set(from + "g-main:А", [
+        {
+          id: "import-during-form",
+          title: "Перенесено пока форма открыта",
+          due: "2026-11-08",
+          groupId: "g-main",
+        },
+      ]);
+    }, compatibility.storage.personalMigrations[0].personalFrom);
+    hold = true;
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await requested;
+    await submitPersonal(page);
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(
+      page.getByRole("dialog").getByLabel("Что нужно сделать", { exact: true }),
+    ).toHaveValue("Моё открытое задание");
+    release();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    for (const title of [
+      "Моё открытое задание",
+      "Перенесено пока форма открыта",
+    ])
+      await expect(
+        page.getByRole("heading", { name: title, exact: true }),
+      ).toBeVisible();
+  });
+
+  test("two current tabs append and update independently without restoring a deleted personal record", async ({
+    page,
+    context,
+  }) => {
+    const second = await context.newPage();
+    await mockState(page);
+    await mockState(second);
+    await page.goto(studentPath);
+    await second.goto(studentPath);
+    await openPersonal(page, "Первое параллельное");
+    await openPersonal(second, "Второе параллельное");
+    await Promise.all([submitPersonal(page), submitPersonal(second)]);
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await expect(second.getByRole("dialog")).not.toBeVisible();
+    await page.reload();
+    await second.reload();
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await second.getByRole("button", { name: "Задания", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Второе параллельное", exact: true }),
+    ).toBeVisible();
+    await Promise.all([
+      page
+        .getByRole("combobox", {
+          name: "Первое параллельное · Статус",
+          exact: true,
+        })
+        .selectOption("done"),
+      second
+        .getByRole("combobox", {
+          name: "Второе параллельное · Статус",
+          exact: true,
+        })
+        .selectOption("progress"),
+    ]);
+    await openPersonal(second, "Третье после удаления");
+    await page
+      .getByRole("button", {
+        name: "Удалить · Первое параллельное",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Первое параллельное", exact: true }),
+    ).toHaveCount(0);
+    await submitPersonal(second);
+    await expect(second.getByRole("dialog")).not.toBeVisible();
+    await page.reload();
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Первое параллельное", exact: true }),
+    ).toHaveCount(0);
+    for (const title of ["Второе параллельное", "Третье после удаления"])
+      await expect(
+        page.getByRole("heading", { name: title, exact: true }),
+      ).toBeVisible();
+    await expect(
+      page.getByRole("combobox", {
+        name: "Второе параллельное · Статус",
+        exact: true,
+      }),
+    ).toHaveValue("progress");
+    await second.close();
+  });
+
+  test("retained local recovery sources never resurrect deleted entries or reset progress, including later old-tab changes", async ({
+    page,
+  }) => {
+    await mockState(page);
+    await page.goto(studentPath);
+    const config = compatibility.storage;
+    await page.evaluate(async (config) => {
+      const storage = await import("./lib/storage.mjs"),
+        scope = "g-main:А";
+      const task = (id, title) => ({
+        id,
+        title,
+        due: "2026-11-08",
+        groupId: "g-main",
+      });
+      await storage.set("personal:live:" + scope, [
+        task("canonical-human", "Уже личное"),
+      ]);
+      localStorage.setItem(
+        "uf.public.v1." + config.personalMigrations[0].personalFrom + scope,
+        JSON.stringify([task("old-human", "Перенесённое личное")]),
+      );
+      localStorage.setItem(
+        "uf.public.v1." + config.personalMigrations[0].statusesFrom + scope,
+        JSON.stringify({ "old-human": "progress" }),
+      );
+      localStorage.setItem(
+        config.legacyCompletionPrefixes[0] + "profile",
+        JSON.stringify(["canonical-human", "unmatched"]),
+      );
+    }, config);
+    await page.reload();
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await expect(
+      page.getByRole("combobox", {
+        name: "Перенесённое личное · Статус",
+        exact: true,
+      }),
+    ).toHaveValue("progress");
+    await expect(
+      page.getByRole("combobox", { name: "Уже личное · Статус", exact: true }),
+    ).toHaveValue("done");
+    await page
+      .getByRole("button", {
+        name: "Удалить · Перенесённое личное",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Перенесённое личное", exact: true }),
+    ).toHaveCount(0);
+    await page.evaluate(async () => {
+      const storage = await import("./lib/storage.mjs");
+      await storage.set("statuses:live:g-main:А", {});
+    });
+    await page.reload();
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Перенесённое личное", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("combobox", { name: "Уже личное · Статус", exact: true }),
+    ).toHaveValue("new");
+    await page.evaluate((config) => {
+      const task = (id, title) => ({
+        id,
+        title,
+        due: "2026-11-08",
+        groupId: "g-main",
+      });
+      localStorage.setItem(
+        "uf.public.v1." +
+          config.personalMigrations[0].personalFrom +
+          "g-main:А",
+        JSON.stringify([
+          task("old-human", "Поздний старый текст"),
+          task("late-human", "Новое из старой вкладки"),
+        ]),
+      );
+      localStorage.setItem(
+        "uf.public.v1." +
+          config.personalMigrations[0].statusesFrom +
+          "g-main:А",
+        JSON.stringify({ "old-human": "done", "late-human": "progress" }),
+      );
+      localStorage.setItem(
+        config.legacyCompletionPrefixes[0] + "profile",
+        JSON.stringify(["canonical-human", "late-human", "another-unmatched"]),
+      );
+    }, config);
+    await page.reload();
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Поздний старый текст", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("combobox", { name: "Уже личное · Статус", exact: true }),
+    ).toHaveValue("new");
+    await expect(
+      page.getByRole("combobox", {
+        name: "Новое из старой вкладки · Статус",
+        exact: true,
+      }),
+    ).toHaveValue("progress");
+    const history = await page.evaluate(async () => {
+      const storage = await import("./lib/storage.mjs");
+      return storage.get("personal-history:live:g-main:А");
+    });
+    expect(history.copies.at(-1).personal[0].title).toBe(
+      "Поздний старый текст",
+    );
+  });
 });

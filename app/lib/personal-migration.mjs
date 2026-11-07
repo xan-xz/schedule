@@ -13,6 +13,22 @@ const personal = (value) =>
   );
 const statuses = (value) =>
   value && Object.prototype.toString.call(value) === "[object Object]";
+const stable = (value) =>
+  Array.isArray(value)
+    ? value.map(stable)
+    : statuses(value)
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort()
+            .map((key) => [key, stable(value[key])]),
+        )
+      : value;
+const completedCheckpoint = (value) =>
+  value?.complete === true &&
+  typeof value.signature === "string" &&
+  [value.seenPersonalIds, value.seenProgressIds].every(
+    (ids) => Array.isArray(ids) && ids.every((id) => typeof id === "string"),
+  );
 async function verifiedUpdate(store, key, transform, fallback) {
   const result = await store.update(key, transform, fallback);
   if (!result.persisted || !(await store.persisted(key, result.value)))
@@ -27,6 +43,7 @@ async function archive(store, key, copy) {
       if (!current || current.version !== 1 || !Array.isArray(current.copies))
         throw Error("Unrecognized recovery copy");
       return {
+        ...current,
         version: 1,
         copies: current.copies.some((item) => same(item, copy))
           ? current.copies
@@ -44,8 +61,8 @@ export async function migrateRetiredPersonal(
   config,
   store = storage,
   browserStorage,
+  locks = globalThis.navigator?.locks,
 ) {
-  let migrated = false;
   try {
     if (browserStorage === undefined)
       try {
@@ -53,6 +70,38 @@ export async function migrateRetiredPersonal(
       } catch {
         browserStorage = null;
       }
+    if (!locks?.request) {
+      const keys = await store.keys();
+      const hasSource = keys.some((key) =>
+        (config.personalMigrations || []).some(
+          (item) =>
+            key.startsWith(item.personalFrom) ||
+            key.startsWith(item.statusesFrom),
+        ),
+      );
+      let hasCompletions = false;
+      for (let index = 0; index < (browserStorage?.length || 0); index++)
+        if (
+          (config.legacyCompletionPrefixes || []).some((prefix) =>
+            browserStorage.key(index)?.startsWith(prefix),
+          )
+        )
+          hasCompletions = true;
+      return { ok: !hasSource && !hasCompletions, migrated: false };
+    }
+    return await locks.request(
+      "uniflow-personal-retirement-v1",
+      { mode: "exclusive" },
+      () => migrateLocked(config, store, browserStorage),
+    );
+  } catch {
+    return { ok: false, migrated: false };
+  }
+}
+
+async function migrateLocked(config, store, browserStorage) {
+  let migrated = false;
+  try {
     const completionRows = [];
     const completed = new Set();
     for (let index = 0; index < (browserStorage?.length || 0); index++) {
@@ -105,7 +154,28 @@ export async function migrateRetiredPersonal(
           continue;
         if (sourcePersonal !== null && !personal(sourcePersonal))
           throw Error("Unrecognized personal records");
-        await archive(store, "personal-history:live:" + scope, {
+        const historyKey = "personal-history:live:" + scope;
+        const history = await store.get(historyKey, null);
+        const savedCheckpoint =
+          history?.processedSources?.[migration.personalFrom];
+        const previous =
+          completedCheckpoint(savedCheckpoint) &&
+          (await store.persisted(historyKey, history))
+            ? savedCheckpoint
+            : null;
+        const signature = JSON.stringify(
+          stable({
+            personal: sourcePersonal,
+            statuses: sourceStatuses,
+            completions: [...completionRows].sort((left, right) =>
+              left.key.localeCompare(right.key),
+            ),
+          }),
+        );
+        if (previous?.signature === signature) continue;
+        const seenPersonal = new Set(previous?.seenPersonalIds || []);
+        const seenProgress = new Set(previous?.seenProgressIds || []);
+        await archive(store, historyKey, {
           personal: sourcePersonal,
           statuses: sourceStatuses,
         });
@@ -119,7 +189,8 @@ export async function migrateRetiredPersonal(
             conflicts.clear();
             const byId = new Map(current.map((task) => [task.id, task]));
             for (const task of sourcePersonal || []) {
-              if (!byId.has(task.id)) byId.set(task.id, task);
+              if (!byId.has(task.id) && !seenPersonal.has(task.id))
+                byId.set(task.id, task);
               else if (!same(byId.get(task.id), task)) conflicts.add(task.id);
             }
             return [...byId.values()];
@@ -129,7 +200,7 @@ export async function migrateRetiredPersonal(
         const humanIds = new Set(
           targetPersonal
             .map((task) => task.id)
-            .filter((id) => !conflicts.has(id)),
+            .filter((id) => !conflicts.has(id) && !seenProgress.has(id)),
         );
         const imported = new Map(
           [...completed]
@@ -151,6 +222,38 @@ export async function migrateRetiredPersonal(
           },
           {},
         );
+        await verifiedUpdate(store, historyKey, (current) => {
+          const latest = current?.processedSources?.[migration.personalFrom];
+          return {
+            ...current,
+            processedSources: {
+              ...current.processedSources,
+              [migration.personalFrom]: {
+                complete: true,
+                signature,
+                seenPersonalIds: [
+                  ...new Set([
+                    ...seenPersonal,
+                    ...(completedCheckpoint(latest)
+                      ? latest.seenPersonalIds
+                      : []),
+                    ...(sourcePersonal || []).map((task) => task.id),
+                    ...targetPersonal.map((task) => task.id),
+                  ]),
+                ],
+                seenProgressIds: [
+                  ...new Set([
+                    ...seenProgress,
+                    ...(completedCheckpoint(latest)
+                      ? latest.seenProgressIds
+                      : []),
+                    ...targetPersonal.map((task) => task.id),
+                  ]),
+                ],
+              },
+            },
+          };
+        });
         // A still-open older tab may have edited its records during migration.
         // Keep that changed source for the next attempt instead of deleting it.
         await store.deleteIfUnchanged([
