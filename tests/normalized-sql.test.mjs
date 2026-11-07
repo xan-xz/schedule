@@ -31,7 +31,7 @@ const compactFixture = await readFile(
   "utf8",
 );
 const source = JSON.parse(
-  await readFile(new URL("../beta/seed.json", import.meta.url), "utf8"),
+  await readFile(new URL("../app/seed.json", import.meta.url), "utf8"),
 );
 const snapshot = decomposePlatform(source, { sourceRevision: 5 });
 let db;

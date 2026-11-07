@@ -2,7 +2,7 @@
 
 Перед изменениями 32 исторических файла (docs, root README/GUIDE/CONTRIBUTING/SECURITY/index) скопированы в outputs/single-product/history-6f75229 вне репозитория. Каждый SHA-256 проверен; размеры и хеши — ARCHIVE_MANIFEST.json. Отдельно добавлен app/IMPORT.md с проверкой копии. Слова владельца и полный Telegram-план сохранены.
 
-Единственный source — app/, root — /schedule/, вход — /schedule/admin/ и #/admin, артефакт — dist. Новая сборка ещё не опубликована; live Auth этой работой не изменяется.
+Единственный source — app/, root — /schedule/, вход — /schedule/admin/ и #/admin, артефакт — dist. Опубликованный source commit проверяется по release.json; изменение интерфейса не активирует личную Auth-настройку владельца.
 
 Старый продукт /beta/, ?demo=student|teacher|admin, переключатели и презентационные данные удаляются. Названия beta/demo/Бета/Демо остаются только в явном manifest, минимальной совместимости, отрицательных тестах и этой истории. Второго действующего продукта быть не должно.
 

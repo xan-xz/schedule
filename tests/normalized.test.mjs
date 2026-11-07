@@ -13,7 +13,7 @@ import {
 } from "../backend/normalized.mjs";
 
 const seed = JSON.parse(
-  await readFile(new URL("../beta/seed.json", import.meta.url), "utf8"),
+  await readFile(new URL("../app/seed.json", import.meta.url), "utf8"),
 );
 const clone = structuredClone;
 const owner = { id: "fixture-owner", role: "admin", name: "Synthetic owner" };
