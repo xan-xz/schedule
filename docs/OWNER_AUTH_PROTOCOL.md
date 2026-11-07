@@ -6,7 +6,7 @@
 
 Единственный административный email — arappayevv@gmail.com. Его native Auth UID закрепляется сервером после приглашения; пользовательские metadata, role/email из запроса, старое значениеadmin, Telegram chat_id/initData прав не дают. Проверяется подтверждённая почта, текущая native Auth сессия, её срок, отсутствие блокировки/удаления владельца, AAL2 и именно закреплённый verified TOTP factor. Клиент не выбирает себе фактор или административную личность.
 
-У owner Auth запрещены phone и phone_change. Native SMS/WhatsApp не могут создать почтовое доказательство; MFAphone/OAuth/Web3/recovery AMR не принимаются как password/email/TOTP. Это постоянный серверный инвариант, необходимый при проверке native AMR otp. Первичное создание — только фиксированный email invite; публичная регистрация не создаёт даже owner account без native invited_at. Проверка отложена до конца транзакции: Supabase сначала INSERT, затем записывает invited_at. Email/UID неизменяемы.
+У owner Auth запрещены phone и phone_change. Native SMS/WhatsApp не могут создать почтовое доказательство; MFAphone/OAuth/Web3 AMR не принимаются как password/email/TOTP. Native recovery AMR может подтверждать только свежий email владельца при всех проверках identity/session; он не заменяет независимые password и закреплённый TOTP. Это постоянный серверный инвариант, необходимый при проверке native AMR otp. Первичное создание — только фиксированный email invite; публичная регистрация не создаёт даже owner account без native invited_at. Проверка отложена до конца транзакции: Supabase сначала INSERT, затем записывает invited_at. Email/UID неизменяемы.
 
 ## HTTP
 
