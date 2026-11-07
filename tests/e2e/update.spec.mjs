@@ -21,6 +21,11 @@ const mime = {
  */
 async function releaseOrigin() {
   const versions = { root: "root-v1", beta: "beta-v1" };
+  const legacy = { root: false, beta: false };
+  const legacySource = await readFile(
+    new URL("./fixtures/legacy-worker.js", import.meta.url),
+    "utf8",
+  );
   const actions = [];
   const server = createServer(async (request, response) => {
     try {
@@ -71,6 +76,7 @@ async function releaseOrigin() {
       let body = await readFile(file);
       const version = versions[scope];
       if (relative === "sw.js") {
+        if (legacy[scope]) body = Buffer.from(legacySource);
         body = Buffer.from(
           body
             .toString()
@@ -120,6 +126,7 @@ async function releaseOrigin() {
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     versions,
+    legacy,
     actions,
     close: () =>
       new Promise((resolve) => {
@@ -161,12 +168,15 @@ test("installed PWA updates atomically across tabs while root and beta caches st
   test.setTimeout(60000);
   const origin = await releaseOrigin();
   const second = await context.newPage();
+  const retained = await context.newPage();
   const beta = await context.newPage();
   try {
     await page.goto(origin.url + "/schedule/");
     await ready(page, "root-v1");
     await second.goto(origin.url + "/schedule/");
     await ready(second, "root-v1");
+    await retained.goto(origin.url + "/schedule/");
+    await ready(retained, "root-v1");
     await beta.goto(origin.url + "/schedule/beta/?demo=student");
     await ready(beta, "beta-v1");
     origin.versions.root = "root-v2";
@@ -202,18 +212,86 @@ test("installed PWA updates atomically across tabs while root and beta caches st
     await second.close();
     origin.versions.root = "root-v3";
     await update(page, "root-v3");
+    // A document can outlive several accepted releases. Its pinned cache must
+    // survive the new worker instance, not merely the first activation.
+    expect(
+      await retained.evaluate(() => globalThis.__updateFixtureVersion),
+    ).toBe("root-v1");
+    expect(
+      await retained.evaluate(
+        async () => (await import("./lib/calendar.mjs")).updateFixtureVersion,
+      ),
+    ).toBe("root-v1");
+    await retained.close();
+    origin.versions.root = "root-v4";
+    await update(page, "root-v4");
     const names = await page.evaluate(() => caches.keys());
     expect(names).not.toContain("uniflow:%2Fschedule%2F:root-v1-static");
     expect(names).toContain("uniflow:%2Fschedule%2Fbeta%2F:beta-v1-static");
     await context.setOffline(true);
     await page.reload();
-    await ready(page, "root-v3");
+    await ready(page, "root-v4");
     await beta.reload();
     await ready(beta, "beta-v1");
     expect(origin.actions.every((action) => action === "state")).toBe(true);
   } finally {
     await context.setOffline(false);
     await second.close().catch(() => {});
+    await retained.close().catch(() => {});
+    await beta.close();
+    await origin.close();
+  }
+});
+
+test("the currently published legacy worker upgrades without losing its old-tab module cache", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(45000);
+  const origin = await releaseOrigin();
+  origin.legacy.root = true;
+  origin.legacy.beta = true;
+  const old = await context.newPage();
+  const beta = await context.newPage();
+  try {
+    await page.goto(origin.url + "/schedule/");
+    await ready(page, "root-v1");
+    await old.goto(origin.url + "/schedule/");
+    await ready(old, "root-v1");
+    await beta.goto(origin.url + "/schedule/beta/?demo=student");
+    await ready(beta, "beta-v1");
+    expect(
+      (await page.evaluate(() => caches.keys())).filter((name) =>
+        name.endsWith(":clients"),
+      ),
+    ).toEqual([]);
+    origin.legacy.root = false;
+    origin.versions.root = "root-v2";
+    await update(page, "root-v2");
+    expect(await old.evaluate(() => globalThis.__updateFixtureVersion)).toBe(
+      "root-v1",
+    );
+    expect(
+      await old.evaluate(
+        async () => (await import("./lib/calendar.mjs")).updateFixtureVersion,
+      ),
+    ).toBe("root-v1");
+    expect(
+      await page.evaluate(
+        async () => (await import("./lib/calendar.mjs")).updateFixtureVersion,
+      ),
+    ).toBe("root-v2");
+    const names = await page.evaluate(() => caches.keys());
+    expect(names).toContain("uniflow:%2Fschedule%2F:root-v1-static");
+    expect(names).toContain("uniflow:%2Fschedule%2Fbeta%2F:beta-v1-static");
+    expect(names).toContain("uniflow:%2Fschedule%2F:clients");
+    await context.setOffline(true);
+    await beta.reload();
+    await ready(beta, "beta-v1");
+    expect(origin.actions.every((action) => action === "state")).toBe(true);
+  } finally {
+    await context.setOffline(false);
+    await old.close();
     await beta.close();
     await origin.close();
   }

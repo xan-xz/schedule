@@ -84,15 +84,32 @@ self.addEventListener("activate", (event) => {
       const metadata = await caches.open(META);
       const active = await cachedName(metadata, ACTIVE_KEY);
       const hadActive = await cachedName(metadata, INSTALL_KEY);
-      // Older releases kept only their active cache. On the first upgrade into
-      // this protocol, that is the earliest previous cache; later releases use
-      // the explicit active record and retained per-client pins.
-      const previous =
-        hadActive === "0"
-          ? null
-          : versions.includes(active)
-            ? active
-            : versions.find((key) => key !== STATIC);
+      // Published legacy workers have no version metadata. Choose the latest
+      // complete prior shell, ignoring failed/partial installation caches.
+      let previous = null;
+      if (hadActive !== "0") {
+        if (active?.startsWith(PREFIX) && active.endsWith("-static"))
+          previous = active;
+        else
+          for (const name of versions
+            .filter((name) => name !== STATIC)
+            .reverse()) {
+            const candidate = await caches.open(name);
+            if (
+              (
+                await Promise.all(
+                  FILES.map((path) => candidate.match(new URL(path, SCOPE))),
+                )
+              ).every(Boolean)
+            ) {
+              previous = name;
+              break;
+            }
+          }
+        // An evicted legacy shell cannot safely use new module bytes. Such a
+        // document gets an empty retired pin until the user navigates/reloads.
+        previous ||= `${PREFIX}retired-${VERSION}-static`;
+      }
       const clients = (
         (await self.clients.matchAll?.({
           type: "window",
@@ -105,7 +122,10 @@ self.addEventListener("activate", (event) => {
         const key = clientKey(client.id);
         liveKeys.add(key.href);
         const pinned = await cachedName(metadata, key);
-        const name = versions.includes(pinned) ? pinned : previous || STATIC;
+        const name =
+          pinned?.startsWith(PREFIX) && pinned.endsWith("-static")
+            ? pinned
+            : previous || STATIC;
         keep.add(name);
         await metadata.put(key, new Response(name));
       }

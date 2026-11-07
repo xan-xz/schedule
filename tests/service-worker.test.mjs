@@ -137,10 +137,7 @@ test("activation deletes only older caches belonging to the same deployment scop
   await activation;
   assert.deepEqual(beta.deleted, [betaOld]);
   await beta.intercept("./");
-  assert.deepEqual(
-    beta.opened.filter((key) => key.endsWith("-static")),
-    ["uniflow:%2Fschedule%2Fbeta%2F:v2-static"],
-  );
+  assert.equal(beta.opened.at(-1), "uniflow:%2Fschedule%2Fbeta%2F:v2-static");
 });
 
 test("activation pins existing documents to the previous cache until a full navigation", async () => {
