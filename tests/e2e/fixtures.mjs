@@ -94,6 +94,27 @@ export async function mockState(
       }
       const body = req.postDataJSON();
       requests.push(body);
+      if (req.url().endsWith("/owner-access")) {
+        await route.fulfill(
+          body.action === "status"
+            ? {
+                json: {
+                  available: true,
+                  configured: true,
+                  setupRequired: false,
+                  ownerHint: "a***@gmail.com",
+                },
+              }
+            : {
+                status: 401,
+                json: {
+                  code: "INVALID_PROOF",
+                  error: "Не удалось подтвердить вход",
+                },
+              },
+        );
+        return;
+      }
       if (body.action === "state") {
         await route.fulfill({
           json: {

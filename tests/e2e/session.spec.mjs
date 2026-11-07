@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
 import { mockState, fixture } from "./fixtures.mjs";
+import { readFile } from "node:fs/promises";
+
+const axePath = new URL(
+  "../../node_modules/axe-core/axe.min.js",
+  import.meta.url,
+);
 
 async function signedFixture(page) {
   await mockState(page);
@@ -7,11 +13,48 @@ async function signedFixture(page) {
   let revision = 7,
     logoutAttempts = 0;
   const admin = {
-    id: "admin",
+    id: "11111111-1111-4111-8111-111111111111",
     role: "admin",
     name: "Администратор",
-    username: "admin",
+    username: "arappayevv@gmail.com",
+    email: "arappayevv@gmail.com",
   };
+  const ownerToken = "ow1a." + "a".repeat(64);
+  await page.route("**/functions/v1/owner-access", async (route) => {
+    const body = route.request().postDataJSON();
+    calls.push(body);
+    if (body.action === "status")
+      return route.fulfill({
+        json: { available: true, configured: true, setupRequired: false },
+      });
+    if (body.action === "login.begin")
+      return route.fulfill({
+        json: {
+          challengeId: "ow1c." + "c".repeat(64),
+          expiresAt: "2026-11-06T04:05:00Z",
+          emailHint: "a***@gmail.com",
+        },
+      });
+    if (body.action === "login.verify")
+      return route.fulfill({
+        json: {
+          token: ownerToken,
+          refreshToken: "ow1r." + "b".repeat(64),
+          expiresAt: "2026-11-06T04:15:00Z",
+          refreshExpiresAt: "2026-11-06T05:00:00Z",
+          owner: { id: admin.id, email: admin.email },
+        },
+      });
+    if (body.action === "logout.all") {
+      logoutAttempts++;
+      return route.fulfill(
+        logoutAttempts === 1
+          ? { status: 503, json: { code: "UNAVAILABLE" } }
+          : { json: { ok: true } },
+      );
+    }
+    return route.fulfill({ status: 400, json: { code: "INVALID_REQUEST" } });
+  });
   await page.route("**/functions/v1/uniflow-api", async (route) => {
     if (route.request().method() === "OPTIONS") {
       await route.fulfill({
@@ -25,20 +68,17 @@ async function signedFixture(page) {
     }
     const body = route.request().postDataJSON();
     calls.push(body);
-    if (body.action === "login") {
-      await route.fulfill({ json: { token: "a".repeat(64), user: admin } });
-      return;
-    }
     if (body.action === "state") {
-      const user = body.token
-        ? admin
-        : {
-            id: "guest",
-            role: "guest",
-            name: "Посетитель",
-            groupId: "g-main",
-            subgroup: "А",
-          };
+      const user =
+        body.token === ownerToken
+          ? admin
+          : {
+              id: "guest",
+              role: "guest",
+              name: "Посетитель",
+              groupId: "g-main",
+              subgroup: "А",
+            };
       await route.fulfill({
         json: {
           data: fixture,
@@ -60,15 +100,6 @@ async function signedFixture(page) {
       });
       return;
     }
-    if (body.action === "logout.all") {
-      logoutAttempts++;
-      await route.fulfill(
-        logoutAttempts === 1
-          ? { status: 503, json: { error: "Не удалось завершить сессии" } }
-          : { json: { ok: true } },
-      );
-      return;
-    }
     if (body.action === "rollback") {
       await route.fulfill({
         status: 409,
@@ -83,17 +114,17 @@ async function signedFixture(page) {
       json: { error: "Unsupported fixture action" },
     });
   });
-  await page.goto("/schedule/beta/manage/");
-  await page.locator('[data-action="login"]').click();
-  await page.getByLabel("Логин", { exact: true }).fill("admin");
+  await page.goto("/schedule/beta/admin/");
   await page
-    .getByLabel("Пароль", { exact: true })
+    .getByLabel("Пароль владельца", { exact: true })
     .fill("fixture-only-password");
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Войти", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByRole("button", { name: "Продолжить", exact: true }).click();
+  await page.getByLabel("Код или ссылка из письма").fill("123456");
+  await page.getByLabel("Код из приложения", { exact: true }).fill("654321");
+  await page.getByRole("button", { name: "Войти", exact: true }).click();
+  await expect(
+    page.getByRole("navigation", { name: "Разделы", exact: true }),
+  ).toBeVisible();
   return {
     calls,
     setRevision(value) {
@@ -102,7 +133,7 @@ async function signedFixture(page) {
   };
 }
 
-test("logout all reports failure without clearing the session, then clears it after server success", async ({
+test("logout all clears this device even when the server cannot confirm the other sessions", async ({
   page,
 }) => {
   const { calls } = await signedFixture(page);
@@ -111,22 +142,22 @@ test("logout all reports failure without clearing the session, then clears it af
     .getByRole("dialog")
     .getByRole("button", { name: "Выйти на всех устройствах", exact: true });
   await action.click();
-  await expect(page.locator("#toast")).toHaveText(
-    "Не удалось завершить сессии",
-  );
-  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Вход владельца", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Сервер не подтвердил завершение остальных сессий/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Разделы", exact: true }),
+  ).toHaveCount(0);
   expect(calls.filter((call) => call.action === "logout.all")[0].token).toBe(
-    "a".repeat(64),
+    "ow1a." + "a".repeat(64),
   );
-  await action.click();
-  await expect(page.locator("#toast")).toHaveText(
-    "Выход выполнен на всех устройствах",
+  const stored = await page.evaluate(() =>
+    Object.entries(localStorage).filter(([key]) => /token|session/i.test(key)),
   );
-  await expect(page.getByRole("dialog")).not.toBeVisible();
-  const logouts = calls.filter((call) => call.action === "logout.all");
-  expect(logouts).toHaveLength(2);
-  expect(logouts[1].token).toBe("a".repeat(64));
-  expect(calls.filter((call) => call.action === "state").at(-1).token).toBe("");
+  expect(stored).toEqual([]);
 });
 
 test("rollback confirmation retains its original revision when a refresh arrives while open", async ({
@@ -153,4 +184,96 @@ test("rollback confirmation retains its original revision when a refresh arrives
   expect(request).toMatchObject({ revision: 7, target: 6 });
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.locator("#toast")).not.toHaveText("Версия восстановлена");
+});
+
+test("the canonical owner hash route loads a network-only sign-in without exposing the workspace", async ({
+  page,
+}) => {
+  await mockState(page);
+  await page.goto("/schedule/beta/#/admin");
+  await expect(page).toHaveURL(/\/beta\/admin\/$/);
+  await expect(
+    page.getByRole("heading", { name: "Вход владельца", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator('[data-page="schedule"]')).toHaveCount(0);
+  const cachesContainAdmin = await page.evaluate(async () => {
+    for (const name of await caches.keys()) {
+      const cache = await caches.open(name);
+      if (
+        (await cache.keys()).some((request) =>
+          new URL(request.url).pathname.includes("/admin/"),
+        )
+      )
+        return true;
+    }
+    return false;
+  });
+  expect(cachesContainAdmin).toBe(false);
+});
+
+test("the verified owner workspace has no role simulation and cannot offer a second administrator", async ({
+  page,
+}, testInfo) => {
+  const consoleErrors = [];
+  page.on("console", (message) => {
+    if (["error", "warning"].includes(message.type()))
+      consoleErrors.push(message.text());
+  });
+  await page.addInitScript(() => {
+    window.ownerCspViolations = [];
+    document.addEventListener("securitypolicyviolation", (event) => {
+      window.ownerCspViolations.push({
+        directive: event.violatedDirective,
+        blocked: event.blockedURI,
+      });
+    });
+  });
+  const { calls } = await signedFixture(page);
+  await expect(
+    page.getByRole("button", { name: "Демо ролей", exact: true }),
+  ).toHaveCount(0);
+  await page.locator('[data-page="accounts"]').click();
+  await expect(page.getByText("arappayevv@gmail.com · владелец")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Создать аккаунт", exact: true })
+    .click();
+  const roleSelect = page.getByRole("combobox", { name: "Роль", exact: true });
+  await expect(roleSelect).toBeVisible();
+  const roles = await roleSelect
+    .locator("option")
+    .evaluateAll((options) => options.map((option) => option.value));
+  expect(roles).toEqual(["student", "teacher"]);
+  await page
+    .getByRole("button", { name: "Закрыть", exact: true })
+    .last()
+    .click();
+  expect(consoleErrors).toEqual([]);
+  expect(await page.evaluate(() => window.ownerCspViolations)).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.evaluate(await readFile(axePath, "utf8"));
+  const violations = await page.evaluate(async () =>
+    (
+      await globalThis.axe.run(document, {
+        runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa"] },
+      })
+    ).violations.map(({ id, nodes }) => ({
+      id,
+      targets: nodes.map((node) => node.target),
+    })),
+  );
+  expect(violations).toEqual([]);
+  expect(
+    calls
+      .filter((call) => call.action === "state" && call.token)
+      .every((call) => /^ow1a\./.test(call.token)),
+  ).toBe(true);
+  if (testInfo.project.name === "mobile-390")
+    await page.screenshot({
+      path: "../../outputs/owner-access/owner-workspace-390.png",
+      fullPage: true,
+    });
 });

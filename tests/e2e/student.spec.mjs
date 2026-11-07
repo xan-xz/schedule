@@ -239,10 +239,14 @@ test("the student service worker does not replace the staff route with the stude
   });
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
   await page.goto("/schedule/beta/manage/");
-  await expect(page.locator('[data-action="login"]')).toBeVisible();
+  await expect(page).toHaveURL(/\/admin\/$/);
   await expect(
-    page.getByRole("navigation", { name: "Разделы", exact: true }),
+    page.getByRole("heading", { name: "Вход владельца", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByLabel("Пароль владельца", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#navigation")).toHaveCount(0);
 });
 
 test("keyboard skip link and 200 percent text preserve all student screens", async ({

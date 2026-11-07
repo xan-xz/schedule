@@ -94,6 +94,30 @@ test("IP hashes are keyed and tokens use independent opaque namespaces", async (
   assert.doesNotThrow(() => assertPassword("x".repeat(12)));
 });
 
+test("password policy counts Unicode codepoints and enforces bcrypt's 72 UTF-8 bytes without altering input", () => {
+  for (const password of [
+    "a".repeat(72),
+    "Ж".repeat(36),
+    "🙂".repeat(18),
+    " ".repeat(12),
+  ])
+    assert.doesNotThrow(() => assertPassword(password));
+  for (const password of [
+    "a".repeat(73),
+    "Ж".repeat(37),
+    "🙂".repeat(19),
+    "🙂".repeat(6),
+    "a".repeat(11),
+  ])
+    assert.throws(() => assertPassword(password));
+  // Canonically equivalent text is not silently normalized; its original
+  // codepoints and UTF-8 bytes are what the provider will hash.
+  const combining = "e\u0301".repeat(24);
+  assert.equal(new TextEncoder().encode(combining).length, 72);
+  assert.doesNotThrow(() => assertPassword(combining));
+  assert.throws(() => assertPassword(combining + "a"));
+});
+
 test("email links are parsed as data, allowlisted by project and verification path", () => {
   const token = "a".repeat(64);
   const valid =

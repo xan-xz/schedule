@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "lint": "eslint . && node scripts/check-syntax.mjs",
-    "format": "prettier --write scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"beta/lib/*.mjs\" beta/app.mjs beta/styles.css beta/index.html \"beta/manage/*.{mjs,css,html}\" \"backend/*.mjs\"",
-    "format:check": "prettier --check scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"beta/lib/*.mjs\" beta/app.mjs beta/styles.css beta/index.html \"beta/manage/*.{mjs,css,html}\" \"backend/*.mjs\"",
+    "format": "prettier --write scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"beta/lib/*.mjs\" beta/app.mjs beta/styles.css beta/index.html \"beta/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"beta/admin/*.{mjs,css,html}\"",
+    "format:check": "prettier --check scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"beta/lib/*.mjs\" beta/app.mjs beta/styles.css beta/index.html \"beta/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"beta/admin/*.{mjs,css,html}\"",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "playwright test",
     "build": "node scripts/build.mjs --channel production --data-decision-reviewed",

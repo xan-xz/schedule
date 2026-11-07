@@ -1,5 +1,10 @@
 import { mutate, visible, validate, clone, uid, fail } from "./core.mjs";
 import {
+  isAccessToken,
+  verifyOwnerAccess,
+  revokeOwnerAccess,
+} from "./owner-access.mjs";
+import {
   sha,
   hashPassword,
   equal,
@@ -65,6 +70,7 @@ async function db(path, options = {}) {
   return raw ? JSON.parse(raw) : null;
 }
 async function actor(token) {
+  if (isAccessToken(token)) return verifyOwnerAccess(db, token);
   if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token))
     fail("Нужен вход в аккаунт", 401);
   const rows = await db(
@@ -75,16 +81,13 @@ async function actor(token) {
   );
   if (!rows.length) fail("Сессия истекла. Войди заново.", 401);
   if (rows[0].user_id === "admin")
-    return {
-      id: "admin",
-      role: "admin",
-      name: "Администратор",
-      username: "admin",
-    };
+    fail("Для управления требуется новый вход владельца с 2FA", 401);
   const accounts = await db(
     "uf_accounts?id=eq." + rows[0].user_id + "&active=eq.true",
   );
   if (!accounts.length) fail("Аккаунт отключён", 401);
+  if (accounts[0].role === "admin")
+    fail("Административный доступ разрешён только владельцу с 2FA", 401);
   return safeAccount(accounts[0]);
 }
 async function responseState(user, row) {
@@ -146,6 +149,8 @@ export async function handle(req) {
         body.password.length > 200
       )
         fail("Неверный логин или пароль", 401);
+      if (username === "admin")
+        fail("Открой /schedule/admin/ для входа владельца с 2FA", 410);
       if (!(await reserveLogin(db, req, username)))
         fail("Слишком много попыток. Подожди 15 минут.", 429);
       let account;
@@ -170,7 +175,11 @@ export async function handle(req) {
         body.password,
         account?.salt || "nonexistent-account-padding",
       );
-      if (!account || !equal(derived, account.password_hash))
+      if (
+        !account ||
+        account.role === "admin" ||
+        !equal(derived, account.password_hash)
+      )
         fail("Неверный логин или пароль", 401);
       const token = hex(crypto.getRandomValues(new Uint8Array(32))),
         expires = new Date(Date.now() + 7200000).toISOString();
@@ -228,6 +237,36 @@ export async function handle(req) {
       }
       return answer(await responseState(user, row));
     }
+    // Legacy credentials may revoke themselves, but never regain administrative
+    // reads or writes. New owner sessions use the separate revocation boundary.
+    if (
+      ["logout", "logout.all"].includes(body.action) &&
+      isAccessToken(body.token)
+    ) {
+      await revokeOwnerAccess(db, body.token, body.action === "logout.all");
+      return answer({ ok: true });
+    }
+    if (
+      ["logout", "logout.all"].includes(body.action) &&
+      typeof body.token === "string" &&
+      /^[a-f0-9]{64}$/.test(body.token)
+    ) {
+      const rows = await db(
+        "uf_sessions?token_hash=eq." +
+          (await sha(body.token)) +
+          "&expires_at=gt." +
+          encodeURIComponent(new Date().toISOString()),
+      );
+      if (rows[0]?.user_id === "admin") {
+        if (body.action === "logout.all")
+          await revokeSessions(db, { id: "admin" });
+        else
+          await db("uf_sessions?token_hash=eq." + (await sha(body.token)), {
+            method: "DELETE",
+          });
+        return answer({ ok: true });
+      }
+    }
     const user = await actor(body.token);
     if (body.action === "logout") {
       await db("uf_sessions?token_hash=eq." + (await sha(body.token)), {
@@ -244,9 +283,14 @@ export async function handle(req) {
       if (user.role !== "admin")
         fail("Только администратор создаёт аккаунты", 403);
       const a = body.account;
+      if (a?.role === "admin")
+        fail(
+          "Новых администраторов создавать нельзя. Управление доступно только владельцу.",
+          403,
+        );
       if (
         !a ||
-        !["admin", "student", "teacher"].includes(a.role) ||
+        !["student", "teacher"].includes(a.role) ||
         typeof a.name !== "string" ||
         !a.name.trim() ||
         a.name.length > 160 ||
@@ -313,6 +357,11 @@ export async function handle(req) {
       return answer(await responseState(user, row));
     }
     if (body.action === "password.change") {
+      if (isAccessToken(body.token))
+        fail(
+          "Пароль владельца управляется защищённым входом, прежняя форма отключена",
+          410,
+        );
       if (
         typeof body.currentPassword !== "string" ||
         typeof body.password !== "string" ||

@@ -50,7 +50,13 @@ export const isRefreshToken = (value) =>
 export const isChallenge = (value) =>
   typeof value === "string" && /^ow1c\.[a-f0-9]{64}$/.test(value);
 export function assertPassword(value) {
-  if (typeof value !== "string" || value.length < 12 || value.length > 128)
+  // Native Auth uses bcrypt and checks the UTF-8 byte length, not JS UTF-16
+  // units. Keep the exact input: trimming or normalization changes the secret.
+  if (
+    typeof value !== "string" ||
+    Array.from(value).length < 12 ||
+    encoder.encode(value).length > 72
+  )
     throw ownerError("INVALID_REQUEST", 400);
 }
 export function assertTotp(value) {

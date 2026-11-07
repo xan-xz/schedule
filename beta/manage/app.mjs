@@ -1,5 +1,11 @@
 import { setMarkup } from "./safe-dom.mjs";
 import {
+  getOwnerSession,
+  clearOwnerSession,
+} from "../admin/session-bridge.mjs";
+const ownerSession = getOwnerSession();
+let ownerEnding = false;
+import {
   el as dom,
   button as domButton,
   field as domField,
@@ -260,6 +266,47 @@ function toast(message) {
   toastTimer = setTimeout(() => $("toast").classList.remove("show"), 4200);
 }
 async function api(action, extra = {}) {
+  if (ownerEnding) throw Error("Сессия завершена. Войдите заново.");
+  if (ownerSession && ["logout", "logout.all"].includes(action)) {
+    ownerEnding = true;
+    let confirmed = true;
+    try {
+      await (action === "logout.all"
+        ? ownerSession.logoutAll()
+        : ownerSession.logout());
+    } catch {
+      confirmed = false;
+    } finally {
+      clearOwnerSession();
+      S.token = "";
+      S.data = null;
+      S.users = [];
+      S.versions = [];
+      $("app").replaceChildren();
+      const destination = new URL("../admin/", import.meta.url);
+      if (!confirmed)
+        destination.searchParams.set("notice", "logout-unconfirmed");
+      location.replace(destination.href);
+    }
+    return { ok: true };
+  }
+  if (ownerSession) {
+    try {
+      S.token = await ownerSession.getAccessToken();
+    } catch (error) {
+      if (error.code === "INVALID_PROOF" || error.code === "ACCESS_DENIED") {
+        ownerEnding = true;
+        clearOwnerSession();
+        S.token = "";
+        S.data = null;
+        S.users = [];
+        S.versions = [];
+        $("app").replaceChildren();
+        location.replace(new URL("../admin/", import.meta.url).href);
+      }
+      throw error;
+    }
+  }
   const r = await fetch(API + "/functions/v1/uniflow-api", {
     method: "POST",
     headers: { "Content-Type": "application/json", apikey: KEY },
@@ -273,6 +320,16 @@ async function api(action, extra = {}) {
     throw Error("Сервер не ответил. Попробуй ещё раз.");
   }
   if (!r.ok) {
+    if (ownerSession && r.status === 401) {
+      ownerEnding = true;
+      clearOwnerSession();
+      S.token = "";
+      S.data = null;
+      S.users = [];
+      S.versions = [];
+      $("app").replaceChildren();
+      location.replace(new URL("../admin/", import.meta.url).href);
+    }
     const e = Error(data.error || "Ошибка сервера");
     e.status = r.status;
     throw e;
@@ -310,6 +367,7 @@ function install(result) {
 }
 let refreshing = false;
 async function refresh(silent = false) {
+  if (ownerEnding) return;
   if (draft) return;
   if (S.mode !== "live" || refreshing || document.hidden) return;
   refreshing = true;
@@ -553,13 +611,13 @@ function shell(content) {
     )
     .join(
       "",
-    )}</nav><div class="sidebar-foot"><b>UniFlow · beta 2.0</b><br>Автор: Азат Араппаев<br>Казахстан · UTC+5</div></aside><div class="workspace"><header class="topbar"><span class="breadcrumb">${icon("home")}Рабочее пространство</span><label class="global-search">${icon("search")}<input id="global-search" type="search" value="${h(S.search)}" placeholder="Поиск по расписанию…" aria-label="Поиск по расписанию"></label><div class="top-actions">${button("Демо ролей", "demo", {}, "", "flask")}${button(S.user.role === "guest" ? "Войти" : "Кабинет", S.user.role === "guest" ? "login" : "profile", {}, "", "users")}<button class="avatar" data-action="profile" aria-label="Открыть профиль">${h(
+    )}</nav><div class="sidebar-foot"><b>${ownerSession ? "UniFlow · Управление" : "UniFlow · beta 2.0"}</b><br>Автор: Азат Араппаев<br>Казахстан · UTC+5</div></aside><div class="workspace"><header class="topbar"><span class="breadcrumb">${icon("home")}Рабочее пространство</span><label class="global-search">${icon("search")}<input id="global-search" type="search" value="${h(S.search)}" placeholder="Поиск по расписанию…" aria-label="Поиск по расписанию"></label><div class="top-actions">${ownerSession ? "" : button("Демо ролей", "demo", {}, "", "flask")}${button(S.user.role === "guest" ? "Войти" : "Кабинет", S.user.role === "guest" ? "login" : "profile", {}, "", "users")}<button class="avatar" data-action="profile" aria-label="Открыть профиль">${h(
     S.user.name
       .split(" ")
       .map((x) => x[0])
       .slice(0, 2)
       .join(""),
-  )}</button></div></header><main class="main" id="main"><div class="heading"><div><h1>${headingTitle()}</h1><p>${h(userLabel)} · ${h(ROLES[S.user.role])}${S.mode === "demo" ? " · пример роли" : ""}</p></div><div class="heading-actions">${S.mode === "demo" ? roleSwitcher() : button("Инструкция", "page", { page: "guide" }, "ghost", "help")}${S.page === "schedule" && isAdmin() ? button("Добавить занятие", "lesson", {}, "primary", "plus") : ""}</div></div>${S.mode === "demo" ? `<div class="demo-banner">${icon("flask")}<div><strong>Демо-песочница.</strong> Пробуй все роли. Изменения не затрагивают настоящее расписание.</div><div class="right">${button("Сбросить пример", "resetDemo", {}, "tiny")}${button("Настоящий сайт", "leaveDemo", {}, "tiny")}</div></div>` : ""}${demoSelectors()}${groupChooser()}${content}<div class="sync ${S.online ? "" : "offline"}" role="status">${S.mode === "demo" ? "Демо-данные сохраняются в этом браузере" : S.online ? "Подключено · общие изменения обновляются автоматически" : "Нет связи · запись временно недоступна"}</div><footer class="footer"><span>UniFlow · меньше суеты, больше ясности</span><span>Бета-версия · время Казахстана · UTC+5</span></footer></main></div></div>`;
+  )}</button></div></header><main class="main" id="main"><div class="heading"><div><h1>${headingTitle()}</h1><p>${h(userLabel)} · ${h(ROLES[S.user.role])}${S.mode === "demo" ? " · пример роли" : ""}</p></div><div class="heading-actions">${S.mode === "demo" ? roleSwitcher() : button("Инструкция", "page", { page: "guide" }, "ghost", "help")}${S.page === "schedule" && isAdmin() ? button("Добавить занятие", "lesson", {}, "primary", "plus") : ""}</div></div>${S.mode === "demo" ? `<div class="demo-banner">${icon("flask")}<div><strong>Демо-песочница.</strong> Пробуй все роли. Изменения не затрагивают настоящее расписание.</div><div class="right">${button("Сбросить пример", "resetDemo", {}, "tiny")}${button("Настоящий сайт", "leaveDemo", {}, "tiny")}</div></div>` : ""}${demoSelectors()}${groupChooser()}${content}<div class="sync ${S.online ? "" : "offline"}" role="status">${S.mode === "demo" ? "Демо-данные сохраняются в этом браузере" : S.online ? "Подключено · общие изменения обновляются автоматически" : "Нет связи · запись временно недоступна"}</div><footer class="footer"><span>UniFlow · меньше суеты, больше ясности</span><span>${ownerSession ? "Время Казахстана · UTC+5" : "Бета-версия · время Казахстана · UTC+5"}</span></footer></main></div></div>`;
 }
 function headingTitle() {
   if (S.page === "conflicts") return "Конфликты расписания.";
@@ -627,7 +685,7 @@ function groupChooser() {
   const g = viewedGroup(),
     locked = S.user.role === "student" && S.mode !== "demo";
   const pending = !S.data.lessons.some((l) => l.groupId === g?.id);
-  return `<section class="panel" style="padding:16px;margin-bottom:16px"><div class="toolbar"><label class="field-inline">Моя группа<select data-filter="groupId" ${locked ? "disabled" : ""}>${optionList(S.data.groups, S.groupId, "name", false)}</select></label><label class="field-inline">Подгруппа<select data-filter="subgroup" ${locked ? "disabled" : ""}>${(g?.subgroups || []).map((v) => `<option value="${h(v)}" ${v === S.subgroup ? "selected" : ""}>${h(v)}</option>`).join("")}</select></label></div><p class="small muted">${h(g?.specialty || "Специальность не указана")} · ${g?.language === "kk" ? "Казахский язык обучения" : g?.language === "ru" ? "Русский язык обучения" : "Язык не указан"}${pending ? " · Расписание этой группы ещё не загружено. Это не означает, что занятий нет." : ""}</p></section>`;
+  return `<section class="panel scope-filter"><div class="toolbar"><label class="field-inline">Моя группа<select data-filter="groupId" ${locked ? "disabled" : ""}>${optionList(S.data.groups, S.groupId, "name", false)}</select></label><label class="field-inline">Подгруппа<select data-filter="subgroup" ${locked ? "disabled" : ""}>${(g?.subgroups || []).map((v) => `<option value="${h(v)}" ${v === S.subgroup ? "selected" : ""}>${h(v)}</option>`).join("")}</select></label></div><p class="small muted">${h(g?.specialty || "Специальность не указана")} · ${g?.language === "kk" ? "Казахский язык обучения" : g?.language === "ru" ? "Русский язык обучения" : "Язык не указан"}${pending ? " · Расписание этой группы ещё не загружено. Это не означает, что занятий нет." : ""}</p></section>`;
 }
 function filters() {
   const group = viewedGroup(),
@@ -781,7 +839,7 @@ function conflictSummary() {
   if (!isAdmin()) return "";
   const conflicts = findConflicts(S.mode === "demo" ? S.demoFull : S.data);
   return (
-    '<div class="notice-info row section-space" style="margin-top:0;margin-bottom:20px"><span>Проверка расписания: ' +
+    '<div class="notice-info row section-space conflict-summary"><span>Проверка расписания: ' +
     (conflicts.length ? conflicts.length + " пересечений" : "конфликтов нет") +
     "</span>" +
     button("Проверить конфликты", "page", { page: "conflicts" }, "tiny") +
@@ -794,7 +852,7 @@ function sourceWarnings() {
   return (
     '<section class="panel section-space"><div class="panel-head"><h2>Проверка исходного файла</h2>' +
     tag(rows.length + " замечаний", rows.length ? "amber" : "green") +
-    '</div><p class="small muted" style="padding:0 18px">Совпадающие лекции разных групп с одним предметом, преподавателем, кабинетом и временем показаны как общие занятия. Остальные пересечения требуют проверки. Исходные часы сохранены.</p>' +
+    '</div><p class="small muted source-explanation">Совпадающие лекции разных групп с одним предметом, преподавателем, кабинетом и временем показаны как общие занятия. Остальные пересечения требуют проверки. Исходные часы сохранены.</p>' +
     rows
       .map(
         (w) =>
@@ -915,7 +973,7 @@ function tasks() {
 }
 function notifications() {
   const read = new Set(storage.get(myKey("read"), []));
-  return `<div class="toolbar"><span class="small muted">${unread()} непрочитанных · уведомления внутри сайта</span><span class="spacer"></span>${button("Прочитать все", "readAll", {}, "", "check")}${canWrite() ? button("Объявление", "announcement", {}, "primary", "plus") : ""}</div><section class="panel">${S.data.announcements.length ? S.data.announcements.map((n) => `<article class="notice ${read.has(n.id) ? "" : "unread"}"><div class="notice-top"><h3>${h(n.title)}</h3><small>${h(niceDate(n.createdAt.slice(0, 10)))}</small></div><p>${h(n.body)}</p>${tag(n.groupId ? name("groups", n.groupId) : n.teacherId ? name("teachers", n.teacherId) : "Получатели: " + n.roles.map((r) => ROLES[r]).join(", "))}${!read.has(n.id) ? `<div style="margin-top:12px">${button("Прочитано", "read", { id: n.id }, "tiny")}</div>` : ""}</article>`).join("") : empty("Нет уведомлений для твоей роли", "bell")}</section>`;
+  return `<div class="toolbar"><span class="small muted">${unread()} непрочитанных · уведомления внутри сайта</span><span class="spacer"></span>${button("Прочитать все", "readAll", {}, "", "check")}${canWrite() ? button("Объявление", "announcement", {}, "primary", "plus") : ""}</div><section class="panel">${S.data.announcements.length ? S.data.announcements.map((n) => `<article class="notice ${read.has(n.id) ? "" : "unread"}"><div class="notice-top"><h3>${h(n.title)}</h3><small>${h(niceDate(n.createdAt.slice(0, 10)))}</small></div><p>${h(n.body)}</p>${tag(n.groupId ? name("groups", n.groupId) : n.teacherId ? name("teachers", n.teacherId) : "Получатели: " + n.roles.map((r) => ROLES[r]).join(", "))}${!read.has(n.id) ? `<div class="notice-action">${button("Прочитано", "read", { id: n.id }, "tiny")}</div>` : ""}</article>`).join("") : empty("Нет уведомлений для твоей роли", "bell")}</section>`;
 }
 function requests() {
   return `<div class="toolbar"><span class="small muted">${isAdmin() ? "Решение администратора обновляет расписание по дате" : "Запрос не меняет расписание до утверждения"}</span><span class="spacer"></span>${button("Запросить перенос", "request", {}, "primary", "plus")}</div><section class="panel">${
@@ -994,9 +1052,12 @@ function historyPage() {
   return `<div class="notice-info">Сохраняются последние 30 версий. Откат восстанавливает расписание, задания, объявления и журнал. Аккаунты и пароли не откатываются.</div><section class="panel section-space"><div class="panel-head"><h2>Версии пространства</h2></div>${S.versions.length ? `<div class="list">${S.versions.map((v) => `<div class="list-item">${icon("history")}<div><h3>Версия ${v.revision} · ${h(v.reason)}</h3><p>${h(v.actor)} · ${h(new Date(v.created_at).toLocaleString("ru-RU"))}</p></div><div class="end">${button("Восстановить", "rollback", { revision: v.revision }, "tiny")}</div></div>`).join("")}</div>` : empty("После первого изменения здесь появится версия для восстановления", "history")}</section><section class="panel section-space"><div class="panel-head"><h2>Журнал действий</h2></div><div class="list">${S.data.history.map((e) => `<div class="list-item"><div><h3>${h(e.summary)}</h3><p>${h(e.actor)} · ${h(new Date(e.at).toLocaleString("ru-RU"))}</p></div></div>`).join("")}</div></section>`;
 }
 function accounts() {
-  return `<div class="toolbar"><span class="small muted">Роли выдаёт администратор. Самостоятельной регистрации нет.</span><span class="spacer"></span>${button("Создать аккаунт", "account", {}, "primary", "plus")}</div><section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>ИМЯ / ЛОГИН</th><th>РОЛЬ</th><th>ПРИВЯЗКА</th><th>ДОСТУП</th><th></th></tr></thead><tbody><tr><td><strong>Администратор</strong><div class="subline">admin · основной аккаунт</div></td><td>Администратор</td><td>Всё пространство</td><td>${tag("Активен", "green")}</td><td>${button("Пароль", "password", {}, "tiny")}</td></tr>${S.users.map((u) => `<tr><td><strong>${h(u.name)}</strong><div class="subline">${h(u.username)}</div></td><td>${h(ROLES[u.role])}</td><td>${h(u.role === "student" ? name("groups", u.groupId) + " · " + u.subgroup : u.role === "teacher" ? name("teachers", u.teacherId) : "Всё пространство")}</td><td>${tag(u.active ? "Активен" : "Отключён", u.active ? "green" : "red")}</td><td>${button("Изменить", "account", { id: u.id }, "tiny", "edit")}</td></tr>`).join("")}</tbody></table></div></section>`;
+  return `<div class="toolbar"><span class="small muted">Роли выдаёт администратор. Самостоятельной регистрации нет.</span><span class="spacer"></span>${button("Создать аккаунт", "account", {}, "primary", "plus")}</div><section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>ИМЯ / ЛОГИН</th><th>РОЛЬ</th><th>ПРИВЯЗКА</th><th>ДОСТУП</th><th></th></tr></thead><tbody><tr><td><strong>Администратор</strong><div class="subline">${ownerSession ? h(ownerSession.owner.email) + " · владелец" : "admin · основной аккаунт"}</div></td><td>Администратор</td><td>Всё пространство</td><td>${tag("Активен", "green")}</td><td>${ownerSession ? "" : button("Пароль", "password", {}, "tiny")}</td></tr>${S.users.map((u) => `<tr><td><strong>${h(u.name)}</strong><div class="subline">${h(u.username)}</div></td><td>${h(ROLES[u.role])}</td><td>${h(u.role === "student" ? name("groups", u.groupId) + " · " + u.subgroup : u.role === "teacher" ? name("teachers", u.teacherId) : "Всё пространство")}</td><td>${tag(u.active ? "Активен" : "Отключён", u.active ? "green" : "red")}</td><td>${button("Изменить", "account", { id: u.id }, "tiny", "edit")}</td></tr>`).join("")}</tbody></table></div></section>`;
 }
 function guide() {
+  if (ownerSession)
+    return `<section class="panel"><h2>Управление UniFlow</h2><p>Административные действия доступны только владельцу после почты, пароля и 2FA.</p><ul class="guide-list"><li>В расписании выберите нужную группу, день и подгруппу. Постоянное расписание и разовое изменение на дату редактируются отдельно.</li><li>Используйте черновик и предпросмотр перед публикацией. Публикация проверяется сервером; конфликт ревизий не перезаписывает чужую работу.</li><li>Шаблоны дня и недели добавляют пары в черновик. В истории доступен откат версии с подтверждением.</li><li>В кабинете можно завершить все сессии. После закрытия вкладки потребуется новый вход; пароль, коды и токены в браузерное хранилище не записываются.</li><li>Полноценный Telegram-клиент, дополнительные настройки сайта и нормализованные данные входят в следующие этапы релиза.</li></ul></section>`;
+
   return `<section class="panel guide"><h2>От одной пары до всей учебной недели</h2><p>UniFlow объединяет расписание, задания, объявления и согласование переносов. Учебные часы показываются по времени Казахстана. Автор проекта — Азат Араппаев.</p><h3>Попробовать роли за три минуты</h3><ol><li>Нажми «Демо ролей». Песочница работает отдельно от настоящего сайта.</li><li>Выбери «Администратор»: назначь преподавателя, измени аудиторию или добавь занятие.</li><li>Переключись на «Студент»: в расписании и уведомлениях появится результат.</li><li>Выбери «Преподаватель»: создай задание или запроси перенос своей пары.</li><li>Вернись к администратору и согласуй запрос. Расписание изменится только на выбранную дату.</li></ol><div class="table-scroll"><table><thead><tr><th>Роль</th><th>Что доступно</th></tr></thead><tbody><tr><td>Посетитель</td><td>Открытое расписание, справочники, объявления своей выбранной группы, экспорт календаря.</td></tr><tr><td>Студент</td><td>Своя группа и подгруппа, задания, личные отметки выполнения, уведомления и свои учебные уведомления.</td></tr><tr><td>Преподаватель</td><td>Собственные пары, задания и объявления учебным группам, запросы переносов, объявления своим группам.</td></tr><tr><td>Администратор</td><td>Назначения, справочники, аккаунты и роли, исключения по датам, решения по переносам, история и откат, импорт и экспорт.</td></tr></tbody></table></div><h3>Запустить настоящее пространство</h3><ol><li>Войди под логином <b>admin</b> и действующим админским паролем.</li><li>В справочниках добавь преподавателей и выбери их предметы. Затем создай группы и аудитории, если нужны дополнительные.</li><li>В расписании назначь занятиям преподавателей. Система не сохранит пересечение группы, преподавателя или аудитории.</li><li>В «Аккаунтах» создай логины студентов и преподавателей. Для преподавателя выбери его запись справочника, для студента — группу и подгруппу. Пароли передай участникам самостоятельно.</li><li>Объявления и изменения будут появляться внутри сайта у адресатов. При первом переходе с прежней версии обнови страницу.</li></ol><h3>Обычная пара или изменение по дате?</h3><p>«Изменить» редактирует регулярное занятие на все недели выбранного типа. «По дате» отменяет или переносит только одну встречу. Поддерживаются чётные и нечётные недели по номеру ISO-недели. Запрос преподавателя сам по себе ничего не меняет: требуется решение администратора.</p><h3>Безопасность и сохранение</h3><p>Реальную роль определяет сервер. Переключатель демо не выдаёт права на настоящем сайте. Пароль проверяется сервером; сессия действует два часа и хранится только в памяти вкладки. Отключение аккаунта прекращает его доступ. При одновременном редактировании устаревшие правки не перезапишут новые.</p><h3>Четыре группы и преподаватели</h3><p>В демо студент выбирает 25-11, 25-12, 25-13 или 25-14 и подгруппу. 25-11 сохраняет основное расписание. Дополнительные группы изучают те же предметы в другое время. В роли преподавателя выбери свой предмет и имя: в расписании будут только его группы, кабинеты и время. Для параллельных лабораторных есть отдельные преподаватели одного предмета. Раздел «Конфликты» у администратора показывает занятость кабинета и преподавателя; кнопка примера не меняет данные. Журнал оценок/посещаемости в интерфейсе отключён.</p><h3>Полезные инструменты</h3><ul><li>Поиск по предмету, преподавателю и аудитории; просмотр дня или недели.</li><li>«Найти свободную» в аудиториях — поиск свободного помещения на дату и время.</li><li>«Календарь .ics» — экспорт четырёх ближайших недель с учётом отмен и переносов.</li><li>«Печать» — версия расписания для бумаги или PDF.</li><li>JSON — резервная копия расписания. Перед импортом администратор видит количество записей и подтверждает замену.</li><li>В кабинете: тёмная тема, личные заметки, смена пароля и выход.</li></ul><h3>Границы беты</h3><p>Уведомления доставляются внутри сайта. SMS, WhatsApp, email и фоновые push-уведомления не подключены. Отметка задания означает личный прогресс, а не загрузку работы. Офлайн доступен только сохранённый демо-пример; настоящее редактирование требует интернета. Демо-аккаунты имитируют роли; расписание и имена преподавателей взяты из исходного файла. В настоящем расписании неизвестные преподаватели оставлены неназначенными.</p><div class="row section-space">${button("Попробовать студента", "demoRole", { role: "student" }, "primary", "users")}${button("Попробовать преподавателя", "demoRole", { role: "teacher" }, "", "users")}${button("Попробовать администратора", "demoRole", { role: "admin" }, "", "users")}<a class="btn" href="https://github.com/xan-xz/schedule" target="_blank" rel="noopener">GitHub проекта</a></div></section>`;
 }
 function render() {
@@ -1004,7 +1065,7 @@ function render() {
     setMarkup(
       $("app"),
       shell(
-        `<section class="panel"><div class="empty">${S.online ? "Загружаем данные…" : "Подключаем учебное пространство…"}<div class="row section-space" style="justify-content:center">${button("Повторить", "refresh", {}, "")}${S.base ? button("Открыть демо", "demo", {}, "primary") : ""}</div></div></section>`,
+        `<section class="panel"><div class="empty">${S.online ? "Загружаем данные…" : "Подключаем учебное пространство…"}<div class="row section-space loading-actions">${button("Повторить", "refresh", {}, "")}${S.base ? button("Открыть демо", "demo", {}, "primary") : ""}</div></div></section>`,
       ),
     );
     return;
@@ -1446,7 +1507,10 @@ function announcementForm() {
               type: "checks",
               full: true,
               value: ["student", "teacher"],
-              options: ["student", "teacher", "admin"].map((value) => ({
+              options: (ownerSession
+                ? ["student", "teacher"]
+                : ["student", "teacher", "admin"]
+              ).map((value) => ({
                 value,
                 label: ROLES[value],
               })),
@@ -1628,7 +1692,10 @@ function accountForm(id) {
         label: "Роль",
         type: "select",
         value: old?.role || "student",
-        options: ["student", "teacher", "admin"].map((value) => ({
+        options: (ownerSession
+          ? ["student", "teacher"]
+          : ["student", "teacher", "admin"]
+        ).map((value) => ({
           value,
           label: ROLES[value],
         })),
@@ -1701,6 +1768,10 @@ function accountForm(id) {
   );
 }
 function loginForm() {
+  if (S.mode === "live") {
+    location.assign(new URL("../admin/", import.meta.url).href);
+    return;
+  }
   if (S.mode === "demo") {
     leaveDemo().then(loginForm);
     return;
@@ -1740,7 +1811,7 @@ function profile() {
   const notes = storage.get(myKey("notes"), "");
   setMarkup(
     $("modal"),
-    `<div class="dialog-head"><h2>Твой кабинет</h2>${button("Закрыть", "closeModal", {}, "btn-square", "close")}</div><h3>${h(S.user.name)}</h3><p class="dialog-sub" style="margin:8px 0 20px">${h(ROLES[S.user.role])} · ${S.mode === "demo" ? "демо-песочница" : "настоящий аккаунт"}</p><div class="row">${button("Светлая / тёмная тема", "theme", {}, "", "sun")}${S.user.role !== "guest" && S.mode === "live" ? button("Сменить пароль", "password", {}, "", "edit") + button("Выйти из аккаунта", "logout", {}, "", "logout") : ""}</div><label class="form-label section-space">Личные заметки<textarea id="personal-notes" class="profile-notes" maxlength="10000" placeholder="Планы, вопросы к преподавателю, ссылки…">${h(notes)}</textarea><small>Сохраняются автоматически только в этом браузере для текущего профиля.</small></label><div class="notice-info section-space">${S.mode === "demo" ? "Роль, группу и преподавателя можно выбрать вверху страницы. Для настоящего входа сначала выйди из демо." : "Роль выдаёт администратор. После перезагрузки вкладки потребуется войти заново."}</div>`,
+    `<div class="dialog-head"><h2>Твой кабинет</h2>${button("Закрыть", "closeModal", {}, "btn-square", "close")}</div><h3>${h(S.user.name)}</h3><p class="dialog-sub profile-subtitle">${h(ROLES[S.user.role])} · ${S.mode === "demo" ? "демо-песочница" : "настоящий аккаунт"}</p><div class="row">${button("Светлая / тёмная тема", "theme", {}, "", "sun")}${S.user.role !== "guest" && S.mode === "live" ? button("Сменить пароль", "password", {}, "", "edit") + button("Выйти из аккаунта", "logout", {}, "", "logout") : ""}</div><label class="form-label section-space">Личные заметки<textarea id="personal-notes" class="profile-notes" maxlength="10000" placeholder="Планы, вопросы к преподавателю, ссылки…">${h(notes)}</textarea><small>Сохраняются автоматически только в этом браузере для текущего профиля.</small></label><div class="notice-info section-space">${S.mode === "demo" ? "Роль, группу и преподавателя можно выбрать вверху страницы. Для настоящего входа сначала выйди из демо." : "Роль выдаёт администратор. После перезагрузки вкладки потребуется войти заново."}</div>`,
   );
   if (
     S.mode === "live" &&
@@ -1758,6 +1829,13 @@ function profile() {
       );
   }
   $("modal").showModal();
+  if (ownerSession) {
+    $("modal").querySelector('[data-action="password"]')?.remove();
+    const notice = $("modal").querySelector(".notice-info");
+    if (notice)
+      notice.textContent =
+        "Вход владельца подтверждён почтой, паролем и 2FA. Сессия хранится только в памяти вкладки. После её закрытия потребуется войти заново.";
+  }
 }
 function passwordForm() {
   if (S.mode === "demo")
@@ -2049,6 +2127,12 @@ async function rollback(revision) {
   );
 }
 async function handleAction(action, args, el) {
+  if (
+    ownerSession &&
+    ["demo", "demoRole", "resetDemo", "leaveDemo"].includes(action)
+  )
+    return;
+  if (ownerEnding) return;
   if (action === "page") {
     S.page = args.page;
     S.search = "";
@@ -2172,6 +2256,7 @@ async function handleAction(action, args, el) {
     )
       throw Error("Выйди из демо и войди в настоящий аккаунт.");
     await api("logout.all");
+    if (ownerSession) return;
     S.token = "";
     S.user = { id: "guest", role: "guest", name: "Посетитель" };
     S.capabilities = {};
@@ -2185,6 +2270,7 @@ async function handleAction(action, args, el) {
   if (action === "logout") {
     try {
       await api("logout");
+      if (ownerSession) return;
     } catch {}
     S.token = "";
     S.user = { id: "guest", role: "guest", name: "Посетитель" };
@@ -2474,17 +2560,35 @@ if (
   !Number.isNaN(Date.parse(query.get("date")))
 )
   S.date = query.get("date");
-render();
-try {
-  const response = await fetch(new URL("../seed.json", import.meta.url));
-  if (response.ok) S.base = await response.json();
-} catch {}
-if (["student", "teacher", "admin"].includes(query.get("demo"))) {
-  await enterDemo(query.get("demo"));
+if (
+  !ownerSession &&
+  !["student", "teacher", "admin"].includes(query.get("demo"))
+) {
+  location.replace(new URL("../admin/", import.meta.url).href);
 } else {
-  await refresh();
+  if (ownerSession) {
+    S.user = {
+      id: ownerSession.owner.id,
+      email: ownerSession.owner.email,
+      name: "Араппаев Азат",
+      role: "admin",
+    };
+  }
+  render();
+  try {
+    const response = await fetch(new URL("../seed.json", import.meta.url));
+    if (response.ok) S.base = await response.json();
+  } catch {}
+  if (
+    !ownerSession &&
+    ["student", "teacher", "admin"].includes(query.get("demo"))
+  ) {
+    await enterDemo(query.get("demo"));
+  } else {
+    await refresh();
+  }
+  if (S.mode === "live") connectRealtime();
 }
-if (S.mode === "live") connectRealtime();
 
 function enhanceWorkspace() {
   const main = $("main");

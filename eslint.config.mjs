@@ -13,6 +13,7 @@ export default [
       ".release/**",
       "test-results/**",
       "playwright-report/**",
+      "beta/admin/vendor/**",
       "beta/manage/app.mjs",
       "beta/demo.mjs",
       "beta/core.mjs",
