@@ -68,6 +68,14 @@ async function choose(dialog, from = "4", to = "1") {
 const apply = (dialog) =>
   dialog.getByRole("button", { name: "Добавить в черновик", exact: true });
 async function audit(page) {
+  // Theme changes need a painted frame before Axe samples backgrounds and text.
+  // Keep every contrast rule enabled and audit both fully rendered themes.
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise((resolve) =>
+      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)),
+    );
+  });
   const require = createRequire(import.meta.url);
   await page.evaluate(
     await readFile(require.resolve("axe-core/axe.min.js"), "utf8"),
