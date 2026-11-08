@@ -4,6 +4,9 @@ import { createRequire } from "node:module";
 import { mockState } from "./fixtures.mjs";
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
 const scope = { groupId: "g-main", subgroup: "А" };
+const compatibility = JSON.parse(
+  await readFile(new URL("../../compatibility.json", import.meta.url), "utf8"),
+);
 const personal = {
   id: "private-original",
   title: "PRIVATE <script>literal</script>",
@@ -321,4 +324,130 @@ test("closing during a delayed save still updates the visible task list when per
       globalThis.releaseBackupSave();
     });
   }
+});
+
+test.describe("backup migration ordering", () => {
+  test.use({ serviceWorkers: "block" });
+  // Gate the manifest request itself; offline worker coverage runs in the other cases.
+  test("an open backup waits for newly started legacy migration before both export and restore", async ({
+    page,
+  }) => {
+    await mockState(page);
+    let hold = false,
+      release,
+      arrived,
+      gate,
+      requested;
+    function holdMigration() {
+      hold = true;
+      gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      requested = new Promise((resolve) => {
+        arrived = resolve;
+      });
+    }
+    await page.route("**/compatibility.json", async (route) => {
+      if (hold) {
+        arrived();
+        await gate;
+      }
+      await route.fulfill({ json: compatibility });
+    });
+    await page.goto("/schedule/");
+    await open(page);
+    const from = compatibility.storage.personalMigrations[0].personalFrom;
+    async function stageLegacy(ids) {
+      await page.evaluate(
+        async ({ from, ids }) => {
+          const s = await import("./lib/storage.mjs");
+          await s.set(
+            from + "g-main:А",
+            ids.map((id) => ({
+              id,
+              title: id,
+              due: "2026-11-09",
+              groupId: "g-main",
+            })),
+          );
+        },
+        { from, ids },
+      );
+      holdMigration();
+      await page.evaluate(() => window.dispatchEvent(new Event("online")));
+      await requested;
+      await page.evaluate(() => {
+        const proto = globalThis.IDBObjectStore.prototype,
+          original = proto.get;
+        globalThis.backupReadBeforeMigration = false;
+        proto.get = function (key) {
+          if (key === "personal:live:g-main:А")
+            globalThis.backupReadBeforeMigration = true;
+          return original.call(this, key);
+        };
+        globalThis.restoreBackupGet = () => {
+          proto.get = original;
+        };
+      });
+    }
+    try {
+      await stageLegacy(["legacy-one"]);
+      const downloading = page.waitForEvent("download");
+      void downloading.catch(() => {});
+      await page
+        .getByRole("button", { name: "Скачать копию", exact: true })
+        .click();
+      expect(
+        await page.evaluate(() => globalThis.backupReadBeforeMigration),
+      ).toBe(false);
+      await page.evaluate(() => globalThis.restoreBackupGet());
+      hold = false;
+      release();
+      const dl = await downloading;
+      const raw = JSON.parse(await readFile(await dl.path(), "utf8"));
+      expect(raw.tasks.map((x) => x.title)).toEqual(["legacy-one"]);
+      const doc = {
+        format: "uniflow-personal-tasks-v1",
+        scope,
+        tasks: [
+          {
+            id: "backup-new",
+            title: "Backup new",
+            due: "2026-11-09",
+            dueTime: "",
+            subjectId: "",
+            description: "",
+            status: "done",
+          },
+        ],
+      };
+      await upload(page, doc);
+      await expect(
+        page.getByText("Будет добавлено: 1.", { exact: false }),
+      ).toBeVisible();
+      await stageLegacy(["legacy-one", "legacy-two"]);
+      await page
+        .getByRole("button", { name: "Восстановить задания", exact: true })
+        .click();
+      expect(
+        await page.evaluate(() => globalThis.backupReadBeforeMigration),
+      ).toBe(false);
+      await page.evaluate(() => globalThis.restoreBackupGet());
+      hold = false;
+      release();
+      await expect(
+        page.getByText("Сохранено.", { exact: false }),
+      ).toBeVisible();
+      const stored = await page.evaluate(async () =>
+        (await import("./lib/storage.mjs")).get("personal:live:g-main:А"),
+      );
+      expect(stored.map((x) => x.title).sort()).toEqual(
+        ["Backup new", "legacy-one", "legacy-two"].sort(),
+      );
+    } finally {
+      hold = false;
+      release?.();
+      await page.evaluate(() => globalThis.restoreBackupGet?.());
+    }
+  });
 });

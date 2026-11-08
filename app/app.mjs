@@ -893,6 +893,7 @@ async function personalBackup() {
         backupScope.subgroup,
       isCurrent: current,
       read: async () => {
+        await retirement;
         check();
         const [tasks, statuses] = await Promise.all([
           storage.get(key, []),
@@ -902,6 +903,7 @@ async function personalBackup() {
         return { tasks, statuses };
       },
       restore: async (backup) => {
+        await retirement;
         check();
         let plan;
         const result = await storage.update(
