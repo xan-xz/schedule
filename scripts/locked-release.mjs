@@ -11,6 +11,27 @@ export function releaseAssets(archive, manifest) {
   }));
 }
 
+/** target_commitish is ignored by GitHub when a tag already exists. Generated
+ * production tags must therefore be checked against the actual Git ref too. */
+export function verifyProductionTag(result, sourceRef, required = false) {
+  if (!/^[a-f0-9]{40}$/.test(sourceRef || ""))
+    throw Error("Invalid pinned source");
+  if (
+    result.status === 404 &&
+    !required &&
+    typeof result.body?.message === "string"
+  )
+    return;
+  if (
+    result.status !== 200 ||
+    result.body?.object?.type !== "commit" ||
+    result.body.object.sha !== sourceRef
+  )
+    throw Error(
+      "Production Git tag does not point to the verified source commit.",
+    );
+}
+
 export function parseGitHubLookup(result) {
   if (result.error || result.signal || typeof result.stdout !== "string")
     throw Error("GitHub release lookup failed before a valid HTTP response.");

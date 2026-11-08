@@ -7,6 +7,8 @@ import {
   lookupReleaseIncludingDrafts,
   releaseAssets,
   ensureLockedRelease,
+  parseGitHubLookup,
+  verifyProductionTag,
 } from "./locked-release.mjs";
 
 async function main() {
@@ -58,18 +60,30 @@ async function main() {
     sourceRef,
     tag,
     assets: releaseAssets(archiveBytes, manifestBytes),
-    lookup: async () =>
-      lookupReleaseIncludingDrafts({
-        tag,
-        lookupPublished: async () => request(endpoint, ["--include"]),
-        listPages: async () =>
-          request("repos/" + repository + "/releases?per_page=100", [
-            "--paginate",
-            "--slurp",
+    lookup: async () => {
+      const release = await lookupReleaseIncludingDrafts({
+          tag,
+          lookupPublished: async () => request(endpoint, ["--include"]),
+          listPages: async () =>
+            request("repos/" + repository + "/releases?per_page=100", [
+              "--paginate",
+              "--slurp",
+            ]),
+          lookupById: async (id) =>
+            request("repos/" + repository + "/releases/" + id, ["--include"]),
+        }),
+        tagState = parseGitHubLookup(
+          request("repos/" + repository + "/git/ref/tags/" + tag, [
+            "--include",
           ]),
-        lookupById: async (id) =>
-          request("repos/" + repository + "/releases/" + id, ["--include"]),
-      }),
+        );
+      verifyProductionTag(
+        tagState,
+        sourceRef,
+        release.status === 200 && release.body.draft === false,
+      );
+      return release;
+    },
     createDraft: async () =>
       execFileSync(
         "gh",

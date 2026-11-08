@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -12,7 +12,12 @@ import {
 } from "node:fs/promises";
 import { resolve, dirname, sep, isAbsolute, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inspectRelease, releaseAssets } from "./locked-release.mjs";
+import {
+  inspectRelease,
+  releaseAssets,
+  parseGitHubLookup,
+  verifyProductionTag,
+} from "./locked-release.mjs";
 
 export function selectLockedProductionRelease(releases) {
   if (!Array.isArray(releases)) throw Error("Invalid production release list");
@@ -234,6 +239,23 @@ async function main() {
       release,
       archiveBytes,
       manifestBytes,
+    );
+    verifyProductionTag(
+      parseGitHubLookup(
+        spawnSync(
+          "gh",
+          [
+            "api",
+            "--include",
+            "repos/" + repository + "/git/ref/tags/" + release.tag_name,
+            "-H",
+            "X-GitHub-Api-Version: 2026-03-10",
+          ],
+          { encoding: "utf8", maxBuffer: 1024 * 1024 },
+        ),
+      ),
+      metadata.sourceRef,
+      true,
     );
     const pages = JSON.parse(
       execFileSync("gh", ["api", `repos/${repository}/pages`], {

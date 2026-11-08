@@ -6,6 +6,7 @@ import {
   inspectRelease,
   ensureLockedRelease,
   lookupReleaseIncludingDrafts,
+  verifyProductionTag,
 } from "../scripts/locked-release.mjs";
 
 const expected = {
@@ -45,6 +46,36 @@ const response = (status, body, exit = status === 200 ? 0 : 1) => ({
     status +
     " Status\r\nContent-Type: application/json\r\n\r\n" +
     JSON.stringify(body),
+});
+
+test("the actual generated Git tag must bind to the source, independently of release metadata", () => {
+  assert.doesNotThrow(() => verifyProductionTag(absent(), expected.sourceRef));
+  assert.throws(() => verifyProductionTag(absent(), expected.sourceRef, true));
+  assert.doesNotThrow(() =>
+    verifyProductionTag(
+      {
+        status: 200,
+        body: { object: { type: "commit", sha: expected.sourceRef } },
+      },
+      expected.sourceRef,
+      true,
+    ),
+  );
+  for (const object of [
+    { type: "commit", sha: "b".repeat(40) },
+    { type: "tag", sha: expected.sourceRef },
+    { type: "blob", sha: expected.sourceRef },
+    null,
+  ])
+    assert.throws(() =>
+      verifyProductionTag(
+        { status: 200, body: { object } },
+        expected.sourceRef,
+      ),
+    );
+  assert.throws(() =>
+    verifyProductionTag({ status: 403, body: {} }, expected.sourceRef),
+  );
 });
 
 test("published-only tag lookup discovers an authenticated draft on a later release page", async () => {
