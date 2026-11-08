@@ -86,7 +86,11 @@ export async function handle(req) {
     if (Number(req.headers.get("content-length")) > 2000000)
       fail("Слишком большой запрос", 413);
     const raw = await req.text();
-    if (raw.length > 2000000) fail("Слишком большой запрос", 413);
+    if (
+      raw.length > 2000000 ||
+      new TextEncoder().encode(raw).byteLength > 2000000
+    )
+      fail("Слишком большой запрос", 413);
     try {
       body = JSON.parse(raw);
     } catch {
