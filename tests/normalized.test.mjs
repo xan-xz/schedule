@@ -458,7 +458,7 @@ test("group-scoped checks reject edits to another group, global catalogs or sour
   );
 });
 
-test("normalization does not bypass cross-group room collisions or the legacy validator's size limit", () => {
+test("normalization does not bypass cross-group room collisions or the bounded validator's size limit", () => {
   const before = generated();
   const colliding = clone(before);
   colliding.lessons[0].roomId = colliding.lessons[1].roomId;
@@ -473,7 +473,7 @@ test("normalization does not bypass cross-group room collisions or the legacy va
     /Аудитория уже занята/,
   );
   assert.throws(
-    () => validate(generated(100, 40)),
+    () => validate(generated(100, 51)),
     /Неверный формат раздела lessons/,
   );
 });
