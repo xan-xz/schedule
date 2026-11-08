@@ -63,11 +63,19 @@ await cp("app", target, {
     return true;
   },
 });
+await cp(
+  "backend/appearance-policy.mjs",
+  resolve(target, "appearance-policy.mjs"),
+);
 await cp("backend/core.mjs", resolve(target, "model.mjs"));
 await writeFile(resolve(target, "core.mjs"), 'export * from "./model.mjs";\n');
 // Preserve the former pure-model address for installed clients until they reload.
 await mkdir(resolve(target, "backend"), { recursive: true });
 await cp("backend/core.mjs", resolve(target, "backend/core.mjs"));
+await cp(
+  "backend/appearance-policy.mjs",
+  resolve(target, "backend/appearance-policy.mjs"),
+);
 const publicCompatibility = Object.fromEntries(
   Object.entries(compatibility).filter(([key]) => key !== "retirementGuard"),
 );

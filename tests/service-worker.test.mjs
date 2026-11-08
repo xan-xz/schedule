@@ -597,3 +597,49 @@ test("retirement cannot redirect through external or escaping manifest targets",
     }
   }
 });
+
+test("a complete metadata-less published cache remains usable after adding presentation assets", async () => {
+  const old = prefix(rootScope) + "v4-static";
+  const instance = worker({
+    names: [old],
+    clients: [{ id: "old-tab", url: rootScope }],
+    active: true,
+  });
+  // This fixed published fixture is independent of the current worker FILES/PREVIOUS_FILES.
+  const publishedAssets = [
+    "./",
+    "./index.html",
+    "./app.mjs",
+    "./styles.css",
+    "./lib/dom.mjs",
+    "./lib/client.mjs",
+    "./lib/i18n.mjs",
+    "./lib/time.mjs",
+    "./lib/storage.mjs",
+    "./lib/calendar.mjs",
+    "./bootstrap.json",
+    "./seed.json",
+    "./manifest.webmanifest",
+    "./icons/icon-192.png",
+    "./icons/icon-512.png",
+  ];
+  for (const asset of publishedAssets)
+    await instance.seed(old, asset, "published-before-presentation:" + asset);
+  await instance.install();
+  await instance.activate();
+  const pinned = await instance.intercept("lib/calendar.mjs", {
+    mode: "cors",
+    clientId: "old-tab",
+  });
+  assert.equal(pinned.response.status, 200);
+  assert.equal(
+    await pinned.response.text(),
+    "published-before-presentation:./lib/calendar.mjs",
+  );
+  assert.equal(instance.deleted.includes(old), false);
+  const missing = await instance.intercept("layouts/grid.mjs", {
+    mode: "cors",
+    clientId: "old-tab",
+  });
+  assert.equal(missing.response.status, 503);
+});

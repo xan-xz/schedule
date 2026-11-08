@@ -4,7 +4,7 @@
   --surface: #fff;
   --ink: #252231;
   --muted: #615b70;
-  --line: #d8d4e2;
+  --line: #898092;
   --accent: #7044cc;
   --tint: #eee8fa;
   --danger: #a52e49;
@@ -26,7 +26,7 @@
     --surface: #24212d;
     --ink: #f4effb;
     --muted: #c0b7d0;
-    --line: #4f475f;
+    --line: #8c819e;
     --accent: #c0a4ff;
     --tint: #35284d;
     --danger: #ffa2b6;
@@ -39,7 +39,7 @@
   --surface: #24212d;
   --ink: #f4effb;
   --muted: #c0b7d0;
-  --line: #4f475f;
+  --line: #8c819e;
   --accent: #c0a4ff;
   --tint: #35284d;
   --danger: #ffa2b6;
@@ -732,4 +732,464 @@ p {
 }
 .task-row select {
   align-self: start;
+}
+
+/* Distinct, paired palettes; appearance and palette are independent. */
+:root[data-palette="violet"] {
+  --bg: #f5f4fa;
+  --surface: #ffffff;
+  --ink: #252231;
+  --muted: #615b70;
+  --line: #898092;
+  --accent: #7044cc;
+  --tint: #eee8fa;
+  --danger: #a52e49;
+  --good: #25664b;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="violet"]:not([data-theme="light"]) {
+    --bg: #19171f;
+    --surface: #24212d;
+    --ink: #f4effb;
+    --muted: #c0b7d0;
+    --line: #8c819e;
+    --accent: #c0a4ff;
+    --tint: #35284d;
+    --danger: #ffa2b6;
+    --good: #9ed9ba;
+    --on-accent: #211a30;
+  }
+}
+:root[data-palette="violet"][data-theme="dark"] {
+  --bg: #19171f;
+  --surface: #24212d;
+  --ink: #f4effb;
+  --muted: #c0b7d0;
+  --line: #8c819e;
+  --accent: #c0a4ff;
+  --tint: #35284d;
+  --danger: #ffa2b6;
+  --good: #9ed9ba;
+  --on-accent: #211a30;
+}
+:root[data-palette="graphite"] {
+  --bg: #f1f4f6;
+  --surface: #ffffff;
+  --ink: #20272d;
+  --muted: #53606b;
+  --line: #7d8993;
+  --accent: #344553;
+  --tint: #e4eaee;
+  --danger: #a12841;
+  --good: #1c614c;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="graphite"]:not([data-theme="light"]) {
+    --bg: #151b20;
+    --surface: #212a31;
+    --ink: #f0f5f8;
+    --muted: #b6c4cd;
+    --line: #7e929e;
+    --accent: #b3ccd9;
+    --tint: #2b3c47;
+    --danger: #ffacba;
+    --good: #a4dfcc;
+    --on-accent: #16252f;
+  }
+}
+:root[data-palette="graphite"][data-theme="dark"] {
+  --bg: #151b20;
+  --surface: #212a31;
+  --ink: #f0f5f8;
+  --muted: #b6c4cd;
+  --line: #7e929e;
+  --accent: #b3ccd9;
+  --tint: #2b3c47;
+  --danger: #ffacba;
+  --good: #a4dfcc;
+  --on-accent: #16252f;
+}
+:root[data-palette="ocean"] {
+  --bg: #eff7fb;
+  --surface: #ffffff;
+  --ink: #142e3e;
+  --muted: #426071;
+  --line: #748d9d;
+  --accent: #005e85;
+  --tint: #dceef7;
+  --danger: #a82743;
+  --good: #1a624b;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="ocean"]:not([data-theme="light"]) {
+    --bg: #0c1d29;
+    --surface: #152c3c;
+    --ink: #e9f6ff;
+    --muted: #aac6d7;
+    --line: #6d96ae;
+    --accent: #79d3ff;
+    --tint: #193e54;
+    --danger: #ffadbf;
+    --good: #97e0c7;
+    --on-accent: #052739;
+  }
+}
+:root[data-palette="ocean"][data-theme="dark"] {
+  --bg: #0c1d29;
+  --surface: #152c3c;
+  --ink: #e9f6ff;
+  --muted: #aac6d7;
+  --line: #6d96ae;
+  --accent: #79d3ff;
+  --tint: #193e54;
+  --danger: #ffadbf;
+  --good: #97e0c7;
+  --on-accent: #052739;
+}
+:root[data-palette="forest"] {
+  --bg: #eff7f0;
+  --surface: #ffffff;
+  --ink: #1d3227;
+  --muted: #486653;
+  --line: #7b9180;
+  --accent: #24623c;
+  --tint: #deeee1;
+  --danger: #a22c42;
+  --good: #24623c;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="forest"]:not([data-theme="light"]) {
+    --bg: #112219;
+    --surface: #1b3023;
+    --ink: #ecf8ed;
+    --muted: #b2cdb8;
+    --line: #7c9e84;
+    --accent: #a0e4a9;
+    --tint: #25452e;
+    --danger: #ffb2bf;
+    --good: #a0e4a9;
+    --on-accent: #102d19;
+  }
+}
+:root[data-palette="forest"][data-theme="dark"] {
+  --bg: #112219;
+  --surface: #1b3023;
+  --ink: #ecf8ed;
+  --muted: #b2cdb8;
+  --line: #7c9e84;
+  --accent: #a0e4a9;
+  --tint: #25452e;
+  --danger: #ffb2bf;
+  --good: #a0e4a9;
+  --on-accent: #102d19;
+}
+:root[data-palette="sunset"] {
+  --bg: #fff5ed;
+  --surface: #ffffff;
+  --ink: #42291f;
+  --muted: #79513d;
+  --line: #ab806a;
+  --accent: #a63d16;
+  --tint: #ffe6d1;
+  --danger: #a12844;
+  --good: #315f3c;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="sunset"]:not([data-theme="light"]) {
+    --bg: #2c1916;
+    --surface: #3c2720;
+    --ink: #fff2e8;
+    --muted: #e3beaa;
+    --line: #b08a76;
+    --accent: #ffb38a;
+    --tint: #513027;
+    --danger: #ffb5c6;
+    --good: #b4dd9f;
+    --on-accent: #3b1a0c;
+  }
+}
+:root[data-palette="sunset"][data-theme="dark"] {
+  --bg: #2c1916;
+  --surface: #3c2720;
+  --ink: #fff2e8;
+  --muted: #e3beaa;
+  --line: #b08a76;
+  --accent: #ffb38a;
+  --tint: #513027;
+  --danger: #ffb5c6;
+  --good: #b4dd9f;
+  --on-accent: #3b1a0c;
+}
+:root[data-palette="contrast"] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --ink: #000000;
+  --muted: #343434;
+  --line: #000000;
+  --accent: #003ab8;
+  --tint: #e8efff;
+  --danger: #9b0027;
+  --good: #00552b;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="contrast"]:not([data-theme="light"]) {
+    --bg: #000000;
+    --surface: #111111;
+    --ink: #ffffff;
+    --muted: #e0e0e0;
+    --line: #cfcfcf;
+    --accent: #ffe354;
+    --tint: #202020;
+    --danger: #ffb0c4;
+    --good: #b0ffc0;
+    --on-accent: #000000;
+  }
+}
+:root[data-palette="contrast"][data-theme="dark"] {
+  --bg: #000000;
+  --surface: #111111;
+  --ink: #ffffff;
+  --muted: #e0e0e0;
+  --line: #cfcfcf;
+  --accent: #ffe354;
+  --tint: #202020;
+  --danger: #ffb0c4;
+  --good: #b0ffc0;
+  --on-accent: #000000;
+}
+
+:root[data-palette] button.primary,
+:root[data-palette] .segmented [aria-pressed="true"] {
+  color: var(--on-accent);
+}
+:root[data-text-size="large"] {
+  font-size: 112.5%;
+}
+:root[data-text-size="larger"] {
+  font-size: 125%;
+}
+:root[data-rounding="square"] {
+  --radius: 4px;
+}
+:root[data-rounding="round"] {
+  --radius: 28px;
+}
+:root[data-density="compact"] .lesson-row {
+  padding-block: 10px;
+  gap: 10px;
+}
+:root[data-density="compact"] .hero {
+  padding: 16px;
+}
+:root[data-density="compact"] .section {
+  margin-top: 16px;
+}
+:root[data-density="spacious"] .lesson-row {
+  padding-block: 24px;
+  gap: 20px;
+}
+:root[data-density="spacious"] .hero {
+  padding: 28px;
+}
+:root[data-density="spacious"] .section {
+  margin-top: 32px;
+}
+:root[data-reduced-motion="true"] *,
+:root[data-reduced-motion="true"] *::before,
+:root[data-reduced-motion="true"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+.appearance-settings {
+  margin-top: 24px;
+  display: grid;
+  gap: 16px;
+}
+.appearance-settings h2 {
+  margin-bottom: 0;
+}
+.appearance-preview {
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 2px solid var(--accent);
+  background: var(--tint);
+}
+.appearance-preview strong {
+  display: block;
+}
+.appearance-preview p {
+  margin-top: 8px;
+}
+.appearance-settings input[type="checkbox"] {
+  width: auto;
+  min-height: 24px;
+  margin-right: 8px;
+}
+.layout-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 20px 0;
+}
+.timeline-list {
+  list-style: none;
+  margin: 0 0 0 10px;
+  padding-left: 24px;
+  border-left: 3px solid var(--line);
+}
+.timeline-list > li {
+  position: relative;
+  margin-bottom: 16px;
+}
+.timeline-list > li::before {
+  content: "";
+  position: absolute;
+  left: -34px;
+  top: 20px;
+  width: 14px;
+  height: 14px;
+  border: 3px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+}
+.timeline-list .lesson-row {
+  display: block;
+  background: var(--surface);
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+}
+.timeline-list .lesson-time {
+  margin-bottom: 8px;
+}
+.timeline-list [aria-current="time"] {
+  border: 2px solid var(--accent);
+  background: var(--tint);
+}
+.timeline-now {
+  font-weight: 750;
+  color: var(--accent);
+}
+.layout-grid-scroll {
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-top: 16px;
+}
+.layout-grid-scroll:focus-visible {
+  outline-offset: 5px;
+}
+.layout-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  min-width: 1130px;
+  width: 100%;
+}
+.layout-grid caption {
+  text-align: left;
+  padding: 12px;
+  font-weight: 700;
+}
+.layout-grid th,
+.layout-grid td {
+  padding: 10px;
+  vertical-align: top;
+  text-align: left;
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  width: 150px;
+  scroll-snap-align: start;
+}
+.layout-grid th:first-child,
+.layout-grid td:first-child {
+  position: sticky;
+  left: 0;
+  width: 80px;
+  background: var(--surface);
+  z-index: 1;
+}
+.layout-grid .lesson-row {
+  display: block;
+  border: 0;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: var(--tint);
+  margin-bottom: 8px;
+}
+.layout-grid .lesson-time {
+  margin-bottom: 6px;
+}
+:root[data-layout="grid"] .top,
+:root[data-layout="grid"] main,
+:root[data-layout="grid"] .statusbar {
+  max-width: 1200px;
+}
+.layout-cards {
+  display: grid;
+  gap: 20px;
+  margin-top: 20px;
+}
+.layout-day-card {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+.layout-day-card h2 {
+  padding-bottom: 12px;
+  border-bottom: 2px solid var(--accent);
+}
+.layout-day-card h3 {
+  margin-top: 8px;
+}
+.layout-card-task {
+  margin-top: 12px;
+  padding: 12px;
+  border-left: 4px solid var(--accent);
+  background: var(--tint);
+  border-radius: 4px;
+}
+.layout-day-card .lesson-row {
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+}
+.layout-current-label {
+  display: block;
+  color: var(--accent);
+  font-weight: 750;
+  margin-bottom: 8px;
+}
+@media (min-width: 900px) {
+  :root[data-layout="cards"] .top,
+  :root[data-layout="cards"] main,
+  :root[data-layout="cards"] .statusbar {
+    max-width: 1120px;
+  }
+  .layout-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.layout-grid th[aria-current="date"] {
+  background: var(--tint);
+  color: var(--accent);
+}
+
+:root[data-rounding] button,
+:root[data-rounding] input,
+:root[data-rounding] select,
+:root[data-rounding] textarea {
+  border-radius: min(var(--radius), 12px);
 }

@@ -70,6 +70,13 @@ const server = createServer(async (req, res) => {
     let file = resolve(content, "." + pathname);
     if (source && pathname === "/compatibility.json")
       file = resolve(root, "compatibility.json");
+    else if (
+      source &&
+      ["/appearance-policy.mjs", "/backend/appearance-policy.mjs"].includes(
+        pathname,
+      )
+    )
+      file = resolve(root, "backend/appearance-policy.mjs");
     else if (source && pathname === "/backend/core.mjs")
       file = resolve(root, "backend/core.mjs");
     else if (source && pathname === "/model.mjs")

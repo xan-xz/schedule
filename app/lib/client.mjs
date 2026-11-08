@@ -1,3 +1,4 @@
+import { validateAppearancePolicy } from "../appearance-policy.mjs";
 import * as storage from "./storage.mjs";
 const API = "https://anfwdrcazwbkkayczkxg.supabase.co";
 const KEY = "sb_publishable_NkbuSbf1LxiCGvgz48fPjg_aVVwDU_G";
@@ -69,7 +70,7 @@ export function initialSettings() {
     groupId: readPreference("uf.group", "g-main"),
     subgroup: readPreference("uf.subgroup", legacy),
     lang: "ru",
-    theme: readPreference("uf.dark", false) ? "dark" : "system",
+    theme: readPreference("uf.dark", false) ? "dark" : "site",
     hour12: false,
     reminder: 0,
     ...readPreference("uf.settings.v1", {}),
@@ -92,6 +93,15 @@ function publicSnapshot(snapshot, settings) {
     data[key] = source[key] || [];
   for (const key of ["validFrom", "validUntil"])
     if (source[key]) data[key] = source[key];
+  if (Object.hasOwn(source.siteSettings || {}, "appearance")) {
+    try {
+      data.siteSettings = {
+        appearance: validateAppearancePolicy(source.siteSettings.appearance),
+      };
+    } catch {
+      /* Ignore malformed public policy; never cache unknown siblings. */
+    }
+  }
   data.tasks = (source.tasks || []).filter(
     (task) =>
       task.groupId === settings.groupId &&

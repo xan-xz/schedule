@@ -1859,6 +1859,9 @@ function enhanceWorkspace() {
     controls.append(
       domButton("Создать черновик", startDraft, { class: "btn" }),
     );
+  controls.append(
+    domButton("Интерфейс сайта", openAppearanceEditor, { class: "btn" }),
+  );
   if (S.page === "schedule") {
     controls.append(
       dom(
@@ -2425,5 +2428,42 @@ function enhanceLessonForm() {
       },
     });
     form.querySelector(".form-grid").prepend(domField(label, input), list);
+  }
+}
+
+async function openAppearanceEditor() {
+  if (!isAdmin()) return;
+  try {
+    const { createAppearanceEditor, loadAppearanceEditorStyles } =
+      await import("./appearance-editor.mjs");
+    await loadAppearanceEditorStyles();
+    if (ownerEnding || !isAdmin()) return;
+    showTemplateDialog(
+      "Интерфейс сайта",
+      createAppearanceEditor({
+        data: draft?.data || S.data,
+        groupId: S.groupId,
+        subgroup: S.subgroup,
+        onClose: closeModal,
+        onSave: (policy) => {
+          const result = mutate(
+            draft?.data || S.data,
+            S.user,
+            "appearance.save",
+            { policy },
+          );
+          if (!draft) startDraft();
+          draft.data = result.data;
+          S.data = visible(draft.data, S.user);
+          closeModal();
+          render();
+          toast(
+            "Интерфейс добавлен в черновик. Проверь и опубликуй изменения.",
+          );
+        },
+      }),
+    );
+  } catch (error) {
+    if (!ownerEnding) toast(error.message);
   }
 }

@@ -1,0 +1,118 @@
+.appearance-editor {
+  display: grid;
+  gap: 16px;
+}
+.appearance-editor input[type="checkbox"] {
+  width: 24px;
+  min-height: 24px;
+}
+.appearance-editor fieldset {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.appearance-editor label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.appearance-editor label:has(select) {
+  flex-direction: column;
+  align-items: stretch;
+}
+.appearance-owner-previews {
+  display: grid;
+  gap: 20px;
+}
+.appearance-owner-preview {
+  min-width: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 2px solid var(--accent);
+  border-radius: 16px;
+  overflow: hidden;
+}
+.appearance-owner-preview h3 {
+  color: var(--ink);
+  margin: 8px 0;
+}
+.appearance-owner-preview p,
+.appearance-owner-preview small {
+  color: var(--muted);
+}
+.appearance-owner-preview button {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  min-height: 44px;
+  padding: 8px;
+}
+.appearance-owner-preview .hero,
+.appearance-owner-preview .layout-card-task {
+  background: var(--tint);
+  padding: 16px;
+  border-radius: 12px;
+}
+.appearance-owner-preview .room-number {
+  font-size: 2rem;
+  color: var(--ink);
+}
+.appearance-owner-preview .rows,
+.appearance-owner-preview .timeline-list {
+  list-style: none;
+  padding: 0;
+}
+.appearance-owner-preview .lesson-row {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.appearance-owner-preview .lesson-time {
+  font-weight: 700;
+}
+.appearance-owner-preview .timeline-list {
+  border-left: 3px solid var(--accent);
+  padding-left: 16px;
+}
+.appearance-owner-preview .layout-grid-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+}
+.appearance-owner-preview .layout-grid {
+  min-width: 1200px;
+  border-collapse: collapse;
+}
+.appearance-owner-preview th,
+.appearance-owner-preview td {
+  vertical-align: top;
+  text-align: left;
+  padding: 8px;
+  border: 1px solid var(--line);
+  min-width: 150px;
+}
+.appearance-owner-preview .layout-cards {
+  display: grid;
+  gap: 12px;
+}
+.appearance-owner-preview .layout-day-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+.appearance-owner-preview .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.appearance-owner-preview .cancelled h3 {
+  text-decoration: line-through;
+}
+@media (min-width: 1000px) {
+  .appearance-owner-previews {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
