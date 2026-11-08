@@ -8,7 +8,7 @@ import {
   getSnapshot,
   saveSnapshot,
   releaseSnapshot,
-  legacyTaskStatuses,
+  createPersonalLoader,
 } from "./lib/client.mjs";
 import {
   localDate,
@@ -272,17 +272,22 @@ function validateChoice() {
     } else S.inviteHandled = true;
   }
 }
+const loadPersonalState = createPersonalLoader();
 async function loadPersonal() {
   const epoch = S.epoch;
-  const key = statusKey();
-  const [tasks, statuses] = await Promise.all([
-    storage.get(personalKey(), []),
-    storage.get(key, null),
-  ]);
-  if (epoch !== S.epoch) return;
-  S.personal = tasks;
-  S.statuses = statuses ?? legacyTaskStatuses();
-  if (statuses === null) await storage.set(key, S.statuses);
+  const tasksKey = personalKey(),
+    statusesKey = statusKey();
+  const result = await loadPersonalState({
+    tasksKey,
+    statusesKey,
+    isCurrent: () =>
+      epoch === S.epoch &&
+      tasksKey === personalKey() &&
+      statusesKey === statusKey(),
+  });
+  if (!result) return;
+  S.personal = result.tasks;
+  S.statuses = result.statuses;
 }
 function isTyping() {
   return (
