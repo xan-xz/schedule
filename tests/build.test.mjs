@@ -42,6 +42,7 @@ async function fixture(t) {
     "backend/core.mjs": "export const shared=1;\n",
     "backend/appearance-policy.mjs": "export const policyVersion=1;\n",
     "backend/public-data.mjs": "export const projectPublicData=value=>value;\n",
+    "backend/group-state.mjs": "export const isGroupActive=()=>true;\n",
     "app/appearance-policy.mjs":
       "export * from '../backend/appearance-policy.mjs';\n",
     "backend/admin.mjs": "throw Error('Do not publish server');\n",

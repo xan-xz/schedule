@@ -99,6 +99,8 @@ async function releaseOrigin() {
       const shared = {
         "appearance-policy.mjs": "backend/appearance-policy.mjs",
         "backend/appearance-policy.mjs": "backend/appearance-policy.mjs",
+        "group-state.mjs": "backend/group-state.mjs",
+        "backend/group-state.mjs": "backend/group-state.mjs",
         "public-data.mjs": "backend/public-data.mjs",
         "backend/public-data.mjs": "backend/public-data.mjs",
         "backend/core.mjs": "backend/core.mjs",
@@ -201,6 +203,8 @@ async function ready(page, version) {
           "./appearance-init.js",
           "./appearance-policy.mjs",
           "./backend/appearance-policy.mjs",
+          "./group-state.mjs",
+          "./backend/group-state.mjs",
           "./public-data.mjs",
           "./backend/public-data.mjs",
           "./lib/personalization.mjs",
