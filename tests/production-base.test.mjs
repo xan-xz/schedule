@@ -16,6 +16,8 @@ import {
   safeTarEntries,
   extractProductionBase,
   verifyPublishedSource,
+  selectLockedProductionRelease,
+  verifyDownloadedRelease,
 } from "../scripts/production-base.mjs";
 
 const SOURCE = "a".repeat(40);
@@ -24,6 +26,93 @@ const metadata = (archive) => ({
   format: "uniflow-production-v1",
   sourceRef: SOURCE,
   archiveSha256: createHash("sha256").update(archive).digest("hex"),
+});
+
+test("automatic archive selection requires a published provider lock and a pinned source", () => {
+  const locked = {
+    draft: false,
+    prerelease: false,
+    immutable: true,
+    tag_name: "uniflow-production-123",
+    target_commitish: SOURCE,
+    published_at: "2026-11-08T00:00:00Z",
+  };
+  const later = {
+    ...locked,
+    tag_name: "uniflow-production-124",
+    published_at: "2026-11-08T01:00:00Z",
+  };
+  assert.equal(selectLockedProductionRelease([locked, later]), later);
+  for (const change of [
+    { immutable: false },
+    { immutable: undefined },
+    { draft: true },
+    { prerelease: true },
+    { target_commitish: "main" },
+    { tag_name: "another-tag" },
+    { published_at: "invalid" },
+  ]) {
+    const untrusted = { ...later, ...change };
+    assert.equal(selectLockedProductionRelease([locked, untrusted]), locked);
+    assert.throws(() => selectLockedProductionRelease([untrusted]));
+  }
+  assert.throws(() => selectLockedProductionRelease([]));
+  assert.throws(() => selectLockedProductionRelease(null));
+});
+
+test("downloaded release requires both provider digests and the matching workflow, source and lock", () => {
+  const archive = Buffer.from("verified archive");
+  const document = { ...metadata(archive), workflowRun: "123" };
+  const bytes = Buffer.from(JSON.stringify(document));
+  const remote = (manifestBytes = bytes) => ({
+    draft: false,
+    prerelease: false,
+    immutable: true,
+    tag_name: "uniflow-production-123",
+    target_commitish: SOURCE,
+    assets: [
+      ["production-site.tar", archive],
+      ["production.json", manifestBytes],
+    ].map(([name, data]) => ({
+      name,
+      size: data.length,
+      state: "uploaded",
+      digest: "sha256:" + createHash("sha256").update(data).digest("hex"),
+    })),
+  });
+  assert.deepEqual(verifyDownloadedRelease(remote(), archive, bytes), document);
+  assert.throws(() =>
+    verifyDownloadedRelease(remote(), Buffer.from("tampered"), bytes),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease({ ...remote(), immutable: false }, archive, bytes),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease({ ...remote(), draft: true }, archive, bytes),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease(
+      { ...remote(), draft: true, immutable: false },
+      archive,
+      bytes,
+    ),
+  );
+  const otherRun = Buffer.from(
+    JSON.stringify({ ...document, workflowRun: "124" }),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease(remote(otherRun), archive, otherRun),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease(
+      { ...remote(), target_commitish: "b".repeat(40) },
+      archive,
+      bytes,
+    ),
+  );
+  const wrongDigest = remote();
+  wrongDigest.assets[1].digest = "sha256:" + "0".repeat(64);
+  assert.throws(() => verifyDownloadedRelease(wrongDigest, archive, bytes));
 });
 
 function tar(entries) {

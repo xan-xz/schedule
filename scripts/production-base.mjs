@@ -12,6 +12,24 @@ import {
 } from "node:fs/promises";
 import { resolve, dirname, sep, isAbsolute, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectRelease, releaseAssets } from "./locked-release.mjs";
+
+export function selectLockedProductionRelease(releases) {
+  if (!Array.isArray(releases)) throw Error("Invalid production release list");
+  const selected = releases
+    .filter(
+      (item) =>
+        item?.draft === false &&
+        item.prerelease === false &&
+        item.immutable === true &&
+        /^uniflow-production-\d+$/.test(item.tag_name || "") &&
+        /^[a-f0-9]{40}$/.test(item.target_commitish || "") &&
+        Number.isFinite(Date.parse(item.published_at)),
+    )
+    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))[0];
+  if (!selected) throw Error("No provider-locked production archive exists.");
+  return selected;
+}
 
 export function validateMetadata(metadata, archive) {
   if (
@@ -22,6 +40,27 @@ export function validateMetadata(metadata, archive) {
       metadata.archiveSha256
   )
     throw new Error("Production archive metadata or checksum is invalid.");
+  return metadata;
+}
+
+export function verifyDownloadedRelease(release, archiveBytes, manifestBytes) {
+  const metadata = JSON.parse(manifestBytes.toString("utf8"));
+  validateMetadata(metadata, archiveBytes);
+  if (
+    metadata.sourceRef !== release.target_commitish ||
+    "uniflow-production-" + metadata.workflowRun !== release.tag_name
+  )
+    throw Error("Release source or workflow run does not match its metadata");
+  const state = inspectRelease(
+    { status: 200, body: release },
+    {
+      sourceRef: metadata.sourceRef,
+      tag: release.tag_name,
+      assets: releaseAssets(archiveBytes, manifestBytes),
+    },
+  );
+  if (state.kind !== "published")
+    throw Error("Downloaded production release is not published and locked");
   return metadata;
 }
 export function safeTarEntries(listing) {
@@ -152,18 +191,7 @@ async function main() {
       maxBuffer: 8 * 1024 * 1024,
     }),
   );
-  const release = releases
-    .filter(
-      (r) =>
-        !r.draft &&
-        !r.prerelease &&
-        /^uniflow-production-\d+$/.test(r.tag_name),
-    )
-    .sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at))[0];
-  if (!release)
-    throw Error(
-      "No verified production release exists. Refusing to restore the archived root.",
-    );
+  const release = selectLockedProductionRelease(releases);
   const output = resolve(
     args.includes("--output")
       ? args[args.indexOf("--output") + 1]
@@ -198,14 +226,14 @@ async function main() {
       ],
       { stdio: "pipe" },
     );
-    const metadata = JSON.parse(
-      await readFile(resolve(download, "production.json"), "utf8"),
+    const manifestBytes = await readFile(resolve(download, "production.json"));
+    const archiveBytes = await readFile(
+      resolve(download, "production-site.tar"),
     );
-    if (metadata.sourceRef !== release.target_commitish)
-      throw Error("Release source does not match immutable metadata");
-    validateMetadata(
-      metadata,
-      await readFile(resolve(download, "production-site.tar")),
+    const metadata = verifyDownloadedRelease(
+      release,
+      archiveBytes,
+      manifestBytes,
     );
     const pages = JSON.parse(
       execFileSync("gh", ["api", `repos/${repository}/pages`], {
@@ -233,6 +261,7 @@ async function main() {
       JSON.stringify({
         productionSource: metadata.sourceRef,
         release: release.tag_name,
+        providerImmutable: true,
         output,
       }),
     );
