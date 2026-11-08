@@ -1794,3 +1794,14 @@ body.dark .notice h3 {
   width: 24px;
   min-height: 24px;
 }
+.catalog-filters {
+  align-items: end;
+}
+.catalog-filters .form-label {
+  flex: 1 1 230px;
+  margin: 0;
+}
+.catalog-filters input,
+.catalog-filters select {
+  width: 100%;
+}

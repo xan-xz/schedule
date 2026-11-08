@@ -180,7 +180,41 @@ function applyProperty(data, path, next) {
 }
 
 /** The before image is a narrow comparison basis, never a private snapshot. */
-export function draftChanges(before, after) {
+export function catalogReplacementIntents(input = []) {
+  if (!Array.isArray(input) || input.length > 100)
+    throw Error("Слишком много замен справочника.");
+  const result = input.map((item) => {
+    if (
+      !plain(item) ||
+      Object.keys(item).some(
+        (key) => !["entity", "id", "replacementId"].includes(key),
+      ) ||
+      !["groups", "subjects", "teachers", "rooms"].includes(item.entity) ||
+      [item.id, item.replacementId].some(
+        (id) =>
+          typeof id !== "string" || !id || id.length > 100 || secret.test(id),
+      ) ||
+      item.id === item.replacementId
+    )
+      throw Error("Неверная замена справочника.");
+    return {
+      entity: item.entity,
+      id: item.id,
+      replacementId: item.replacementId,
+    };
+  });
+  const sources = new Set(result.map((item) => item.entity + ":" + item.id));
+  if (
+    sources.size !== result.length ||
+    result.some((item) => sources.has(item.entity + ":" + item.replacementId))
+  )
+    throw Error(
+      "Цепочки замен не поддерживаются. Выберите конечную запись сразу.",
+    );
+  return result;
+}
+
+export function draftChanges(before, after, replacements = []) {
   const changes = [];
   for (const kind of Object.keys(fields)) {
     if (!Array.isArray(before[kind]) || !Array.isArray(after[kind]))
@@ -202,6 +236,10 @@ export function draftChanges(before, after) {
       ]))
         if (
           !fields[kind].includes(key) &&
+          !(
+            b === undefined &&
+            ["groups", "subjects", "teachers", "rooms"].includes(kind)
+          ) &&
           !(
             kind === "exceptions" &&
             ["before", "after", "actor", "createdAt", "updatedAt"].includes(key)
@@ -235,6 +273,8 @@ export function draftChanges(before, after) {
     if (!equal(old, next))
       changes.push({ kind: "property", path, before: old, after: next });
   }
+  for (const item of catalogReplacementIntents(replacements))
+    changes.push({ kind: "catalogReplacement", ...item });
   if (new TextEncoder().encode(JSON.stringify(changes)).byteLength > 1000000)
     throw Error(
       "Локальный черновик превышает 1 МБ. Работа осталась в этой вкладке.",
@@ -248,12 +288,26 @@ function checkedChanges(input) {
   if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 1000000)
     throw Error("Локальный черновик превышает 1 МБ.");
   const seen = new Set();
+  catalogReplacementIntents(
+    input
+      .filter((item) => item?.kind === "catalogReplacement")
+      .map(({ kind: _kind, ...item }) => item),
+  );
   return input.map((change) => {
     if (!plain(change)) throw Error("Неверное изменение черновика.");
     const key =
-      change.kind === "property" ? change.path : change.kind + ":" + change.id;
+      change.kind === "property"
+        ? change.path
+        : change.kind + ":" + (change.entity || "") + ":" + change.id;
     if (seen.has(key)) throw Error("Повторяется изменение черновика.");
     seen.add(key);
+    if (change.kind === "catalogReplacement") {
+      const { kind: _kind, ...item } = change;
+      return {
+        kind: "catalogReplacement",
+        ...catalogReplacementIntents([item])[0],
+      };
+    }
     if (change.kind === "property") {
       if (!properties.includes(change.path))
         throw Error("Раздел не разрешён для локального черновика.");
@@ -301,8 +355,14 @@ function checkedChanges(input) {
 /** Rebase only authored fields, preserving fresh server metadata and archives. */
 export function recoverChanges(server, input, { force = false } = {}) {
   const data = clone(server),
-    conflicts = [];
+    conflicts = [],
+    catalogReplacements = [];
   for (const change of checkedChanges(input)) {
+    if (change.kind === "catalogReplacement") {
+      const { kind: _kind, ...item } = change;
+      catalogReplacements.push(item);
+      continue;
+    }
     if (change.kind === "property") {
       const current = property(data, change.path);
       if (!equal(current, change.before) && !equal(current, change.after))
@@ -368,7 +428,7 @@ export function recoverChanges(server, input, { force = false } = {}) {
       }
     }
   }
-  return { data, conflicts };
+  return { data, conflicts, catalogReplacements };
 }
 
 function ownerKey(owner, scope) {
