@@ -730,6 +730,12 @@ test("held rollback blocks catalog edits and publication even after closing its 
   await page.locator('[data-action="rollback"]').first().click();
   await page
     .getByRole("dialog")
+    .getByLabel("Подтверждаю восстановление всей версии для всех групп", {
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("dialog")
     .getByRole("button", { name: "Восстановить", exact: true })
     .click();
   await requested;

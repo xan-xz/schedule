@@ -1861,19 +1861,59 @@ async function exportIcs() {
   toast("Экспортированы ближайшие 28 дней по текущему фильтру");
 }
 async function rollback(revision) {
+  if (!isAdmin() || ownerEnding) return;
   if (S.busy) throw Error("Дождись сохранения");
-  showForm(
-    "Восстановить версию " + revision,
-    [],
-    async (_values, expected) => {
+  if (!S.capabilities?.rollbackPreview)
+    throw Error(
+      "Предпросмотр пока недоступен на сервере. Обновите страницу позже.",
+    );
+  const epoch = S.epoch;
+  const [{ createRollbackPreview }, { loadLessonBatchStyles }] =
+    await Promise.all([
+      import("./rollback-preview-editor.mjs"),
+      import("./lesson-batch-editor.mjs"),
+    ]);
+  await loadLessonBatchStyles();
+  await draftSaveQueue;
+  if (ownerEnding || !isAdmin() || S.epoch !== epoch || S.busy) return;
+  const expected = S.revision;
+  let body;
+  const authorized = () => {
+    if (ownerEnding || !isAdmin() || S.epoch !== epoch)
+      throw Error("Войдите владельцем заново.");
+    if (!body?.isConnected || !$("modal").open)
+      throw Error("Просмотр закрыт. Восстановление не отправлено.");
+    if (S.revision !== expected)
+      throw Error(
+        "Данные уже изменились. Обновите страницу и откройте сравнение заново.",
+      );
+  };
+  const editor = createRollbackPreview({
+    revision: expected,
+    target: revision,
+    onClose: closeModal,
+    onLoad: async (page) => {
+      authorized();
+      if (S.busy) throw Error("Дождись сохранения");
+      const result = await api("rollback.preview", {
+        revision: expected,
+        target: revision,
+        page,
+      });
+      authorized();
+      return result;
+    },
+    onApply: async (plan, onSent) => {
+      authorized();
       if (S.busy) throw Error("Дождись сохранения");
       S.busy = true;
       S.rollbackBusy = true;
       render();
       try {
         const pending = draft;
-        if (pending && !(await persistCurrentDraft()))
+        if (pending && !(await persistCurrentDraft(Boolean(pending.saveError))))
           throw Error("Сначала сохраните локальную копию черновика.");
+        authorized();
         const submitted = pending && {
           id: pending.localId,
           generation: pending.localGeneration,
@@ -1882,9 +1922,11 @@ async function rollback(revision) {
             pending.catalogReplacements || [],
           ]),
         };
+        onSent();
         const result = await api("rollback", {
           revision: expected,
           target: revision,
+          previewFingerprint: plan.fingerprint,
         });
         const changed =
           draft !== pending ||
@@ -1923,10 +1965,13 @@ async function rollback(revision) {
         render();
       }
     },
-    "Восстановить",
-    "Будет восстановлен весь документ: расписания ВСЕХ групп, задания, объявления и посещаемость. Настройки входа владельца не меняются. Текущая версия сохранится для отката.",
-  );
+  });
+  body = editor.root;
+  showTemplateDialog("Проверка восстановления версии " + revision, body);
+  $("modal").dataset.revision = String(expected);
+  await editor.load(0);
 }
+
 async function handleAction(action, args, el) {
   if (ownerEnding) return;
   if (S.rollbackBusy && !["page", "closeModal"].includes(action))
@@ -2108,7 +2153,7 @@ async function handleAction(action, args, el) {
     return;
   }
   if (action === "rollback") {
-    rollback(args.revision);
+    await rollback(args.revision);
     return;
   }
 }

@@ -72,6 +72,12 @@ test("owner previews and publishes a one-date draft, then restores the server ve
   expect(manager.writes()[0].op).toBe("import");
   await page.locator('[data-page="history"]').click();
   await page.locator('[data-action="rollback"]').first().click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Подтверждаю восстановление всей версии для всех групп", {
+      exact: true,
+    })
+    .check();
   await dialog
     .getByRole("button", { name: "Восстановить", exact: true })
     .click();

@@ -1,4 +1,9 @@
-import { mutate, visible, validate, clone, uid, fail } from "./core.mjs";
+import { mutate, visible, fail } from "./core.mjs";
+import {
+  buildRollbackData,
+  previewRollback,
+  rollbackFingerprint,
+} from "./rollback-preview.mjs";
 import {
   isAccessToken,
   verifyOwnerAccess,
@@ -17,6 +22,7 @@ const capabilities = {
   teacherOverrides: true,
   logoutAll: true,
   allSubgroupTasks: true,
+  rollbackPreview: true,
 };
 function answer(data, status = 200, publicRead = false) {
   return new Response(JSON.stringify(data), {
@@ -73,6 +79,27 @@ async function responseState(user, row) {
     versions,
     capabilities,
   };
+}
+async function assertAccountReferences(data) {
+  const accounts = await db(
+    "uf_accounts?select=role,group_id,subgroup,teacher_id",
+  );
+  for (const account of accounts) {
+    if (
+      account.role === "student" &&
+      !data.groups.some(
+        (group) =>
+          group.id === account.group_id &&
+          group.subgroups?.includes(account.subgroup),
+      )
+    )
+      fail("Изменение удалит группу или подгруппу существующего аккаунта");
+    if (
+      account.role === "teacher" &&
+      !data.teachers.some((teacher) => teacher.id === account.teacher_id)
+    )
+      fail("Изменение удалит преподавателя существующего аккаунта");
+  }
 }
 async function boundedText(req, limit) {
   if (!req.body) return "";
@@ -199,28 +226,49 @@ export async function handle(req) {
     )
       fail("Управление прежними аккаунтами и паролями отключено", 410);
     const [row] = await db("uf_platform?id=eq.1");
-    if (body.action !== "mutate" && body.action !== "rollback")
+    if (!["mutate", "rollback", "rollback.preview"].includes(body.action))
       fail("Неизвестное действие");
     if (!Number.isSafeInteger(body.revision) || body.revision !== row.revision)
       fail("Данные изменились. Обнови страницу и повтори действие.", 409);
     let result;
-    if (body.action === "rollback") {
+    if (body.action === "rollback" || body.action === "rollback.preview") {
       if (user.role !== "admin") fail("Откат доступен администратору", 403);
-      if (!Number.isSafeInteger(body.target)) fail("Версия не найдена");
+      if (!Number.isSafeInteger(body.target) || body.target < 1)
+        fail("Версия не найдена");
       const [version] = await db("uf_versions?revision=eq." + body.target);
       if (!version) fail("Версия уже недоступна");
-      const data = clone(version.data);
-      data.history = row.data.history.slice();
-      const summary = "Восстановлена версия " + body.target;
-      data.history.unshift({
-        id: uid(),
-        at: new Date().toISOString(),
-        actor: user.name,
-        action: "rollback",
-        summary,
-      });
-      validate(data);
-      result = { data, summary };
+      result = buildRollbackData(
+        row.data,
+        version.data,
+        body.target,
+        user.name,
+      );
+      if (body.action === "rollback.preview") {
+        await assertAccountReferences(result.data);
+        return answer(
+          await previewRollback(row.data, result.data, {
+            revision: row.revision,
+            target: body.target,
+            page: body.page ?? 0,
+          }),
+        );
+      }
+      if (
+        body.previewFingerprint !== undefined &&
+        (typeof body.previewFingerprint !== "string" ||
+          !/^[a-f0-9]{64}$/.test(body.previewFingerprint) ||
+          body.previewFingerprint !==
+            (await rollbackFingerprint(
+              row.data,
+              result.data,
+              row.revision,
+              body.target,
+            )))
+      )
+        fail(
+          "Просмотр версии устарел. Повторите проверку восстановления.",
+          409,
+        );
     } else {
       if (body.op === "attendance.save") {
         const [student] = await db(
@@ -247,27 +295,7 @@ export async function handle(req) {
       JSON.stringify(row.data.groups) !== JSON.stringify(result.data.groups) ||
       JSON.stringify(row.data.teachers) !== JSON.stringify(result.data.teachers)
     ) {
-      const accounts = await db(
-        "uf_accounts?select=role,group_id,subgroup,teacher_id",
-      );
-      for (const account of accounts) {
-        if (
-          account.role === "student" &&
-          !result.data.groups.some(
-            (group) =>
-              group.id === account.group_id &&
-              group.subgroups?.includes(account.subgroup),
-          )
-        )
-          fail("Изменение удалит группу или подгруппу существующего аккаунта");
-        if (
-          account.role === "teacher" &&
-          !result.data.teachers.some(
-            (teacher) => teacher.id === account.teacher_id,
-          )
-        )
-          fail("Изменение удалит преподавателя существующего аккаунта");
-      }
+      await assertAccountReferences(result.data);
     }
     const committed = await db("rpc/uf_commit", {
       method: "POST",
