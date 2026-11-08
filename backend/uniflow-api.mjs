@@ -74,6 +74,41 @@ async function responseState(user, row) {
     capabilities,
   };
 }
+async function boundedText(req, limit) {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  let bytes = new Uint8Array(0),
+    length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const next = length + value.byteLength;
+      if (next > limit) fail("Слишком большой запрос", 413);
+      if (next > bytes.length) {
+        const grown = new Uint8Array(
+          Math.min(limit, Math.max(1024, next, bytes.length * 2)),
+        );
+        grown.set(bytes.subarray(0, length));
+        bytes = grown;
+      }
+      bytes.set(value, length);
+      length = next;
+    }
+    return new TextDecoder().decode(bytes.subarray(0, length));
+  } catch (error) {
+    // Do not let a failed or stalled producer cancellation delay the response.
+    try {
+      void reader.cancel().catch(() => {});
+    } catch {
+      /* best effort */
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function handle(req) {
   let body;
   if (req.method === "OPTIONS")
@@ -85,9 +120,7 @@ export async function handle(req) {
   try {
     if (Number(req.headers.get("content-length")) > 2000000)
       fail("Слишком большой запрос", 413);
-    const bytes = await req.arrayBuffer();
-    if (bytes.byteLength > 2000000) fail("Слишком большой запрос", 413);
-    const raw = new TextDecoder().decode(bytes);
+    const raw = await boundedText(req, 2000000);
     try {
       body = JSON.parse(raw);
     } catch {

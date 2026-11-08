@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ReadableStream } from "node:stream/web";
 import { handle } from "../backend/uniflow-api.mjs";
 
 const limit = 2_000_000;
@@ -32,6 +33,101 @@ function noNetwork(t) {
   });
   t.after(() => assert.equal(fetcher.mock.callCount(), 0));
 }
+
+function streamed(body) {
+  return new Request("https://edge.invalid/uniflow-api", {
+    method: "POST",
+    body,
+    duplex: "half",
+  });
+}
+
+test("oversized unknown-length streams stop early and cancel the producer without network IO", async (t) => {
+  noNetwork(t);
+  let pulls = 0,
+    cancelled = 0;
+  const req = streamed(
+    new ReadableStream({
+      pull(controller) {
+        if (++pulls > 8)
+          throw Error("The consumer drained past its byte limit");
+        controller.enqueue(new Uint8Array(600_000));
+      },
+      cancel() {
+        cancelled++;
+      },
+    }),
+  );
+  await oversized(await handle(req));
+  assert.ok(pulls <= 5);
+  assert.equal(cancelled, 1);
+  assert.equal(req.body.locked, false);
+});
+
+test("a stalled producer cancellation cannot hold the oversized response open", async (t) => {
+  noNetwork(t);
+  let timer;
+  const req = streamed(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(limit + 1));
+      },
+      cancel() {
+        return new Promise(() => {});
+      },
+    }),
+  );
+  try {
+    await oversized(
+      await Promise.race([
+        handle(req),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(Error("Cancellation stalled response")),
+            1000,
+          );
+        }),
+      ]),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+  assert.equal(req.body.locked, false);
+});
+
+test("stream chunk boundaries preserve split UTF-8 sequences and BOM decoding", async (t) => {
+  noNetwork(t);
+  const bytes = Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    Buffer.from(JSON.stringify({ action: "login", padding: "я😀" })),
+  ]);
+  let offset = 0;
+  const req = streamed(
+    new ReadableStream({
+      pull(controller) {
+        if (offset === bytes.length) controller.close();
+        else controller.enqueue(bytes.subarray(offset, ++offset));
+      },
+    }),
+  );
+  assert.equal((await handle(req)).status, 410);
+  assert.equal(req.body.locked, false);
+});
+
+test("stream read errors retain the generic unavailable response and release the reader", async (t) => {
+  noNetwork(t);
+  const req = streamed(
+    new ReadableStream({
+      pull(controller) {
+        controller.error(Error("PRIVATE_STREAM_ERROR"));
+      },
+    }),
+  );
+  const response = await handle(req);
+  assert.equal(response.status, 503);
+  assert.equal((await response.text()).includes("PRIVATE_STREAM_ERROR"), false);
+  assert.equal(req.body.locked, false);
+});
 
 test("the exact ASCII byte boundary reaches existing action handling while one extra byte rejects", async (t) => {
   noNetwork(t);
