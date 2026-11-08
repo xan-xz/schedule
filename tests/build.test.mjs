@@ -41,6 +41,7 @@ async function fixture(t) {
     "app/retirement-worker.js": "self.addEventListener('fetch',()=>{});\n",
     "backend/core.mjs": "export const shared=1;\n",
     "backend/appearance-policy.mjs": "export const policyVersion=1;\n",
+    "backend/public-data.mjs": "export const projectPublicData=value=>value;\n",
     "backend/group-state.mjs": "export const isGroupActive=()=>true;\n",
     "app/appearance-policy.mjs":
       "export * from '../backend/appearance-policy.mjs';\n",
@@ -80,6 +81,36 @@ async function snapshot(root, prefix = "") {
   }
   return result;
 }
+test("release seed strips private metadata without rewriting its source file", async (t) => {
+  const dir = await fixture(t);
+  const seed = {
+    groups: [
+      {
+        id: "g",
+        name: "Группа",
+        subgroups: ["А"],
+        privateNote: "PRIVATE_SENTINEL",
+      },
+    ],
+    rooms: [{ id: "r", name: "204", capacity: 30, note: "PRIVATE_SENTINEL" }],
+    lessons: [],
+    accounts: [{ password_hash: "PRIVATE_SENTINEL" }],
+    history: [{ actor: "PRIVATE_SENTINEL" }],
+    source: { file: "PRIVATE_SENTINEL" },
+    siteSettings: { privateKey: "PRIVATE_SENTINEL" },
+  };
+  const original = JSON.stringify(seed);
+  await writeFile(join(dir, "app/seed.json"), original);
+  build(dir);
+  const published = await readFile(join(dir, "dist/seed.json"), "utf8");
+  assert.doesNotMatch(
+    published,
+    /PRIVATE_SENTINEL|password_hash|privateNote|privateKey/,
+  );
+  assert.equal(JSON.parse(published).groups[0].name, "Группа");
+  assert.equal(await readFile(join(dir, "app/seed.json"), "utf8"), original);
+});
+
 test("one deterministic production artifact preserves local models and excludes private server code", async (t) => {
   const dir = await fixture(t);
   build(dir);

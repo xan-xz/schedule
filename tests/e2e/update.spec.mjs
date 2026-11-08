@@ -101,6 +101,8 @@ async function releaseOrigin() {
         "backend/appearance-policy.mjs": "backend/appearance-policy.mjs",
         "group-state.mjs": "backend/group-state.mjs",
         "backend/group-state.mjs": "backend/group-state.mjs",
+        "public-data.mjs": "backend/public-data.mjs",
+        "backend/public-data.mjs": "backend/public-data.mjs",
         "backend/core.mjs": "backend/core.mjs",
         "compatibility.json": "compatibility.json",
       };
@@ -203,6 +205,8 @@ async function ready(page, version) {
           "./backend/appearance-policy.mjs",
           "./group-state.mjs",
           "./backend/group-state.mjs",
+          "./public-data.mjs",
+          "./backend/public-data.mjs",
           "./lib/personalization.mjs",
           "./lib/appearance-tokens.mjs",
           "./lib/layout-loader.mjs",
