@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { isGroupActive } from "../backend/group-state.mjs";
 import {
   INITIAL_SNAPSHOT_ID,
   INITIAL_SNAPSHOT_FORMAT,
@@ -42,15 +43,7 @@ const escapeHtml = (value) =>
       ],
   );
 export function renderInitialChoice(snapshot) {
-  const groups = snapshot.data.groups.filter(
-    (group) =>
-      !group.archived &&
-      !group.archivedAt &&
-      !group.archived_at &&
-      !group.deletedAt &&
-      !group.deleted_at &&
-      !["archived", "deleted"].includes(group.status),
-  );
+  const groups = snapshot.data.groups.filter(isGroupActive);
   if (!groups.length) return null;
   const subgroups = [
     ...new Set(groups.flatMap((group) => group.subgroups || [])),
