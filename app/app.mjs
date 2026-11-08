@@ -865,6 +865,7 @@ async function changeStatus(id, status) {
 async function personalBackup() {
   const epoch = S.epoch,
     key = personalKey();
+  const backupStatusesKey = statusKey();
   const backupScope = {
     groupId: S.settings.groupId,
     subgroup: S.settings.subgroup,
@@ -892,9 +893,12 @@ async function personalBackup() {
       isCurrent: current,
       read: async () => {
         check();
-        await loadPersonal();
+        const [tasks, statuses] = await Promise.all([
+          storage.get(key, []),
+          storage.get(backupStatusesKey, {}),
+        ]);
         check();
-        return { tasks: S.personal, statuses: S.statuses };
+        return { tasks, statuses };
       },
       restore: async (backup) => {
         check();
