@@ -8,6 +8,7 @@ import {
   renderPersonalization,
 } from "./lib/personalization.mjs";
 import { loadedLayout, loadLayout } from "./lib/layout-loader.mjs";
+import { isGroupActive } from "./group-state.mjs";
 import { el, button, field, select, download } from "./lib/dom.mjs";
 import { translator, localeFor } from "./lib/i18n.mjs";
 import {
@@ -167,14 +168,7 @@ function cleanSettings(value = {}) {
 }
 function availableGroups() {
   return (data()?.groups || []).filter(
-    (g) =>
-      typeof g.id === "string" &&
-      !g.archived &&
-      !g.archivedAt &&
-      !g.archived_at &&
-      !g.deletedAt &&
-      !g.deleted_at &&
-      !["archived", "deleted"].includes(g.status),
+    (g) => typeof g.id === "string" && isGroupActive(g),
   );
 }
 function validSubgroup(group, value) {

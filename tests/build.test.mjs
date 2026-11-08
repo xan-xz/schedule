@@ -41,6 +41,7 @@ async function fixture(t) {
     "app/retirement-worker.js": "self.addEventListener('fetch',()=>{});\n",
     "backend/core.mjs": "export const shared=1;\n",
     "backend/appearance-policy.mjs": "export const policyVersion=1;\n",
+    "backend/group-state.mjs": "export const isGroupActive=()=>true;\n",
     "app/appearance-policy.mjs":
       "export * from '../backend/appearance-policy.mjs';\n",
     "backend/admin.mjs": "throw Error('Do not publish server');\n",

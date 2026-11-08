@@ -72,6 +72,7 @@ await cp(
   "backend/appearance-policy.mjs",
   resolve(target, "appearance-policy.mjs"),
 );
+await cp("backend/group-state.mjs", resolve(target, "group-state.mjs"));
 await cp("backend/core.mjs", resolve(target, "model.mjs"));
 await writeFile(resolve(target, "core.mjs"), 'export * from "./model.mjs";\n');
 // Preserve the former pure-model address for installed clients until they reload.
@@ -81,6 +82,7 @@ await cp(
   "backend/appearance-policy.mjs",
   resolve(target, "backend/appearance-policy.mjs"),
 );
+await cp("backend/group-state.mjs", resolve(target, "backend/group-state.mjs"));
 const publicCompatibility = Object.fromEntries(
   Object.entries(compatibility).filter(([key]) => key !== "retirementGuard"),
 );
