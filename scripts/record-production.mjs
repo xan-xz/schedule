@@ -1,4 +1,4 @@
-import { spawnSync, execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import {
   releaseAssets,
   ensureLockedRelease,
   parseGitHubLookup,
+  parseGitHubCreatedDraft,
   verifyProductionTag,
 } from "./locked-release.mjs";
 
@@ -57,13 +58,18 @@ async function main() {
       { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
     );
   const files = { "production-site.tar": archive, "production.json": manifest };
-  const outcome = await ensureLockedRelease({
+  const expected = {
     sourceRef,
     tag,
     assets: releaseAssets(archiveBytes, manifestBytes),
+  };
+  let releaseId = null;
+  const outcome = await ensureLockedRelease({
+    ...expected,
     lookup: async () => {
       const release = await lookupReleaseIncludingDrafts({
           tag,
+          releaseId,
           lookupPublished: async () => request(endpoint, ["--include"]),
           listPages: async () =>
             request("repos/" + repository + "/releases?per_page=100", [
@@ -78,6 +84,11 @@ async function main() {
             "--include",
           ]),
         );
+      if (release.status === 200) {
+        if (!Number.isSafeInteger(release.body?.id) || release.body.id <= 0)
+          throw Error("Production release ID is invalid.");
+        releaseId = release.body.id;
+      }
       verifyProductionTag(
         tagState,
         sourceRef,
@@ -85,37 +96,63 @@ async function main() {
       );
       return release;
     },
-    createDraft: async () =>
-      execFileSync(
-        "gh",
+    createDraft: async () => {
+      const created = request("repos/" + repository + "/releases", [
+        "--method",
+        "POST",
+        "--include",
+        "-f",
+        "tag_name=" + tag,
+        "-f",
+        "target_commitish=" + sourceRef,
+        "-F",
+        "draft=true",
+        "-F",
+        "prerelease=false",
+        "-f",
+        "name=Verified UniFlow production " + run,
+        "-f",
+        "body=Verified production artifact. Source and artifact digests are checked by the publishing workflow.",
+      ]);
+      releaseId = parseGitHubCreatedDraft(created, expected);
+    },
+    upload: async (name) => {
+      const asset = expected.assets.find((item) => item.name === name);
+      if (!Number.isSafeInteger(releaseId) || releaseId <= 0 || !files[name])
+        throw Error("Verified draft ID and asset are required before upload.");
+      const result = request(
+        "https://uploads.github.com/repos/" +
+          repository +
+          "/releases/" +
+          releaseId +
+          "/assets?name=" +
+          encodeURIComponent(name),
         [
-          "release",
-          "create",
-          tag,
-          "--draft",
-          "--repo",
-          repository,
-          "--target",
-          sourceRef,
-          "--title",
-          "Verified UniFlow production " + run,
-          "--notes",
-          "Verified production artifact. Source and artifact digests are checked by the publishing workflow.",
+          "--method",
+          "POST",
+          "--input",
+          files[name],
+          "-H",
+          "Content-Type: application/octet-stream",
+          "-H",
+          "Content-Length: " + asset.size,
         ],
-        { stdio: "inherit" },
-      ),
-    upload: async (name) =>
-      execFileSync(
-        "gh",
-        ["release", "upload", tag, files[name], "--repo", repository],
-        { stdio: "inherit" },
-      ),
-    publish: async () =>
-      execFileSync(
-        "gh",
-        ["release", "edit", tag, "--draft=false", "--repo", repository],
-        { stdio: "inherit" },
-      ),
+      );
+      if (result.error || result.signal || result.status !== 0)
+        throw Error("Release asset upload was not acknowledged.");
+    },
+    publish: async () => {
+      if (!Number.isSafeInteger(releaseId) || releaseId <= 0)
+        throw Error("Verified draft ID is required before publication.");
+      const result = request("repos/" + repository + "/releases/" + releaseId, [
+        "--method",
+        "PATCH",
+        "-F",
+        "draft=false",
+      ]);
+      if (result.error || result.signal || result.status !== 0)
+        throw Error("Release publication was not acknowledged.");
+    },
   });
   console.log(JSON.stringify({ tag, sourceRef, immutable: true, outcome }));
 }

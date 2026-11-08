@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parseGitHubLookup,
+  parseGitHubCreatedDraft,
   releaseAssets,
   inspectRelease,
   ensureLockedRelease,
@@ -30,6 +31,7 @@ const absent = () => ({
 const release = (overrides = {}) => ({
   status: 200,
   body: {
+    id: 321,
     tag_name: expected.tag,
     target_commitish: expected.sourceRef,
     draft: false,
@@ -39,7 +41,11 @@ const release = (overrides = {}) => ({
     ...overrides,
   },
 });
-const response = (status, body, exit = status === 200 ? 0 : 1) => ({
+const response = (
+  status,
+  body,
+  exit = [200, 201].includes(status) ? 0 : 1,
+) => ({
   status: exit,
   stdout:
     "HTTP/2.0 " +
@@ -176,7 +182,15 @@ test("published releases and permission failures do not fall back to draft guess
   assert.equal(lists, 0);
 });
 function fixture(initial = absent()) {
-  const f = { current: structuredClone(initial), operations: [], fail: {} };
+  const f = {
+    current: structuredClone(initial),
+    operations: [],
+    fail: {},
+    delays: [],
+  };
+  f.pause = async (milliseconds) => {
+    f.delays.push(milliseconds);
+  };
   f.lookup = async () => {
     f.operations.push("read");
     if (f.fail.read) throw Error("lookup unavailable");
@@ -444,4 +458,175 @@ test("unpinned source, malformed tag and invalid expected assets are rejected be
     );
     assert.equal(calls, 0);
   }
+});
+
+test("a successful create acknowledgment pins only a validated numeric draft ID", () => {
+  const draft = release({ draft: true, immutable: false, assets: [] }).body;
+  assert.equal(parseGitHubCreatedDraft(response(201, draft), expected), 321);
+  for (const change of [
+    { id: 0 },
+    { id: "321" },
+    { id: -1 },
+    { target_commitish: "b".repeat(40) },
+    { tag_name: "other" },
+    { draft: false, immutable: true, assets: expected.assets.map(remoteAsset) },
+  ])
+    assert.throws(() =>
+      parseGitHubCreatedDraft(response(201, { ...draft, ...change }), expected),
+    );
+  for (const bad of [
+    response(200, draft),
+    response(404, absent().body),
+    response(201, draft, 1),
+    { ...response(201, draft), stdout: "bad" },
+  ])
+    assert.throws(() => parseGitHubCreatedDraft(bad, expected));
+});
+test("a pinned ID bypasses stale tag and list indexes and never binds another release", async () => {
+  const calls = [];
+  const driver = {
+    tag: expected.tag,
+    releaseId: 321,
+    lookupPublished: async () => {
+      throw Error("published index must not be queried");
+    },
+    listPages: async () => {
+      throw Error("list index must not be queried");
+    },
+    lookupById: async (id) => {
+      calls.push(id);
+      return response(
+        200,
+        release({ draft: true, immutable: false, assets: [] }).body,
+      );
+    },
+  };
+  assert.equal((await lookupReleaseIncludingDrafts(driver)).body.id, 321);
+  assert.deepEqual(calls, [321]);
+  for (const change of [{ id: 322 }, { tag_name: "other" }])
+    await assert.rejects(
+      lookupReleaseIncludingDrafts({
+        ...driver,
+        lookupById: async () => response(200, release(change).body),
+      }),
+    );
+  assert.equal(
+    (
+      await lookupReleaseIncludingDrafts({
+        ...driver,
+        lookupById: async () => response(404, absent().body),
+      })
+    ).status,
+    404,
+  );
+  for (const id of [0, -1, "321", NaN])
+    await assert.rejects(
+      lookupReleaseIncludingDrafts({ ...driver, releaseId: id }),
+    );
+});
+test("stale absence after positive creation is confirmed by ID without another create or list", async () => {
+  const f = fixture();
+  let id = null,
+    idReads = 0,
+    lists = 0,
+    creates = 0;
+  f.lookup = async () => {
+    f.operations.push("read");
+    return lookupReleaseIncludingDrafts({
+      tag: expected.tag,
+      releaseId: id,
+      lookupPublished: async () => response(404, absent().body),
+      listPages: async () => {
+        lists++;
+        return { status: 0, stdout: "[[]]" };
+      },
+      lookupById: async (requested) => {
+        assert.equal(requested, 321);
+        idReads++;
+        return idReads <= 2
+          ? response(404, absent().body)
+          : response(200, f.current.body);
+      },
+    });
+  };
+  const create = f.createDraft;
+  f.createDraft = async () => {
+    creates++;
+    await create();
+    id = parseGitHubCreatedDraft(response(201, f.current.body), expected);
+  };
+  assert.equal(await f.run(), "created");
+  assert.equal(creates, 1);
+  assert.equal(lists, 1);
+  assert.deepEqual(f.delays, [100, 250]);
+  assert.deepEqual(f.writes(), [
+    "create",
+    "upload:production-site.tar",
+    "upload:production.json",
+    "publish",
+  ]);
+});
+test("a lost create response tolerates bounded stale absence without repeating its write", async () => {
+  const f = fixture();
+  f.fail.createAfter = true;
+  const read = f.lookup;
+  let stale = 2;
+  f.lookup = async () => {
+    if (f.operations.includes("create") && stale-- > 0) {
+      f.operations.push("read");
+      return absent();
+    }
+    return read();
+  };
+  assert.equal(await f.run(), "created");
+  assert.equal(f.writes().filter((v) => v === "create").length, 1);
+  assert.deepEqual(f.delays, [100, 250]);
+});
+test("unconfirmed absence exhausts five reads and leaves a single attempted create", async () => {
+  const f = fixture();
+  f.fail.createBefore = true;
+  await assert.rejects(f.run(), /create unavailable/);
+  assert.deepEqual(f.writes(), ["create"]);
+  assert.equal(f.operations.filter((v) => v === "read").length, 6);
+  assert.deepEqual(f.delays, [100, 250, 500, 1000]);
+});
+test("stale valid snapshots after upload or publication trigger reads only", async () => {
+  for (const phase of ["upload", "publish"]) {
+    const f = fixture(),
+      write = f[phase],
+      read = f.lookup;
+    let stale = null,
+      left = 0;
+    f[phase] = async (...args) => {
+      stale = structuredClone(f.current);
+      await write(...args);
+      left = 2;
+    };
+    f.lookup = async () => {
+      if (left-- > 0) {
+        f.operations.push("read");
+        return structuredClone(stale);
+      }
+      return read();
+    };
+    assert.equal(await f.run(), "created");
+    assert.deepEqual(f.writes(), [
+      "create",
+      "upload:production-site.tar",
+      "upload:production.json",
+      "publish",
+    ]);
+    assert.ok(f.delays.length >= 2);
+  }
+});
+test("a contradictory source after create still fails before upload without polling it away", async () => {
+  const f = fixture(),
+    create = f.createDraft;
+  f.createDraft = async () => {
+    await create();
+    f.current.body.target_commitish = "b".repeat(40);
+  };
+  await assert.rejects(f.run(), /identity/);
+  assert.deepEqual(f.writes(), ["create"]);
+  assert.deepEqual(f.delays, []);
 });

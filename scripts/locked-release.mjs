@@ -32,13 +32,16 @@ export function verifyProductionTag(result, sourceRef, required = false) {
     );
 }
 
-export function parseGitHubLookup(result) {
+function parseGitHubResponse(result, successStatus, allowAbsence) {
   if (result.error || result.signal || typeof result.stdout !== "string")
     throw Error("GitHub release lookup failed before a valid HTTP response.");
   const raw = result.stdout.replace(/\r\n/g, "\n");
   const boundary = raw.indexOf("\n\n");
   const status = Number(/^HTTP\/[\d.]+ (\d{3})(?: |\n)/.exec(raw)?.[1]);
-  if (boundary < 0 || ![200, 404].includes(status))
+  if (
+    boundary < 0 ||
+    !(status === successStatus || (allowAbsence && status === 404))
+  )
     throw Error("Unexpected GitHub release lookup HTTP status.");
   let body;
   try {
@@ -46,8 +49,10 @@ export function parseGitHubLookup(result) {
   } catch {
     throw Error("GitHub release lookup did not return valid JSON.");
   }
-  if (status === 200 && result.status !== 0)
-    throw Error("GitHub release lookup failed despite HTTP 200.");
+  if (status === successStatus && result.status !== 0)
+    throw Error(
+      "GitHub release lookup failed despite HTTP " + successStatus + ".",
+    );
   if (
     status === 404 &&
     (result.status !== 1 ||
@@ -58,6 +63,22 @@ export function parseGitHubLookup(result) {
   return { status, body };
 }
 
+export function parseGitHubLookup(result) {
+  return parseGitHubResponse(result, 200, true);
+}
+/** Preserve the numeric identity acknowledged by the successful POST. */
+export function parseGitHubCreatedDraft(result, expected) {
+  const created = parseGitHubResponse(result, 201, false);
+  if (
+    !Number.isSafeInteger(created.body?.id) ||
+    created.body.id <= 0 ||
+    inspectRelease({ status: 200, body: created.body }, expected).kind !==
+      "draft"
+  )
+    throw Error("Created draft identity is invalid.");
+  return created.body.id;
+}
+
 /** The tag endpoint exposes published releases only. A 404 is not evidence
  * that an authenticated same-tag draft is absent. Enumerate every page before
  * creating, then fetch the matching draft by its numeric release ID. */
@@ -66,9 +87,21 @@ export async function lookupReleaseIncludingDrafts({
   lookupPublished,
   listPages,
   lookupById,
+  releaseId = null,
 }) {
   if (!/^uniflow-production-\d+$/.test(tag || ""))
     throw Error("Invalid production tag");
+  if (releaseId !== null) {
+    if (!Number.isSafeInteger(releaseId) || releaseId <= 0)
+      throw Error("Invalid pinned release ID.");
+    const found = parseGitHubLookup(await lookupById(releaseId));
+    if (
+      found.status === 200 &&
+      (found.body?.id !== releaseId || found.body.tag_name !== tag)
+    )
+      throw Error("Pinned release identity changed during lookup.");
+    return found;
+  }
   const published = parseGitHubLookup(await lookupPublished());
   if (published.status === 200) return published;
   const result = await listPages();
@@ -103,7 +136,11 @@ export async function lookupReleaseIncludingDrafts({
   )
     throw Error("Ambiguous production draft identity.");
   const found = parseGitHubLookup(await lookupById(matches[0].id));
-  if (found.status !== 200 || found.body?.tag_name !== tag)
+  if (
+    found.status !== 200 ||
+    found.body?.tag_name !== tag ||
+    found.body?.id !== matches[0].id
+  )
     throw Error("Production draft identity changed during lookup.");
   return found;
 }
@@ -184,9 +221,22 @@ export async function ensureLockedRelease({
   createDraft,
   upload,
   publish,
+  pause = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
   ...expected
 }) {
   expectations(expected);
+  // Provider reads may briefly lag a successful write. Retry reads only;
+  // every candidate still passes the complete identity/digest/lock checks.
+  const confirm = async (accepted, message, failure) => {
+    const delays = [0, 100, 250, 500, 1000];
+    for (const delay of delays) {
+      if (delay) await pause(delay);
+      const candidate = inspectRelease(await lookup(), expected);
+      if (accepted(candidate)) return candidate;
+    }
+    throw failure || Error(message);
+  };
   let state = inspectRelease(await lookup(), expected);
   if (state.kind === "published") return "existing";
   const startedMissing = state.kind === "missing";
@@ -197,9 +247,11 @@ export async function ensureLockedRelease({
     } catch (error) {
       failure = error;
     }
-    state = inspectRelease(await lookup(), expected);
-    if (state.kind === "missing")
-      throw failure || Error("Draft creation was not confirmed.");
+    state = await confirm(
+      (candidate) => candidate.kind !== "missing",
+      "Draft creation was not confirmed.",
+      failure,
+    );
     if (state.kind === "published") return "existing";
   }
   for (const asset of expected.assets) {
@@ -210,13 +262,15 @@ export async function ensureLockedRelease({
     } catch (error) {
       failure = error;
     }
-    state = inspectRelease(await lookup(), expected);
+    state = await confirm(
+      (candidate) =>
+        candidate.kind === "published" ||
+        (candidate.kind === "draft" &&
+          !candidate.missing.some((item) => item.name === asset.name)),
+      "Asset upload was not confirmed.",
+      failure,
+    );
     if (state.kind === "published") return "existing";
-    if (
-      state.kind !== "draft" ||
-      state.missing.some((item) => item.name === asset.name)
-    )
-      throw failure || Error("Asset upload was not confirmed.");
   }
   if (state.kind !== "draft" || state.missing.length)
     throw Error("Complete draft verification is required before publication.");
@@ -226,8 +280,10 @@ export async function ensureLockedRelease({
   } catch (error) {
     failure = error;
   }
-  state = inspectRelease(await lookup(), expected);
-  if (state.kind !== "published")
-    throw failure || Error("Immutable release publication was not confirmed.");
+  state = await confirm(
+    (candidate) => candidate.kind === "published",
+    "Immutable release publication was not confirmed.",
+    failure,
+  );
   return startedMissing ? "created" : "completed";
 }
