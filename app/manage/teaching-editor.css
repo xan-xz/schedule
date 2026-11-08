@@ -22,6 +22,7 @@
 }
 .teaching-editor .field:has(input[type="checkbox"]) {
   display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: space-between;
   min-height: 44px;
@@ -54,4 +55,28 @@
 }
 body.dark .teaching-editor {
   color: #eee6fa;
+}
+.teaching-actions {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  align-self: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 12px 0;
+  background: #fff;
+  border-bottom: 1px solid #cfc2e7;
+}
+.teaching-actions .btn {
+  min-width: 0;
+  white-space: normal;
+}
+.teaching-editor input,
+.teaching-editor select {
+  scroll-margin-top: 100px;
+}
+body.dark .teaching-actions {
+  background: #272132;
+  border-color: #3f334c;
 }

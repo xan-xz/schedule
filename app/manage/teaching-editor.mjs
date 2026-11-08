@@ -303,6 +303,20 @@ export function createTeachingEditor({
   );
   root.append(
     el(
+      "div",
+      {
+        class: "teaching-actions",
+        role: "group",
+        "aria-label": "Действия настроек",
+      },
+      el(
+        "button",
+        { class: "btn primary", type: "submit" },
+        "Сохранить настройки в черновик",
+      ),
+      button("Отмена", onClose, { class: "btn" }),
+    ),
+    el(
       "p",
       { class: "notice-info" },
       "Эти настройки меняют варианты в формах. Время и строковые типы существующих занятий не пересчитываются и не переименовываются.",
@@ -329,16 +343,6 @@ export function createTeachingEditor({
       addScheme,
     ),
     error,
-    el(
-      "div",
-      { class: "row section-space" },
-      el(
-        "button",
-        { class: "btn primary", type: "submit" },
-        "Сохранить настройки в черновик",
-      ),
-      button("Отмена", onClose, { class: "btn" }),
-    ),
   );
   root.addEventListener("submit", async (event) => {
     event.preventDefault();
