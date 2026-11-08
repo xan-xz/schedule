@@ -96,19 +96,17 @@ async function releaseOrigin() {
         response.writeHead(404).end();
         return;
       }
-      const sharedAppearance = [
-        "appearance-policy.mjs",
-        "backend/appearance-policy.mjs",
-      ].includes(relative);
-      const root =
-        sharedAppearance ||
-        ["backend/core.mjs", "compatibility.json"].includes(relative)
-          ? repository
-          : resolve(repository, "app");
-      const file = resolve(
-        root,
-        sharedAppearance ? "backend/appearance-policy.mjs" : relative,
-      );
+      const shared = {
+        "appearance-policy.mjs": "backend/appearance-policy.mjs",
+        "backend/appearance-policy.mjs": "backend/appearance-policy.mjs",
+        "public-data.mjs": "backend/public-data.mjs",
+        "backend/public-data.mjs": "backend/public-data.mjs",
+        "backend/core.mjs": "backend/core.mjs",
+        "compatibility.json": "compatibility.json",
+      };
+      const isShared = Object.hasOwn(shared, relative);
+      const root = isShared ? repository : resolve(repository, "app");
+      const file = resolve(root, isShared ? shared[relative] : relative);
       if (!file.startsWith(root + sep)) {
         response.writeHead(403).end();
         return;
@@ -203,6 +201,8 @@ async function ready(page, version) {
           "./appearance-init.js",
           "./appearance-policy.mjs",
           "./backend/appearance-policy.mjs",
+          "./public-data.mjs",
+          "./backend/public-data.mjs",
           "./lib/personalization.mjs",
           "./lib/appearance-tokens.mjs",
           "./lib/layout-loader.mjs",
