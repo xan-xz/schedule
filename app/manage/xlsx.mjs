@@ -284,11 +284,12 @@ export async function readScheduleWorkbook(input) {
             if (["start", "end"].includes(header)) {
               const code = customFormats.get(format) || "";
               if (
-                ![0, 18, 19, 20, 21, 45, 46, 47].includes(format) &&
+                ![0, 18, 19, 20, 21, 46].includes(format) &&
                 !(
                   format >= 164 &&
-                  /^[hms0: .APMapm[\]\\"]+$/.test(code) &&
-                  /[hm]/i.test(code)
+                  /^(?:h{1,2}|\[h\]):m{1,2}(?::s{1,2})?(?:\s*AM\/PM)?(?:;@)?$/i.test(
+                    code.replaceAll("\\:", ":"),
+                  )
                 )
               )
                 fail(

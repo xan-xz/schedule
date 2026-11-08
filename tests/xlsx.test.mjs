@@ -177,6 +177,24 @@ test("XLSX refuses numeric dates even when their serial is less than one", async
     /без даты/,
   );
 });
+test("XLSX refuses minute-only and literal time formats that conceal the hour", async () => {
+  for (const [code, format] of [
+    ["mm:ss", 45],
+    ["mm:ss.0", 47],
+    ["mm:ss", 164],
+    ["&quot;h&quot;", 164],
+  ]) {
+    await assert.rejects(
+      read(
+        await workbook([xlsxRow()], (p) => {
+          style(p, code, format);
+          cell(p, "B2", '<c r="B2" s="1"><v>0.375</v></c>');
+        }),
+      ),
+      /HH:MM/,
+    );
+  }
+});
 test("XLSX caps data rows before common validation and ignores forged dimension allocations", async () => {
   const result = await read(
     await workbook(
