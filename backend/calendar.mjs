@@ -1,3 +1,4 @@
+import { isGroupActive } from "./group-state.mjs";
 import { generateIcs } from "../app/lib/calendar.mjs";
 import { localDate } from "../app/lib/time.mjs";
 
@@ -87,6 +88,11 @@ export async function handle(req) {
       data[field] = row.data[field] || [];
     for (const field of ["validFrom", "validUntil"])
       if (row.data[field]) data[field] = row.data[field];
+    // An existing subscription must receive an empty valid feed to clear old events.
+    if (!isGroupActive(group)) {
+      data.lessons = [];
+      data.exceptions = [];
+    }
     const updated = Number.isFinite(Date.parse(row.updated_at))
       ? new Date(row.updated_at)
       : new Date(0);

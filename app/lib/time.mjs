@@ -1,3 +1,4 @@
+import { isGroupActive } from "../group-state.mjs";
 /** Calendar arithmetic is date-only; lesson instants always use Kazakhstan UTC+5. */
 export const TIME_ZONE = "Asia/Almaty";
 const dayMs = 86_400_000;
@@ -131,11 +132,17 @@ export function lessonsForDate(data, date, scope = {}) {
   const exceptions = data.exceptions || data.overrides || [];
   const contexts = new Map();
   const byLesson = new Map();
+  const inactiveGroups = new Set(
+    (data.groups || [])
+      .filter((group) => !isGroupActive(group))
+      .map((group) => group.id),
+  );
   for (const item of exceptions) {
     if (!byLesson.has(item.lessonId)) byLesson.set(item.lessonId, []);
     byLesson.get(item.lessonId).push(item);
   }
   for (const lesson of data.lessons || []) {
+    if (inactiveGroups.has(lesson.groupId)) continue;
     // Group assignment cannot change in a per-date override; filter before date arithmetic.
     if (!scope.teacherId && scope.groupId && lesson.groupId !== scope.groupId)
       continue;
@@ -207,6 +214,9 @@ export function changesForDate(data, date, scope = {}) {
     );
     if (
       !lesson ||
+      !isGroupActive(
+        data.groups?.find((group) => group.id === lesson.groupId),
+      ) ||
       !inScope(lesson, scope) ||
       !scheduled(lesson, date, data, contexts)
     )

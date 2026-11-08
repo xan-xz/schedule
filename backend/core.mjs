@@ -1,4 +1,6 @@
 import { validateAppearancePolicy } from "./appearance-policy.mjs";
+import { isGroupActive } from "./group-state.mjs";
+export { isGroupActive } from "./group-state.mjs";
 import { projectPublicCatalogs, projectPublicData } from "./public-data.mjs";
 export const DAYS = [
   "Понедельник",
@@ -127,7 +129,7 @@ function scheduledOn(l, date) {
     (!l.validUntil || date <= l.validUntil)
   );
 }
-export function occurrences(data, date) {
+export function occurrences(data, date, { activeOnly = false } = {}) {
   const result = [];
   if (
     (data.validFrom && date < data.validFrom) ||
@@ -135,6 +137,11 @@ export function occurrences(data, date) {
   )
     return result;
   for (const l of data.lessons) {
+    if (
+      activeOnly &&
+      !isGroupActive(data.groups?.find((g) => g.id === l.groupId))
+    )
+      continue;
     const ex = data.exceptions.find(
       (e) => e.lessonId === l.id && e.date === date,
     );
@@ -249,29 +256,37 @@ export function validate(data) {
     }
   }
   const has = (k, id) => data[k].some((e) => e.id === id);
-  for (const g of data.groups) {
-    text(g.name, "Группа", 80);
-    if (
-      !Array.isArray(g.subgroups) ||
-      !g.subgroups.length ||
-      g.subgroups.some((s) => typeof s !== "string" || s.length > 15)
-    )
-      fail("Проверь подгруппы");
-  }
-  for (const t of data.teachers) {
-    text(t.name, "Преподаватель");
-    if (
-      !Array.isArray(t.subjects) ||
-      t.subjects.some((s) => !has("subjects", s))
-    )
+  for (const entity of CATALOG_ENTITIES)
+    for (const item of data[entity]) validateCatalogItem(entity, item);
+  for (const t of data.teachers)
+    if (t.subjects.some((s) => !has("subjects", s)))
       fail("Предмет преподавателя не найден");
-  }
-  for (const s of data.subjects) text(s.name, "Предмет");
-  for (const r of data.rooms) {
-    text(r.name, "Аудитория", 60);
-    if (!Number.isInteger(r.capacity) || r.capacity < 1 || r.capacity > 500)
-      fail("Вместимость от 1 до 500");
-  }
+  // Optional reference fields have the same meaning on every operational row,
+  // including cancelled overrides and rejected requests. Historical snapshots
+  // remain immutable and are checked by catalogImpact before destructive edits.
+  for (const collection of REFERENCE_COLLECTIONS)
+    for (const row of data[collection] || [])
+      for (const entity of CATALOG_ENTITIES) {
+        const [single, multiple] = REFERENCE_FIELDS[entity];
+        if (
+          entity === "groups" &&
+          row.groupId &&
+          row.subgroup !== undefined &&
+          row.subgroup !== "all" &&
+          !data.groups
+            .find((group) => group.id === row.groupId)
+            ?.subgroups.includes(row.subgroup)
+        )
+          fail("Подгруппа связанной записи не найдена: " + collection);
+        if (row[single] && !has(entity, row[single]))
+          fail("Ссылка справочника не найдена: " + collection);
+        if (
+          row[multiple] !== undefined &&
+          (!Array.isArray(row[multiple]) ||
+            row[multiple].some((id) => !has(entity, id)))
+        )
+          fail("Ссылки справочника не найдены: " + collection);
+      }
   for (const l of data.lessons) {
     if (
       !has("groups", l.groupId) ||
@@ -308,10 +323,13 @@ export function validate(data) {
     text(l.type || "Пара", "Тип занятия", 40);
   }
   const allowedSourcePairs = new Set(data.sourceConflictPairs || []);
-  for (let i = 0; i < data.lessons.length; i++)
-    for (let j = i + 1; j < data.lessons.length; j++) {
-      const a = data.lessons[i],
-        b = data.lessons[j];
+  const activeLessons = data.lessons.filter((l) =>
+    isGroupActive(data.groups.find((g) => g.id === l.groupId)),
+  );
+  for (let i = 0; i < activeLessons.length; i++)
+    for (let j = i + 1; j < activeLessons.length; j++) {
+      const a = activeLessons[i],
+        b = activeLessons[j];
       if (a.day === b.day && weeksOverlap(a.week, b.week)) {
         const error = collision(a, b);
         if (error && !allowedSourcePairs.has(conflictPairKey(a, b)))
@@ -319,8 +337,8 @@ export function validate(data) {
       }
     }
   // Check the following calendar day too. On Sunday ISO parity flips at midnight.
-  for (const a of data.lessons.filter((l) => l.endDayOffset === 1))
-    for (const b of data.lessons) {
+  for (const a of activeLessons.filter((l) => l.endDayOffset === 1))
+    for (const b of activeLessons) {
       if (b.day !== (a.day + 1) % 7) continue;
       const parityOverlap =
         a.week === "all" ||
@@ -399,8 +417,8 @@ export function validate(data) {
       .flatMap((d) => [addDays(d, -1), d, addDays(d, 1)]),
   )) {
     const ls = [
-      ...occurrences(data, addDays(d, -1)),
-      ...occurrences(data, d),
+      ...occurrences(data, addDays(d, -1), { activeOnly: true }),
+      ...occurrences(data, d, { activeOnly: true }),
     ].filter((l) => !l.cancelled);
     for (let i = 0; i < ls.length; i++)
       for (let j = i + 1; j < ls.length; j++) {
@@ -456,6 +474,263 @@ export function validate(data) {
   }
   return true;
 }
+const CATALOG_ENTITIES = ["groups", "teachers", "subjects", "rooms"];
+const CATALOG_FIELDS = {
+  groups: ["name", "code", "specialty", "language", "subgroups"],
+  teachers: ["name", "subjects"],
+  subjects: ["name", "shortName", "color"],
+  rooms: ["name", "capacity", "capacityEstimated", "building", "floor", "note"],
+};
+const REFERENCE_COLLECTIONS = [
+  "lessons",
+  "exceptions",
+  "tasks",
+  "announcements",
+  "requests",
+  "attendance",
+  "holidays",
+  "teachers",
+];
+const REFERENCE_FIELDS = {
+  groups: ["groupId", "groupIds"],
+  teachers: ["teacherId", "teacherIds"],
+  subjects: ["subjectId", "subjectIds"],
+  rooms: ["roomId", "roomIds"],
+};
+function catalogDefaults(entity) {
+  return entity === "groups"
+    ? { subgroups: ["А", "Б"], code: "" }
+    : entity === "teachers"
+      ? { subjects: [] }
+      : entity === "rooms"
+        ? { capacity: 30 }
+        : {};
+}
+function optionalText(item, key, max) {
+  if (
+    item[key] !== undefined &&
+    (typeof item[key] !== "string" || item[key].length > max)
+  )
+    fail("Проверь поле «" + key + "»");
+}
+function validateCatalogItem(entity, item, { authored = false } = {}) {
+  text(item.id, "ID", 100);
+  text(
+    item.name,
+    "Название",
+    entity === "groups" ? 80 : entity === "rooms" ? 60 : 160,
+  );
+  if (entity === "groups") {
+    optionalText(item, "code", 80);
+    optionalText(item, "specialty", 160);
+    if (
+      item.language !== undefined &&
+      !["", "ru", "kk", "en"].includes(item.language)
+    )
+      fail("Проверь язык группы");
+    if (
+      !Array.isArray(item.subgroups) ||
+      !item.subgroups.length ||
+      item.subgroups.length > 16 ||
+      (authored &&
+        (new Set(
+          item.subgroups.map((value) =>
+            typeof value === "string" ? value.trim() : value,
+          ),
+        ).size !== item.subgroups.length ||
+          item.subgroups.some(
+            (value) => typeof value === "string" && value !== value.trim(),
+          ))) ||
+      item.subgroups.some(
+        (s) =>
+          typeof s !== "string" || !s.trim() || s.length > 15 || s === "all",
+      )
+    )
+      fail("Проверь подгруппы");
+    if (
+      Object.hasOwn(item, "archivedAt") &&
+      item.archivedAt !== null &&
+      (typeof item.archivedAt !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}T/.test(item.archivedAt) ||
+        !Number.isFinite(Date.parse(item.archivedAt)))
+    )
+      fail("Проверь дату архива");
+  } else if (entity === "teachers") {
+    if (
+      !Array.isArray(item.subjects) ||
+      item.subjects.some((id) => typeof id !== "string") ||
+      new Set(item.subjects).size !== item.subjects.length
+    )
+      fail("Проверь предметы преподавателя");
+  } else if (entity === "subjects") {
+    optionalText(item, "shortName", 60);
+    if (
+      item.color !== undefined &&
+      (typeof item.color !== "string" || !/^#[0-9a-f]{6}$/i.test(item.color))
+    )
+      fail("Проверь цвет предмета");
+  } else {
+    if (
+      !Number.isInteger(item.capacity) ||
+      item.capacity < 1 ||
+      item.capacity > 500
+    )
+      fail("Вместимость от 1 до 500");
+    if (
+      item.capacityEstimated !== undefined &&
+      typeof item.capacityEstimated !== "boolean"
+    )
+      fail("Проверь оценку вместимости");
+    optionalText(item, "building", 120);
+    optionalText(item, "floor", 40);
+    optionalText(item, "note", 1000);
+  }
+}
+function validateChangedGroupAliases(original, data) {
+  for (const group of data.groups) {
+    const old = original.groups.find((row) => row.id === group.id);
+    if (
+      !old ||
+      JSON.stringify(old.subgroups) !== JSON.stringify(group.subgroups)
+    )
+      validateCatalogItem("groups", group, { authored: true });
+    for (const field of ["id", "name", "code"]) {
+      const value = group[field];
+      if (!value || (old && old[field] === value)) continue;
+      if (
+        data.groups.some(
+          (other) =>
+            other.id !== group.id &&
+            [other.id, other.name, other.code].includes(value),
+        )
+      )
+        fail("Название или код группы совпадает со ссылкой другой группы");
+    }
+  }
+}
+function directReference(row, entity, id) {
+  const [single, multiple] = REFERENCE_FIELDS[entity];
+  return (
+    row[single] === id ||
+    (Array.isArray(row[multiple]) && row[multiple].includes(id)) ||
+    (entity === "subjects" &&
+      Array.isArray(row.subjects) &&
+      row.subjects.includes(id))
+  );
+}
+function snapshotReferences(row, entity, id) {
+  const found = [];
+  function walk(value, path) {
+    if (!value || typeof value !== "object") return;
+    if (directReference(value, entity, id)) found.push(path);
+    for (const [key, child] of Object.entries(value))
+      if (child && typeof child === "object") walk(child, path + "." + key);
+  }
+  for (const key of ["before", "after"]) walk(row[key], key);
+  return found;
+}
+/** Counts unique operational rows; snapshots are immutable destructive-edit blockers. */
+export function catalogImpact(data, entity, id) {
+  if (!CATALOG_ENTITIES.includes(entity)) fail("Неизвестный справочник");
+  const lessonIds = new Set(
+    (data.lessons || [])
+      .filter((row) => directReference(row, entity, id))
+      .map((row) => row.id),
+  );
+  const counts = {},
+    blockers = [];
+  for (const collection of REFERENCE_COLLECTIONS) {
+    counts[collection] = 0;
+    for (const row of data[collection] || []) {
+      const snapshots = snapshotReferences(row, entity, id);
+      if (
+        directReference(row, entity, id) ||
+        lessonIds.has(row.lessonId) ||
+        snapshots.length
+      )
+        counts[collection]++;
+      for (const path of snapshots)
+        blockers.push({
+          collection,
+          id: row.id || row.lessonId || "",
+          path,
+          reason: "historical_reference",
+        });
+    }
+  }
+  return {
+    counts,
+    total: Object.values(counts).reduce((sum, count) => sum + count, 0),
+    blockers,
+  };
+}
+function repointCatalogReferences(data, entity, id, replacementId) {
+  const [single, multiple] = REFERENCE_FIELDS[entity];
+  for (const collection of REFERENCE_COLLECTIONS)
+    for (const row of data[collection] || []) {
+      if (row[single] === id) row[single] = replacementId;
+      if (Array.isArray(row[multiple]))
+        row[multiple] = [
+          ...new Set(
+            row[multiple].map((value) =>
+              value === id ? replacementId : value,
+            ),
+          ),
+        ];
+      if (collection === "teachers" && entity === "subjects")
+        row.subjects = [
+          ...new Set(
+            row.subjects.map((value) => (value === id ? replacementId : value)),
+          ),
+        ];
+    }
+}
+function applyCatalogReplacements(data, original, imported, intents = []) {
+  if (!Array.isArray(intents) || intents.length > 100)
+    fail("Проверь список замен справочника");
+  // A full draft cannot bypass the immutable-snapshot deletion guard by omitting
+  // the replacement intent. Unknown historical content is never rewritten.
+  for (const entity of CATALOG_ENTITIES)
+    for (const old of original[entity])
+      if (
+        Array.isArray(imported[entity]) &&
+        !imported[entity].some((row) => row.id === old.id) &&
+        catalogImpact(original, entity, old.id).blockers.length
+      )
+        fail("Исторический снимок блокирует удаление справочника");
+  const sources = new Set();
+  for (const intent of intents) {
+    if (
+      !intent ||
+      typeof intent !== "object" ||
+      Array.isArray(intent) ||
+      Object.keys(intent).sort().join(",") !== "entity,id,replacementId" ||
+      !CATALOG_ENTITIES.includes(intent.entity) ||
+      typeof intent.id !== "string" ||
+      typeof intent.replacementId !== "string" ||
+      intent.id === intent.replacementId
+    )
+      fail("Проверь замену справочника");
+    const key = intent.entity + ":" + intent.id;
+    if (sources.has(key)) fail("Повторная замена справочника");
+    sources.add(key);
+  }
+  for (const { entity, id, replacementId } of intents) {
+    if (sources.has(entity + ":" + replacementId))
+      fail("Цепочки и циклы замен не поддерживаются");
+    if (
+      !original[entity]?.some((row) => row.id === id) ||
+      !Array.isArray(imported[entity]) ||
+      imported[entity].some((row) => row.id === id) ||
+      !imported[entity].some((row) => row.id === replacementId)
+    )
+      fail("Источник или цель замены изменились. Обнови черновик");
+    if (catalogImpact(original, entity, id).blockers.length)
+      fail("Исторический снимок блокирует замену справочника");
+    repointCatalogReferences(data, entity, id, replacementId);
+  }
+}
+
 export function ownGroups(data, user) {
   return new Set(
     data.lessons
@@ -493,6 +768,13 @@ export function mutate(input, user, op, payload = {}) {
   const admin = user.role === "admin",
     teacher = user.role === "teacher";
   if (!admin && !teacher) fail("Недостаточно прав", 403);
+  if (
+    typeof op !== "string" ||
+    !payload ||
+    typeof payload !== "object" ||
+    Array.isArray(payload)
+  )
+    fail("Некорректная операция");
   let summary = "Изменение";
   if (op === "appearance.save") {
     if (!admin) fail("Интерфейс сайта меняет только владелец", 403);
@@ -538,37 +820,93 @@ export function mutate(input, user, op, payload = {}) {
         old.groupId,
         old.teacherId,
       );
-  } else if (op === "catalog.save" || op === "catalog.delete") {
-    if (
-      !admin ||
-      !["groups", "teachers", "subjects", "rooms"].includes(payload.entity)
-    )
-      fail("Недостаточно прав", 403);
-    const items = data[payload.entity],
-      item = payload.item;
-    const id = op.endsWith("delete") ? payload.id : item?.id;
-    if (op.endsWith("delete")) {
-      if (!items.some((x) => x.id === id)) fail("Запись не найдена");
+  } else if (op.startsWith("catalog.")) {
+    if (!admin) fail("Справочники меняет только владелец", 403);
+    const entity = payload.entity;
+    if (!CATALOG_ENTITIES.includes(entity)) fail("Неизвестный справочник");
+    const items = data[entity];
+    if (op === "catalog.save") {
+      const patch = payload.item;
+      if (!patch || typeof patch !== "object" || Array.isArray(patch))
+        fail("Нужна запись справочника");
       if (
-        (payload.entity === "groups" &&
-          data.lessons.some((l) => l.groupId === id)) ||
-        (payload.entity === "teachers" &&
-          data.lessons.some((l) => l.teacherId === id)) ||
-        (payload.entity === "rooms" &&
-          data.lessons.some((l) => l.roomId === id)) ||
-        (payload.entity === "subjects" &&
-          (data.lessons.some((l) => l.subjectId === id) ||
-            data.teachers.some((t) => t.subjects.includes(id))))
+        Object.keys(patch).some(
+          (key) => key !== "id" && !CATALOG_FIELDS[entity].includes(key),
+        )
       )
-        fail("Сначала переназначь связанные занятия и предметы");
-      data[payload.entity] = items.filter((x) => x.id !== id);
-      summary = "Удалена запись справочника";
-    } else {
-      const entry = { ...item, id: id || uid() };
-      data[payload.entity] = items.filter((x) => x.id !== entry.id);
-      data[payload.entity].push(entry);
-      summary = "Обновлён справочник";
-    }
+        fail("Неизвестное поле справочника");
+      const index = items.findIndex((row) => row.id === patch.id);
+      const old = index < 0 ? null : items[index];
+      const entry = {
+        ...(old || catalogDefaults(entity)),
+        ...clone(patch),
+        id: old?.id || patch.id || uid(),
+      };
+      validateCatalogItem(entity, entry, {
+        authored: !old || Object.hasOwn(patch, "subgroups"),
+      });
+      if (index < 0) items.push(entry);
+      else items[index] = entry;
+      summary = old
+        ? "Изменена запись справочника"
+        : "Добавлена запись справочника";
+    } else if (
+      ["catalog.delete", "catalog.replace", "catalog.duplicate"].includes(op)
+    ) {
+      const old = items.find((row) => row.id === payload.id);
+      if (!old) fail("Запись не найдена");
+      if (op === "catalog.duplicate") {
+        const entry = {
+          ...catalogDefaults(entity),
+          ...Object.fromEntries(
+            CATALOG_FIELDS[entity]
+              .filter((key) => Object.hasOwn(old, key))
+              .map((key) => [key, clone(old[key])]),
+          ),
+          id: uid(),
+          name: payload.name,
+        };
+        if (entity === "groups") entry.code = payload.code ?? "";
+        if (entity === "teachers") entry.subjects = [];
+        validateCatalogItem(entity, entry, { authored: true });
+        items.push(entry);
+        summary = "Создана копия записи без расписания";
+      } else {
+        const impact = catalogImpact(data, entity, old.id);
+        if (op === "catalog.delete" && impact.total)
+          fail("Запись используется. Сначала выбери явную замену");
+        if (op === "catalog.replace") {
+          if (
+            old.id === payload.replacementId ||
+            !items.some((row) => row.id === payload.replacementId)
+          )
+            fail("Выбери другую существующую запись");
+          if (impact.blockers.length)
+            fail(
+              "Исторический снимок ссылается на запись. Сохрани её в справочнике",
+            );
+          repointCatalogReferences(data, entity, old.id, payload.replacementId);
+        }
+        data[entity] = items.filter((row) => row.id !== old.id);
+        summary =
+          op === "catalog.replace"
+            ? "Ссылки переназначены, старая запись удалена"
+            : "Удалена неиспользуемая запись справочника";
+      }
+    } else fail("Неизвестное действие справочника");
+  } else if (op === "group.archive") {
+    if (!admin) fail("Группы архивирует только владелец", 403);
+    const group = data.groups.find((row) => row.id === payload.id);
+    if (!group || typeof payload.archived !== "boolean")
+      fail("Проверь группу и состояние архива");
+    if (!isGroupActive({ ...group, archivedAt: null }))
+      fail("Удалённую группу нельзя восстановить архивированием");
+    group.archivedAt = payload.archived
+      ? group.archivedAt || new Date().toISOString()
+      : null;
+    summary = payload.archived
+      ? "Группа перемещена в архив"
+      : "Группа восстановлена из архива";
   } else if (op === "task.save" || op === "task.delete") {
     const old = data.tasks.find((t) => t.id === payload.id);
     if (old && !admin && old.teacherId !== user.teacherId)
@@ -772,6 +1110,12 @@ export function mutate(input, user, op, payload = {}) {
     const imported = payload.data;
     if (!imported || !Array.isArray(imported.lessons))
       fail("Нужен экспорт UniFlow");
+    applyCatalogReplacements(
+      data,
+      input,
+      imported,
+      payload.catalogReplacements,
+    );
     for (const k of [
       "groups",
       "subjects",
@@ -811,6 +1155,7 @@ export function mutate(input, user, op, payload = {}) {
         : "Импортировано расписание";
     notice(data, summary, "Администратор обновил расписание из файла");
   } else fail("Неизвестное действие");
+  validateChangedGroupAliases(input, data);
   validate(data);
   data.history.unshift({
     id: uid(),
