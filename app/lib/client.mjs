@@ -1,5 +1,6 @@
 import { validateAppearancePolicy } from "../appearance-policy.mjs";
 import * as storage from "./storage.mjs";
+import { readInitialSnapshot } from "./initial-snapshot.mjs";
 const API = "https://anfwdrcazwbkkayczkxg.supabase.co";
 const KEY = "sb_publishable_NkbuSbf1LxiCGvgz48fPjg_aVVwDU_G";
 export function readPreference(key, fallback) {
@@ -173,6 +174,8 @@ export async function saveSnapshot(settings, snapshot) {
   return storage.set(snapshotKey(settings), publicSnapshot(snapshot, settings));
 }
 export async function releaseSnapshot(settings) {
+  const initial = readInitialSnapshot();
+  if (initial) return publicSnapshot(initial, settings || initialSettings());
   const r = await fetch(
     new URL("./bootstrap.json", new URL("./", location.href)),
   );

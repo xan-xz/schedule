@@ -5,7 +5,13 @@ const port = Number(process.env.PW_PORT || (release ? 4175 : 4173));
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
-  testIgnore: release ? [] : ["**/compiled.spec.mjs", "**/release.spec.mjs"],
+  testIgnore: release
+    ? []
+    : [
+        "**/compiled.spec.mjs",
+        "**/release.spec.mjs",
+        "**/initial-snapshot.spec.mjs",
+      ],
   workers: 2,
   outputDir: release ? "test-results/production" : "test-results/source",
   forbidOnly: !!process.env.CI,

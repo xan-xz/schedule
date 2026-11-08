@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { migrateRetiredPersonal as migrate } from "../app/lib/personal-migration.mjs";
+import { createPersonalLoader } from "../app/lib/client.mjs";
 function lockQueue() {
   let tail = Promise.resolve();
   return {
@@ -380,4 +381,94 @@ test("missing or rejected origin locks retain old sources without partial migrat
     await migrate(config, empty.store, empty.browserStorage, null),
     { ok: true, migrated: false },
   );
+});
+
+test("an empty startup map and a completion list arriving during migration do not checkpoint unobserved progress", async () => {
+  const f = fixture(
+    [
+      [realPersonal, [task("canonical-human")]],
+      [oldPersonal, [task("old-human")]],
+      [oldStatuses, { "old-human": "progress" }],
+    ],
+    { retainSources: true },
+  );
+  await createPersonalLoader(f.store)({
+    tasksKey: realPersonal,
+    statusesKey: realStatuses,
+    legacy: () => ({}),
+  });
+  assert.deepEqual(f.rows.get(realStatuses), {});
+  let reached, release;
+  const atKeys = new Promise((resolve) => {
+    reached = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const keys = f.store.keys;
+  f.store.keys = async () => {
+    reached();
+    await gate;
+    return keys();
+  };
+  const first = migrateRetiredPersonal(config, f.store, f.browserStorage);
+  await atKeys;
+  f.local.set(
+    config.legacyCompletionPrefixes[0] + "profile",
+    JSON.stringify(["canonical-human", "unmatched"]),
+  );
+  release();
+  assert.equal((await first).ok, true);
+  f.store.keys = keys;
+  assert.deepEqual(f.rows.get(realStatuses), { "old-human": "progress" });
+  assert.equal(
+    (await migrateRetiredPersonal(config, f.store, f.browserStorage)).ok,
+    true,
+  );
+  assert.deepEqual(f.rows.get(realStatuses), {
+    "old-human": "progress",
+    "canonical-human": "done",
+  });
+  f.rows.set(realStatuses, {});
+  await migrateRetiredPersonal(config, f.store, f.browserStorage);
+  assert.deepEqual(f.rows.get(realStatuses), {});
+});
+
+test("explicit canonical new values and blocked ID collisions remain protected against later completion proof", async () => {
+  const explicit = fixture(
+    [
+      [realPersonal, [task("human")]],
+      [realStatuses, { human: "new" }],
+      [oldPersonal, [task("other")]],
+    ],
+    { retainSources: true },
+  );
+  await migrateRetiredPersonal(config, explicit.store, explicit.browserStorage);
+  explicit.rows.set(realStatuses, {});
+  explicit.local.set(
+    config.legacyCompletionPrefixes[0] + "profile",
+    JSON.stringify(["human"]),
+  );
+  await migrateRetiredPersonal(config, explicit.store, explicit.browserStorage);
+  assert.deepEqual(explicit.rows.get(realStatuses), {});
+  const collision = fixture(
+    [
+      [realPersonal, [task("same", "Canonical")]],
+      [oldPersonal, [task("same", "Different old text")]],
+    ],
+    { retainSources: true },
+  );
+  await migrateRetiredPersonal(
+    config,
+    collision.store,
+    collision.browserStorage,
+  );
+  collision.rows.set(oldPersonal, [task("same", "Canonical")]);
+  collision.rows.set(oldStatuses, { same: "done" });
+  await migrateRetiredPersonal(
+    config,
+    collision.store,
+    collision.browserStorage,
+  );
+  assert.deepEqual(collision.rows.get(realStatuses), {});
 });

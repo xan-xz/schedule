@@ -467,6 +467,93 @@ test.describe("personal data migration and concurrent actions", () => {
   // store. Worker lifecycle is exercised separately against a real worker.
   test.use({ serviceWorkers: "block" });
 
+  test("late completion proof reaches a previously empty canonical map after a gated native migration", async ({
+    page,
+    context,
+  }) => {
+    await mockState(page);
+    // Only these explicit real-IDB migration jobs own the prepared sources.
+    // Other cases exercise the automatic startup/online integration.
+    await context.route("**/compatibility.json", (route) =>
+      route.fulfill({ status: 503, body: "Manual migration orchestration" }),
+    );
+    await page.goto(studentPath);
+    const config = compatibility.storage;
+    await page.evaluate(async (config) => {
+      const storage = await import("./lib/storage.mjs");
+      const { createPersonalLoader } = await import("./lib/client.mjs");
+      const scope = "g-main:А",
+        task = (id) => ({
+          id,
+          title: id,
+          due: "2026-11-08",
+          groupId: "g-main",
+        });
+      await storage.set("personal:live:" + scope, [task("canonical-human")]);
+      await storage.del("statuses:live:" + scope);
+      await createPersonalLoader(storage)({
+        tasksKey: "personal:live:" + scope,
+        statusesKey: "statuses:live:" + scope,
+        legacy: () => ({}),
+      });
+      localStorage.setItem(
+        "uf.public.v1." + config.personalMigrations[0].personalFrom + scope,
+        JSON.stringify([task("old-human")]),
+      );
+      localStorage.setItem(
+        "uf.public.v1." + config.personalMigrations[0].statusesFrom + scope,
+        JSON.stringify({ "old-human": "progress" }),
+      );
+    }, config);
+    const first = page.evaluate(async (config) => {
+      const storage = await import("./lib/storage.mjs"),
+        { migrateRetiredPersonal } =
+          await import("./lib/personal-migration.mjs");
+      const controlled = {
+        ...storage,
+        keys: async () => {
+          window.lateMigrationInputsCaptured = true;
+          await new Promise((resolve) => {
+            window.releaseLateMigration = resolve;
+          });
+          return storage.keys();
+        },
+      };
+      return migrateRetiredPersonal(config, controlled, localStorage);
+    }, config);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.lateMigrationInputsCaptured === true),
+      )
+      .toBe(true);
+    await page.evaluate((config) => {
+      localStorage.setItem(
+        config.legacyCompletionPrefixes[0] + "profile",
+        JSON.stringify(["canonical-human", "unmatched"]),
+      );
+      window.releaseLateMigration();
+    }, config);
+    expect((await first).ok).toBe(true);
+    const result = await page.evaluate(async (config) => {
+      const storage = await import("./lib/storage.mjs"),
+        { migrateRetiredPersonal } =
+          await import("./lib/personal-migration.mjs");
+      const before = await storage.get("statuses:live:g-main:А");
+      const retry = await migrateRetiredPersonal(config);
+      return {
+        before,
+        retry,
+        after: await storage.get("statuses:live:g-main:А"),
+      };
+    }, config);
+    expect(result.before).toEqual({ "old-human": "progress" });
+    expect(result.retry.ok).toBe(true);
+    expect(result.after).toEqual({
+      "old-human": "progress",
+      "canonical-human": "done",
+    });
+  });
+
   test("a queued native origin lock reads the completed checkpoint before considering an older source", async ({
     page,
     context,

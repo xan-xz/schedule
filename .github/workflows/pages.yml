@@ -43,7 +43,7 @@ jobs:
       - name: Verify the exact compiled candidate and offline behavior
         env:
           PW_SERVER_ROOT: dist
-        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs tests/e2e/owner-access.spec.mjs tests/e2e/session.spec.mjs tests/e2e/student.spec.mjs tests/e2e/staff.spec.mjs tests/e2e/staff-accessibility.spec.mjs tests/e2e/templates.spec.mjs tests/e2e/personalization.spec.mjs tests/e2e/drafts.spec.mjs
+        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs tests/e2e/owner-access.spec.mjs tests/e2e/session.spec.mjs tests/e2e/student.spec.mjs tests/e2e/staff.spec.mjs tests/e2e/staff-accessibility.spec.mjs tests/e2e/templates.spec.mjs tests/e2e/drafts.spec.mjs tests/e2e/personalization.spec.mjs tests/e2e/initial-snapshot.spec.mjs
       - run: node scripts/archive-production.mjs
       - uses: actions/upload-artifact@v4
         with:

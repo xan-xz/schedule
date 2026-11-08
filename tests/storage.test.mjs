@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { get, set, del, clear } from "../app/lib/storage.mjs";
 
+// Explicitly exercise an absent browser store, including on Node versions that
+// expose an experimental file-backed Web Storage getter by default.
+delete globalThis.localStorage;
+
 test("storage remains usable when persistent browser APIs are absent", async () => {
   await clear();
   assert.equal(await get("missing", "fallback"), "fallback");
