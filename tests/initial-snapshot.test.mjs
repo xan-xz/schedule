@@ -69,8 +69,10 @@ test("public inline projection preserves all released groups, lessons and timeta
     );
   assert.doesNotMatch(
     JSON.stringify(projected),
-    /private-|"accounts"|"users"|"versions"|"attendance"|"requests"|"history"|"token"|"password"/,
+    /private-|"accounts"|"users"|"versions"|"token"|"password"/,
   );
+  for (const key of ["attendance", "requests", "history"])
+    assert.deepEqual(projected.data[key], []);
 });
 
 function audienceFixture() {
