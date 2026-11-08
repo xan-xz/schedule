@@ -43,6 +43,7 @@ async function fixture(t) {
     "backend/appearance-policy.mjs": "export const policyVersion=1;\n",
     "backend/public-data.mjs": "export const projectPublicData=value=>value;\n",
     "backend/group-state.mjs": "export const isGroupActive=()=>true;\n",
+    "backend/teaching-settings.mjs": "export const teachingVersion=1;\n",
     "app/appearance-policy.mjs":
       "export * from '../backend/appearance-policy.mjs';\n",
     "backend/admin.mjs": "throw Error('Do not publish server');\n",
@@ -131,6 +132,11 @@ test("one deterministic production artifact preserves local models and excludes 
     assert.equal(
       await readFile(join(dir, "dist", file), "utf8"),
       await readFile(join(dir, "backend/appearance-policy.mjs"), "utf8"),
+    );
+  for (const file of ["teaching-settings.mjs", "backend/teaching-settings.mjs"])
+    assert.equal(
+      await readFile(join(dir, "dist", file), "utf8"),
+      await readFile(join(dir, "backend/teaching-settings.mjs"), "utf8"),
     );
   assert.equal(
     JSON.parse(await readFile(join(dir, "dist/release.json"), "utf8"))

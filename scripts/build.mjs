@@ -75,6 +75,10 @@ await cp(
 );
 await cp("backend/group-state.mjs", resolve(target, "group-state.mjs"));
 await cp("backend/public-data.mjs", resolve(target, "public-data.mjs"));
+await cp(
+  "backend/teaching-settings.mjs",
+  resolve(target, "teaching-settings.mjs"),
+);
 await cp("backend/core.mjs", resolve(target, "model.mjs"));
 await writeFile(resolve(target, "core.mjs"), 'export * from "./model.mjs";\n');
 // Preserve the former pure-model address for installed clients until they reload.
@@ -86,6 +90,10 @@ await cp(
 );
 await cp("backend/group-state.mjs", resolve(target, "backend/group-state.mjs"));
 await cp("backend/public-data.mjs", resolve(target, "backend/public-data.mjs"));
+await cp(
+  "backend/teaching-settings.mjs",
+  resolve(target, "backend/teaching-settings.mjs"),
+);
 // Both release entrypoints are public artifacts, never an owner/database backup.
 const seedPath = resolve(target, "seed.json");
 try {
