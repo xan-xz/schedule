@@ -720,3 +720,100 @@ test("failed global logout still removes local access and reports unconfirmed re
     "Сервер не подтвердил выход на остальных устройствах",
   );
 });
+
+test("expired error query is scrubbed before delayed owner UI and safely explains how to request a fresh link", async ({
+  page,
+}) => {
+  const { calls, errors } = await fixture(page, {
+    setup: true,
+    realEntry: true,
+  });
+  let release,
+    requested = false;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/admin/access.mjs", async (route) => {
+    requested = true;
+    await gate;
+    await route.continue();
+  });
+  await page.goto(
+    path +
+      "?error=access_denied&error_code=otp_expired&error_description=NEVER_REFLECT_DESCRIPTION&access_token=NEVER_USE_PROOF",
+    { waitUntil: "commit" },
+  );
+  try {
+    await expect.poll(() => requested).toBe(true);
+    await expect(page).toHaveURL(new RegExp("/admin/$"));
+    expect(await page.evaluate(() => location.hash + location.search)).toBe("");
+    expect(calls).toEqual([]);
+  } finally {
+    release();
+  }
+  await expect(
+    page.getByRole("heading", { name: "Настройка владельца", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#owner-error")).toContainText(
+    "истекла или уже использована",
+  );
+  await expect(page.locator("#owner-error")).toContainText("новое письмо");
+  await expect(page.getByLabel("Одноразовый код приглашения")).toHaveValue("");
+  await expect(page.locator("body")).not.toContainText("NEVER_");
+  expect(calls.map((call) => call.action)).toEqual(["status"]);
+  expect(errors).toEqual([]);
+});
+
+test("root unknown error callback stays on the project origin and cannot authenticate or reflect provider text", async ({
+  page,
+}) => {
+  const { calls, errors } = await fixture(page, {
+    setup: true,
+    realEntry: true,
+  });
+  let publicCalls = 0;
+  await page.route("**/functions/v1/uniflow-api", (route) => {
+    publicCalls++;
+    return route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: '{"error":"unexpected public read"}',
+    });
+  });
+  await page.goto(
+    "/schedule/?error=access_denied&error_code=unknown_private_marker&error_description=NEVER_REFLECT_DESCRIPTION&redirect_to=https://attacker.invalid/#access_token=NEVER_USE_PROOF",
+  );
+  await expect(page).toHaveURL(new RegExp("/schedule/admin/$"));
+  await expect(page.locator("#owner-error")).toContainText(
+    "Не удалось подтвердить переход из письма",
+  );
+  await expect(page.getByLabel("Одноразовый код приглашения")).toHaveValue("");
+  await expect(page.getByLabel("Пароль владельца")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("NEVER_");
+  expect(publicCalls).toBe(0);
+  expect(calls.map((call) => call.action)).toEqual(["status"]);
+  expect(errors).toEqual([]);
+});
+
+test("root expired fragment routes to safe ordinary login without bypassing password/email/TOTP", async ({
+  page,
+}) => {
+  const { calls, errors } = await fixture(page, { realEntry: true });
+  await page.goto(
+    "/schedule/#error=access_denied&error_code=otp_expired&error_description=NEVER_REFLECT_DESCRIPTION&sb=",
+  );
+  await expect(page).toHaveURL(new RegExp("/schedule/admin/$"));
+  await expect(page.getByLabel("Пароль владельца")).toBeVisible();
+  await expect(page.locator("#owner-error")).toContainText(
+    "истекла или уже использована",
+  );
+  await expect(page.getByLabel("Код из приложения")).toHaveCount(0);
+  expect(calls.map((call) => call.action)).toEqual(["status"]);
+  await page.getByLabel("Пароль владельца").fill(password);
+  await page.getByRole("button", { name: "Продолжить", exact: true }).click();
+  await expect(page.getByLabel("Код или ссылка из письма")).toBeVisible();
+  await expect(page.getByLabel("Код из приложения")).toBeVisible();
+  expect(calls.map((call) => call.action)).toEqual(["status", "login.begin"]);
+  await expect(page.locator("body")).not.toContainText("NEVER_");
+  expect(errors).toEqual([]);
+});
