@@ -9,6 +9,10 @@ import {
 } from "../app/lib/client.mjs";
 import { get, clear } from "../app/lib/storage.mjs";
 
+// This isolated Node fixture starts without browser persistence. Node's native
+// experimental Web Storage getter requires a file and is not the browser API.
+delete globalThis.localStorage;
+
 const base = () => ({
   groups: [{ id: "g", subgroups: ["А", "Б"] }],
   lessons: [],
