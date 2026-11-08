@@ -875,10 +875,11 @@ async function personalBackup() {
   };
   try {
     await retirement;
-    const [ui, model] = await Promise.all([
-      import("./lib/personal-backup-ui.mjs"),
-      import("./lib/personal-backup.mjs"),
-    ]);
+    // Keep this optional tool lazy in both the source and inline release entry.
+    const paths = ["./lib/personal-backup-ui.mjs", "./lib/personal-backup.mjs"];
+    const [ui, model] = await Promise.all(
+      paths.map((path) => import(new URL(path, import.meta.url))),
+    );
     check();
     ui.openPersonalBackup({
       dialog: $("modal"),
