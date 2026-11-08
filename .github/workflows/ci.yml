@@ -28,7 +28,7 @@ jobs:
       - name: Verify the compiled entry, compatibility routes and minute transitions
         env:
           PW_SERVER_ROOT: dist
-        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs tests/e2e/owner-access.spec.mjs tests/e2e/session.spec.mjs tests/e2e/student.spec.mjs tests/e2e/staff.spec.mjs tests/e2e/staff-accessibility.spec.mjs tests/e2e/templates.spec.mjs tests/e2e/drafts.spec.mjs tests/e2e/personalization.spec.mjs tests/e2e/initial-snapshot.spec.mjs tests/e2e/catalogs.spec.mjs tests/e2e/teaching.spec.mjs tests/e2e/teaching-actions.spec.mjs tests/e2e/lesson-batch.spec.mjs tests/e2e/personal-backup.spec.mjs tests/e2e/csv-import.spec.mjs tests/e2e/management-calendar.spec.mjs tests/e2e/rollback-preview.spec.mjs
+        run: npx playwright test tests/e2e/compiled.spec.mjs tests/e2e/release.spec.mjs tests/e2e/clock.spec.mjs tests/e2e/groups.spec.mjs tests/e2e/owner-access.spec.mjs tests/e2e/session.spec.mjs tests/e2e/student.spec.mjs tests/e2e/staff.spec.mjs tests/e2e/staff-accessibility.spec.mjs tests/e2e/templates.spec.mjs tests/e2e/drafts.spec.mjs tests/e2e/personalization.spec.mjs tests/e2e/initial-snapshot.spec.mjs tests/e2e/catalogs.spec.mjs tests/e2e/teaching.spec.mjs tests/e2e/teaching-actions.spec.mjs tests/e2e/lesson-batch.spec.mjs tests/e2e/personal-backup.spec.mjs tests/e2e/csv-import.spec.mjs tests/e2e/management-calendar.spec.mjs tests/e2e/rollback-preview.spec.mjs tests/e2e/template-backup.spec.mjs
       - name: Lighthouse mobile budgets
         run: |
           node scripts/serve.mjs --root dist --port 4174 &
