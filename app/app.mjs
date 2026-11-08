@@ -32,6 +32,10 @@ import {
 } from "./lib/time.mjs";
 import * as storage from "./lib/storage.mjs";
 import { retireCompatibility } from "./lib/compatibility.mjs";
+import {
+  guardInitialChoice,
+  readInitialChoice,
+} from "./lib/initial-snapshot.mjs";
 
 const $ = (id) => document.getElementById(id);
 const query = new URLSearchParams(location.search);
@@ -49,9 +53,13 @@ function openOwnerRoute() {
     // the one-time bootstrap fragment to the uncached owner page for scrubbing.
     if (proof.has("access_token")) target.hash = location.hash;
     location.replace(target.href);
+    return true;
   }
+  return false;
 }
-openOwnerRoute();
+// A callback document must never start the public snapshot/storage pipeline.
+if (openOwnerRoute()) await new Promise(() => {});
+guardInitialChoice();
 window.addEventListener("hashchange", openOwnerRoute);
 const S = {
   settings: initialSettings(),
@@ -265,6 +273,7 @@ function validateChoice() {
   );
   const invalid = !current || !validSubgroup(current, S.settings.subgroup);
   S.needsChoice = !S.choiceConfirmed || invalid;
+  if (readInitialChoice()?.touched) S.needsChoice = true;
   S.choiceReason =
     S.choiceConfirmed && invalid
       ? current
@@ -326,7 +335,12 @@ function setSnapshot(snapshot) {
     S.choiceFocus = true;
     $("modal").close();
     render();
-  } else if (!isTyping()) render();
+  } else if (!isTyping() || $("main").querySelector("[data-initial-choice]"))
+    render();
+  else if (S.needsChoice)
+    $("main")
+      .querySelector("[data-group-choice]")
+      ?.dispatchEvent(new Event("catalogue-updated"));
 }
 function updateStatus() {
   const snapshot = S.snapshot;
@@ -1010,17 +1024,27 @@ function clearInvite() {
   history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 function renderGroupChoice() {
-  const groups = availableGroups();
+  const initialChoice = readInitialChoice();
+  let groups = availableGroups();
   const current = groups.find((group) => group.id === S.settings.groupId);
   const invited = !S.inviteHandled && invitedGroup();
   let draftGroup =
+    (groups.some((group) => group.id === initialChoice?.groupId)
+      ? initialChoice.groupId
+      : "") ||
     invited?.id ||
     (S.choiceReason === "subgroupUnavailable" ? current?.id : "") ||
     "";
   let draftSubgroup =
-    invited && validSubgroup(invited, inviteSubgroup)
-      ? inviteSubgroup
-      : S.settings.subgroup;
+    initialChoice?.touched &&
+    validSubgroup(
+      groups.find((group) => group.id === draftGroup),
+      initialChoice.subgroup,
+    )
+      ? initialChoice.subgroup
+      : invited && validSubgroup(invited, inviteSubgroup)
+        ? inviteSubgroup
+        : S.settings.subgroup;
   const groupSelect = select(
     [["", t("chooseGroup")], ...groups.map((group) => [group.id, group.name])],
     draftGroup,
@@ -1061,38 +1085,46 @@ function renderGroupChoice() {
     type: "search",
     autocomplete: "off",
     placeholder: t("searchGroup"),
-    oninput: (event) => {
-      const term = event.target.value.trim().toLocaleLowerCase();
-      const matches = groups.filter((group) =>
-        (group.name + " " + (group.specialty || ""))
-          .toLocaleLowerCase()
-          .includes(term),
-      );
-      groupSelect.replaceChildren(
-        el(
-          "option",
-          { value: "" },
-          t(matches.length ? "chooseGroup" : "noGroups"),
-        ),
-        ...matches.map((group) =>
-          el("option", { value: group.id }, group.name),
-        ),
-      );
-      groupSelect.value = matches.some((group) => group.id === draftGroup)
-        ? draftGroup
-        : "";
-      updateSubgroups();
-    },
+    oninput: () => updateGroups(false),
   });
+  if (initialChoice?.search) search.value = initialChoice.search;
+  function updateGroups(preserveSelection) {
+    groups = availableGroups();
+    const selected = groups.find((group) => group.id === draftGroup);
+    const term = search.value.trim().toLocaleLowerCase();
+    const matches = groups.filter((group) =>
+      (group.name + " " + (group.specialty || ""))
+        .toLocaleLowerCase()
+        .includes(term),
+    );
+    // A live rename must not erase a deliberate choice or its search/focus.
+    if (preserveSelection && selected && !matches.includes(selected))
+      matches.unshift(selected);
+    if (preserveSelection && draftGroup && !selected)
+      error.textContent = t("groupUnavailable");
+    groupSelect.replaceChildren(
+      el(
+        "option",
+        { value: "" },
+        t(matches.length ? "chooseGroup" : "noGroups"),
+      ),
+      ...matches.map((group) => el("option", { value: group.id }, group.name)),
+    );
+    groupSelect.value = matches.some((group) => group.id === draftGroup)
+      ? draftGroup
+      : "";
+    updateSubgroups();
+  }
   const form = el(
     "form",
-    { class: "settings-section" },
+    { class: "settings-section", "data-group-choice": "" },
     field(t("searchGroup"), search),
     field(t("group"), groupSelect),
     subgroupField,
     send,
     error,
   );
+  form.addEventListener("catalogue-updated", () => updateGroups(true));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const selected = availableGroups().find(
@@ -1112,6 +1144,32 @@ function renderGroupChoice() {
     $("main").focus({ preventScroll: true });
   });
   updateSubgroups();
+  if (initialChoice?.search) updateGroups(true);
+  if (
+    initialChoice?.submitRequested &&
+    draftGroup &&
+    validSubgroup(
+      groups.find((group) => group.id === draftGroup),
+      draftSubgroup,
+    )
+  )
+    queueMicrotask(() => form.isConnected && form.requestSubmit());
+  if (initialChoice?.focus)
+    queueMicrotask(() => {
+      const target =
+        initialChoice.focus === "search"
+          ? search
+          : initialChoice.focus === "group"
+            ? groupSelect
+            : subgroupSelect;
+      if (!target.isConnected) return;
+      target.focus({ preventScroll: true });
+      if (target === search)
+        search.setSelectionRange(
+          initialChoice.selectionStart,
+          initialChoice.selectionEnd,
+        );
+    });
   const keep =
     S.choiceConfirmed && current && validSubgroup(current, S.settings.subgroup)
       ? button(
@@ -1426,12 +1484,19 @@ function render() {
   if (S.needsChoice) {
     const keepFocus =
       S.choiceFocus || document.activeElement === $("main").querySelector("h1");
-    const heading = el(
-      "h1",
-      { tabindex: "-1" },
-      t(S.choiceReason === "inviteHelp" ? "inviteTitle" : "onboardingTitle"),
+    const title = t(
+      S.choiceReason === "inviteHelp" ? "inviteTitle" : "onboardingTitle",
     );
-    $("main").replaceChildren(heading, ...renderGroupChoice().filter(Boolean));
+    const existing = $("main").firstElementChild;
+    const heading =
+      existing?.tagName === "H1" && existing.textContent === title
+        ? existing
+        : el("h1", { tabindex: "-1" }, title);
+    const content = renderGroupChoice().filter(Boolean);
+    if (heading === existing) {
+      while (heading.nextSibling) heading.nextSibling.remove();
+      $("main").append(...content);
+    } else $("main").replaceChildren(heading, ...content);
     if (keepFocus) {
       S.choiceFocus = false;
       heading.focus();
@@ -1611,6 +1676,10 @@ function beginRetirement() {
 }
 beginRetirement();
 await restoreSettings();
+if (readInitialChoice()?.touched) {
+  S.needsChoice = true;
+  S.choiceFocus = false;
+}
 applyTheme();
 header();
 await loadPersonal();

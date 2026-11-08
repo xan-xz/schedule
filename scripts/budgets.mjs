@@ -4,6 +4,15 @@ const entry = process.argv[2] || "dist/index.html",
   seen = new Set();
 let js = 0,
   css = 0;
+const entryHtml = await readFile(entry, "utf8");
+const initialDocumentGzip = gzipSync(entryHtml).length;
+const initialData = [
+  ...entryHtml.matchAll(
+    /<script\b(?=[^>]*\btype=["']application\/json["'])[^>]*>([\s\S]*?)<\/script>/gi,
+  ),
+]
+  .map((match) => match[1])
+  .join("");
 async function walk(path) {
   if (seen.has(path)) return;
   seen.add(path);
@@ -22,7 +31,9 @@ async function walk(path) {
       if (
         !/\bsrc\s*=/.test(match[1]) &&
         (!/\btype\s*=/.test(match[1]) ||
-          /\btype\s*=\s*["']module["']/.test(match[1]))
+          /\btype\s*=\s*["'](?:module|text\/javascript|application\/javascript)["']/.test(
+            match[1],
+          ))
       )
         js += gzipSync(match[2]).length;
     for (const match of code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi))
@@ -45,13 +56,21 @@ console.log(
       entry,
       initialJavaScriptGzip: js,
       cssGzip: css,
-      budgets: { initialJavaScriptGzip: 60 * 1024, cssGzip: 15 * 1024 },
+      initialDataBytes: Buffer.byteLength(initialData),
+      initialDataGzip: initialData ? gzipSync(initialData).length : 0,
+      initialDocumentGzip,
+      budgets: {
+        initialJavaScriptGzip: 60 * 1024,
+        cssGzip: 15 * 1024,
+        initialDocumentGzip: 60 * 1024,
+      },
       measuredFiles: [...seen],
     },
     null,
     2,
   ),
 );
-if (js > 60 * 1024 || css > 15 * 1024) process.exitCode = 1;
+if (js > 60 * 1024 || css > 15 * 1024 || initialDocumentGzip > 60 * 1024)
+  process.exitCode = 1;
 if ((await readdir("dist")).includes("node_modules"))
   throw Error("node_modules in public artifact");

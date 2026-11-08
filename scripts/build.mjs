@@ -11,6 +11,11 @@ import { createHash } from "node:crypto";
 import { resolve, relative, sep, posix } from "node:path";
 import { spawnSync } from "node:child_process";
 import { optimizeEntry } from "./optimize-entry.mjs";
+import {
+  inlineReleaseSnapshot,
+  MAX_INITIAL_DOCUMENT_GZIP,
+} from "./inline-release-snapshot.mjs";
+import { gzipSync } from "node:zlib";
 import { validateCompatibility } from "../app/lib/compatibility-policy.mjs";
 
 const args = process.argv.slice(2);
@@ -105,6 +110,13 @@ await writeFile(
   redirectHtml(basePath + "redirect.mjs"),
 );
 await optimizeEntry(target);
+const initialSnapshot = await inlineReleaseSnapshot(target);
+if (initialSnapshot) console.log(JSON.stringify({ initialSnapshot }));
+if (
+  gzipSync(await readFile(resolve(target, "index.html"))).length >
+  MAX_INITIAL_DOCUMENT_GZIP
+)
+  throw Error("Initial document exceeds gzip budget");
 await writeFile(
   resolve(target, "release.json"),
   JSON.stringify(

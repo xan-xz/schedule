@@ -189,6 +189,8 @@ async function ready(page, version) {
           "./lib/compatibility.mjs",
           "./lib/compatibility-policy.mjs",
           "./lib/personal-migration.mjs",
+          "./lib/initial-snapshot.mjs",
+          "./owner-route.js",
         ].map(async (path) => {
           const response = await fetch(path);
           if (!response.ok) throw Error("Cannot warm offline module: " + path);

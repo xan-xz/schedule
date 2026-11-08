@@ -466,6 +466,13 @@ progress::-webkit-progress-value {
   padding-top: 24px;
   border-top: 1px solid var(--line);
 }
+[data-initial-choice] .initial-choice-subgroup {
+  display: none;
+}
+[data-initial-choice]:has(select[name="g"] option:checked:not([value=""]))
+  .initial-choice-subgroup {
+  display: grid;
+}
 .settings-section h2 {
   margin-bottom: 16px;
 }

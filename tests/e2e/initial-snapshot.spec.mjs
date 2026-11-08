@@ -1,0 +1,341 @@
+import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+import {
+  serializeInertSnapshot,
+  renderInitialChoice,
+} from "../../scripts/inline-release-snapshot.mjs";
+import { mockState } from "./fixtures.mjs";
+
+test.skip(
+  process.env.PW_SERVER_ROOT !== "dist",
+  "Inert data is a compiled artifact optimization",
+);
+const release = JSON.parse(
+  await readFile(new URL("../../app/bootstrap.json", import.meta.url), "utf8"),
+);
+
+test("compiled useful chooser is interactive before either snapshot fetch or live API completes", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false });
+  let unblock;
+  const gate = new Promise((resolve) => {
+    unblock = resolve;
+  });
+  await page.route("**/bootstrap.json", async (route) => {
+    await gate;
+    await route.fulfill({ json: release });
+  });
+  await page.route("**/functions/v1/uniflow-api", async (route) => {
+    await gate;
+    await route.abort();
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  try {
+    await page.goto("/schedule/", { waitUntil: "domcontentloaded" });
+    await expect(
+      page.getByRole("heading", { name: "Выбери свою группу", exact: true }),
+    ).toBeVisible();
+    const group = page.getByRole("combobox", { name: "Группа", exact: true });
+    await expect(group.locator("option")).toHaveCount(
+      release.data.groups.length + 1,
+    );
+    await group.selectOption("g-main");
+    await expect(
+      page.getByRole("combobox", { name: "Подгруппа", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      }),
+    ).toBeEnabled();
+    expect(errors).toEqual([]);
+  } finally {
+    unblock();
+  }
+});
+
+test("inert HTML-looking labels remain exact text with strict CSP, no HTML nodes or execution", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false });
+  const candidate = structuredClone(release);
+  const text =
+    '</script><img src=x onerror="globalThis.initialXss=1">&lt;&#x3c;';
+  candidate.data.groups.find((group) => group.id === "g-main").name = text;
+  await page.route("**/schedule/", async (route) => {
+    const response = await route.fetch();
+    const html = (await response.text())
+      .replace(
+        /(<script type="application\/json" id="uniflow-public-snapshot">)[\s\S]*?(<\/script>)/,
+        (_all, start, end) => start + serializeInertSnapshot(candidate) + end,
+      )
+      .replace(
+        /(<main\b[^>]*\bid="main"[^>]*>)[\s\S]*?(<\/main>)/,
+        (_all, start, end) => start + renderInitialChoice(candidate) + end,
+      );
+    await route.fulfill({ response, body: html });
+  });
+  await page.route("**/functions/v1/uniflow-api", (route) => route.abort());
+  await page.addInitScript(() => {
+    globalThis.initialCsp = [];
+    document.addEventListener("securitypolicyviolation", (event) =>
+      globalThis.initialCsp.push(event.violatedDirective),
+    );
+  });
+  await page.goto("/schedule/");
+  await expect(
+    page
+      .getByRole("combobox", { name: "Группа", exact: true })
+      .locator('option[value="g-main"]'),
+  ).toHaveText(text);
+  expect(await page.locator("main img, main script").count()).toBe(0);
+  expect(await page.evaluate(() => globalThis.initialXss)).toBeUndefined();
+  expect(await page.evaluate(() => globalThis.initialCsp)).toEqual([]);
+});
+
+test("live catalogue updates preserve focused search, renamed selection and subgroup; removal requires a new explicit choice", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false });
+  let unblock;
+  const gate = new Promise((resolve) => {
+    unblock = resolve;
+  });
+  let groups = release.data.groups.map((group) => ({
+    ...group,
+    name: group.id === "g-main" ? "Renamed live group" : group.name,
+  }));
+  await page.route("**/functions/v1/uniflow-api", async (route) => {
+    await gate;
+    await route.fulfill({
+      json: {
+        data: { ...release.data, groups },
+        revision: 8,
+        user: { role: "guest", subgroup: "А" },
+        users: [],
+        versions: [],
+        capabilities: { allSubgroupTasks: true },
+      },
+    });
+  });
+  try {
+    await page.goto("/schedule/", { waitUntil: "domcontentloaded" });
+    const search = page.getByRole("searchbox", {
+      name: "Найти группу",
+      exact: true,
+    });
+    const group = page.getByRole("combobox", { name: "Группа", exact: true });
+    await expect(group).toBeVisible();
+    await search.fill("06-057-25-11");
+    await group.selectOption("g-main");
+    await page
+      .getByRole("combobox", { name: "Подгруппа", exact: true })
+      .selectOption("Б");
+    await search.focus();
+    unblock();
+    await expect(group.locator('option[value="g-main"]')).toHaveText(
+      "Renamed live group",
+    );
+    await expect(group).toHaveValue("g-main");
+    await expect(search).toHaveValue("06-057-25-11");
+    await expect(search).toBeFocused();
+    await expect(
+      page.getByRole("combobox", { name: "Подгруппа", exact: true }),
+    ).toHaveValue("Б");
+    groups = groups.filter((item) => item.id !== "g-main");
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect(group).toHaveValue("");
+    await expect(
+      page.getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await expect(page.locator("#navigation")).toBeHidden();
+    expect(
+      await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+    ).toBeNull();
+  } finally {
+    unblock();
+  }
+});
+
+test("typed native choice and queued confirmation survive settings hydration without losing the heading", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false });
+  await page.addInitScript(() => {
+    const open = indexedDB.open.bind(indexedDB);
+    indexedDB.open = (...args) => {
+      const request = open(...args);
+      request.addEventListener(
+        "success",
+        (event) => {
+          event.stopImmediatePropagation();
+          globalThis.releaseInitialSettings = () =>
+            request.dispatchEvent(new Event("success"));
+        },
+        { capture: true, once: true },
+      );
+      return request;
+    };
+  });
+  await page.goto("/schedule/", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(
+    () => typeof globalThis.releaseInitialSettings === "function",
+  );
+  await page.evaluate(() => {
+    globalThis.originalInitialHeading = document.querySelector("main > h1");
+  });
+  const search = page.getByRole("searchbox", {
+    name: "Найти группу",
+    exact: true,
+  });
+  const group = page.getByRole("combobox", { name: "Группа", exact: true });
+  await search.fill("06-057-25-11");
+  await expect(group).toHaveValue("");
+  await group.selectOption("g-main");
+  await expect(
+    page.getByRole("combobox", { name: "Подгруппа", exact: true }),
+  ).toHaveValue("А");
+  await page
+    .getByRole("combobox", { name: "Подгруппа", exact: true })
+    .selectOption("Б");
+  await search.focus();
+  await page.evaluate(() => globalThis.releaseInitialSettings());
+  await expect(page.locator("form[data-group-choice]")).toBeVisible();
+  await expect(search).toHaveValue("06-057-25-11");
+  await expect(search).toBeFocused();
+  await expect(group).toHaveValue("g-main");
+  await expect(
+    page.getByRole("combobox", { name: "Подгруппа", exact: true }),
+  ).toHaveValue("Б");
+  expect(
+    await page.evaluate(
+      () =>
+        document.querySelector("main > h1") ===
+        globalThis.originalInitialHeading,
+    ),
+  ).toBe(true);
+  expect(
+    await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+  ).toBeNull();
+});
+
+test("an early native submit queues explicit subgroup confirmation until IDB/settings are ready", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false });
+  await page.addInitScript(() => {
+    const open = indexedDB.open.bind(indexedDB);
+    indexedDB.open = (...args) => {
+      const request = open(...args);
+      request.addEventListener(
+        "success",
+        (event) => {
+          event.stopImmediatePropagation();
+          globalThis.releaseInitialSettings = () =>
+            request.dispatchEvent(new Event("success"));
+        },
+        { capture: true, once: true },
+      );
+      return request;
+    };
+  });
+  await page.goto("/schedule/", { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(
+    () => typeof globalThis.releaseInitialSettings === "function",
+  );
+  await page
+    .getByRole("combobox", { name: "Группа", exact: true })
+    .selectOption("g-main");
+  await page
+    .getByRole("combobox", { name: "Подгруппа", exact: true })
+    .selectOption("Б");
+  await page
+    .getByRole("button", {
+      name: "Сохранить и открыть расписание",
+      exact: true,
+    })
+    .click();
+  await expect(page.locator("form[data-initial-choice]")).toHaveAttribute(
+    "data-submit-requested",
+    "true",
+  );
+  expect(
+    await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+  ).toBeNull();
+  await page.evaluate(() => globalThis.releaseInitialSettings());
+  await expect(page.locator("#identity")).toHaveText("06-057-25-11 · Б");
+  await expect(page.locator("#navigation")).toBeVisible();
+});
+
+test("without JavaScript the real released form creates an invitation URL, never an implicit preference write", async ({
+  browser,
+  baseURL,
+  page,
+}) => {
+  const context = await browser.newContext({
+    javaScriptEnabled: false,
+    viewport: page.viewportSize(),
+  });
+  try {
+    const native = await context.newPage();
+    await native.goto(baseURL + "/schedule/");
+    await native
+      .getByRole("combobox", { name: "Группа", exact: true })
+      .selectOption("g-main");
+    await native
+      .getByRole("combobox", { name: "Подгруппа", exact: true })
+      .selectOption("Б");
+    await native
+      .getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      })
+      .click();
+    const invitation = new URL(native.url());
+    expect(invitation.pathname).toBe("/schedule/");
+    expect(invitation.searchParams.get("g")).toBe("g-main");
+    expect(invitation.searchParams.get("subgroup")).toBe("Б");
+  } finally {
+    await context.close();
+  }
+});
+
+test("native callbacks route to the private entry before public snapshot or IDB startup", async ({
+  page,
+}) => {
+  const calls = await mockState(page, { savedChoice: false });
+  await page.route("**/bootstrap.json", (route) => route.abort());
+  await page.route("**/compatibility.json", (route) => route.abort());
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "indexedDB", {
+      configurable: true,
+      get() {
+        throw Error("Public IDB must not run on a native callback");
+      },
+    });
+    globalThis.callbackCsp = [];
+    document.addEventListener("securitypolicyviolation", (event) =>
+      globalThis.callbackCsp.push(event.violatedDirective),
+    );
+  });
+  const proof = ["a".repeat(40), "b".repeat(40), "c".repeat(40)].join(".");
+  for (const hash of ["#/admin", "#access_token=" + proof + "&type=invite"]) {
+    await page.goto("/schedule/" + hash, { waitUntil: "commit" });
+    await expect(page).toHaveURL(/\/schedule\/admin\/$/);
+    await expect(
+      page.getByRole("heading", { name: "Вход владельца", exact: true }),
+    ).toBeVisible();
+    expect(await page.locator("body").innerText()).not.toContain(proof);
+    expect(
+      await page.evaluate(() => JSON.stringify(Object.entries(localStorage))),
+    ).not.toContain(proof);
+    expect(await page.evaluate(() => globalThis.callbackCsp)).toEqual([]);
+  }
+  expect(calls.filter((call) => call.action === "state")).toEqual([]);
+});
