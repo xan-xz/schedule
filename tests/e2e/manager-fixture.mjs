@@ -194,6 +194,12 @@ export async function mockManager(
   return {
     calls,
     login,
+    advance(op, payload) {
+      const result = mutate(data, user, op, payload);
+      data = result.data;
+      revision++;
+      return response(true);
+    },
     state: () => ({
       data: structuredClone(data),
       revision,
