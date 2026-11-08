@@ -17,6 +17,7 @@ import {
 } from "./inline-release-snapshot.mjs";
 import { gzipSync } from "node:zlib";
 import { validateCompatibility } from "../app/lib/compatibility-policy.mjs";
+import { projectPublicData } from "../backend/public-data.mjs";
 
 const args = process.argv.slice(2);
 const value = (flag, fallback) =>
@@ -73,6 +74,7 @@ await cp(
   resolve(target, "appearance-policy.mjs"),
 );
 await cp("backend/group-state.mjs", resolve(target, "group-state.mjs"));
+await cp("backend/public-data.mjs", resolve(target, "public-data.mjs"));
 await cp("backend/core.mjs", resolve(target, "model.mjs"));
 await writeFile(resolve(target, "core.mjs"), 'export * from "./model.mjs";\n');
 // Preserve the former pure-model address for installed clients until they reload.
@@ -83,6 +85,15 @@ await cp(
   resolve(target, "backend/appearance-policy.mjs"),
 );
 await cp("backend/group-state.mjs", resolve(target, "backend/group-state.mjs"));
+await cp("backend/public-data.mjs", resolve(target, "backend/public-data.mjs"));
+// Both release entrypoints are public artifacts, never an owner/database backup.
+const seedPath = resolve(target, "seed.json");
+try {
+  const seed = JSON.parse(await readFile(seedPath, "utf8"));
+  await writeFile(seedPath, JSON.stringify(projectPublicData(seed)) + "\n");
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
 const publicCompatibility = Object.fromEntries(
   Object.entries(compatibility).filter(([key]) => key !== "retirementGuard"),
 );

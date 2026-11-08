@@ -84,6 +84,11 @@ const server = createServer(async (req, res) => {
       ["/group-state.mjs", "/backend/group-state.mjs"].includes(pathname)
     )
       file = resolve(root, "backend/group-state.mjs");
+    else if (
+      source &&
+      ["/public-data.mjs", "/backend/public-data.mjs"].includes(pathname)
+    )
+      file = resolve(root, "backend/public-data.mjs");
     else if (source && pathname === "/model.mjs")
       file = resolve(root, "backend/core.mjs");
     else if (file !== content && !file.startsWith(content + sep)) {
