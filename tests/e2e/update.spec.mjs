@@ -103,6 +103,8 @@ async function releaseOrigin() {
         "backend/group-state.mjs": "backend/group-state.mjs",
         "public-data.mjs": "backend/public-data.mjs",
         "backend/public-data.mjs": "backend/public-data.mjs",
+        "teaching-settings.mjs": "backend/teaching-settings.mjs",
+        "backend/teaching-settings.mjs": "backend/teaching-settings.mjs",
         "backend/core.mjs": "backend/core.mjs",
         "compatibility.json": "compatibility.json",
       };
@@ -207,6 +209,8 @@ async function ready(page, version) {
           "./backend/group-state.mjs",
           "./public-data.mjs",
           "./backend/public-data.mjs",
+          "./teaching-settings.mjs",
+          "./backend/teaching-settings.mjs",
           "./lib/personalization.mjs",
           "./lib/appearance-tokens.mjs",
           "./lib/layout-loader.mjs",

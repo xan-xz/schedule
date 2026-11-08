@@ -231,7 +231,12 @@ test("the real release builder keeps teaching out of seed, bootstrap and inert H
   };
   for (const [path, text] of Object.entries(files))
     await writeFile(join(directory, path), text);
-  for (const name of ["appearance-policy", "public-data", "group-state"])
+  for (const name of [
+    "appearance-policy",
+    "public-data",
+    "group-state",
+    "teaching-settings",
+  ])
     await writeFile(
       join(directory, "backend", name + ".mjs"),
       await readFile(new URL("../backend/" + name + ".mjs", import.meta.url)),
