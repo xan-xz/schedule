@@ -206,11 +206,16 @@ export function parseScheduleCsv(text, data, options = {}) {
     return { ...previous, ...values, id };
   });
   const result = clone(data);
+  const replacements = new Map(imported.map((row) => [row.id, row])),
+    originalIds = new Set(data.lessons.map((row) => row.id));
+  // Existing IDs retain their positions, regardless of CSV row order. This also
+  // makes the reviewed result identical to recovery from the local delta journal.
   result.lessons = [
-    ...result.lessons.filter(
-      (lesson) => mode === "append" || !inScope(lesson, scope),
-    ),
-    ...imported,
+    ...result.lessons.flatMap((lesson) => {
+      if (mode === "append" || !inScope(lesson, scope)) return [lesson];
+      return replacements.has(lesson.id) ? [replacements.get(lesson.id)] : [];
+    }),
+    ...imported.filter((lesson) => !originalIds.has(lesson.id)),
   ];
   // No orphan removal: existing overrides/tasks/attendance/requests must still validate.
   validate(result);

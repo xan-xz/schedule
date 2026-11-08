@@ -108,9 +108,9 @@ test("CSV preview is read-only, literal and accessible; explicit apply saves a d
       () => document.documentElement.scrollWidth > window.innerWidth,
     ),
   ).toBe(false);
-  await mkdir(resolve("../../outputs/import-next"), { recursive: true });
+  await mkdir(resolve("../../outputs/csv-quality"), { recursive: true });
   await page.screenshot({
-    path: resolve(`../../outputs/import-next/preview-${info.project.name}.png`),
+    path: resolve(`../../outputs/csv-quality/preview-${info.project.name}.png`),
   });
   await apply(page, dialog);
   expect((await records(page))[0].changes).toHaveLength(1);
@@ -174,6 +174,11 @@ test("replacement explicitly reviews edits and removals, preserves provenance an
   await page.getByRole("button", { name: "Опубликовать", exact: true }).click();
   await expect(page.locator("#toast")).toContainText("Черновик опубликован");
   const after = manager.state().data;
+  expect(after.lessons.map((row) => row.id)).toEqual([
+    "now-a",
+    "next",
+    "later-b",
+  ]);
   expect(after.lessons.find((row) => row.id === "now-a")).toMatchObject({
     start: "08:10",
     source: { sheet: "Kept", timeCell: "B2" },
@@ -334,6 +339,75 @@ async function gatedFile(page) {
     };
   });
 }
+
+async function heldEditor(page) {
+  let release, observed;
+  const gate = new Promise((r) => {
+    release = r;
+  });
+  const requested = new Promise((r) => {
+    observed = r;
+  });
+  await page.route("**/csv-import-editor.mjs", async (route) => {
+    observed();
+    await gate;
+    return route.continue();
+  });
+  return {
+    requested,
+    async finish() {
+      const response = page.waitForResponse((r) =>
+        r.url().endsWith("/csv-import-editor.mjs"),
+      );
+      release();
+      await response;
+      await page.waitForFunction(
+        () =>
+          !!Array.from(
+            document.querySelectorAll('link[rel="stylesheet"]'),
+          ).find((link) => link.href.endsWith("lesson-batch-editor.css"))
+            ?.sheet,
+      );
+      await page.evaluate(() => new Promise(window.requestAnimationFrame));
+    },
+  };
+}
+
+test("late CSV editor loading cannot replace a profile opened after the import click", async ({
+  page,
+}) => {
+  const manager = await mockManager(page);
+  await manager.login();
+  const gate = await heldEditor(page);
+  await page.locator('[data-page="schedule"]').click();
+  await page.getByRole("button", { name: "Импорт CSV", exact: true }).click();
+  await gate.requested;
+  await page.locator('[data-action="profile"]').first().click();
+  const dialog = page.getByRole("dialog"),
+    title = await dialog.locator("h2").textContent();
+  await gate.finish();
+  await expect(dialog.locator("h2")).toHaveText(title);
+  expect(await records(page)).toEqual([]);
+  expect(manager.writes()).toEqual([]);
+});
+
+test("scope changes during lazy loading cancel opening CSV instead of silently retargeting the import", async ({
+  page,
+}) => {
+  const manager = await mockManager(page);
+  await manager.login();
+  const gate = await heldEditor(page);
+  await page.locator('[data-page="schedule"]').click();
+  await page.getByRole("button", { name: "Импорт CSV", exact: true }).click();
+  await gate.requested;
+  await page
+    .locator('.scope-filter [data-filter="subgroup"]')
+    .selectOption("Б");
+  await gate.finish();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(await records(page)).toEqual([]);
+  expect(manager.writes()).toEqual([]);
+});
 test("scope changes while a file is being read cannot import into either subgroup", async ({
   page,
 }) => {
@@ -457,4 +531,62 @@ test("large previews render forty changes at a time and remain accessible in dar
   ).toBe(false);
   expect(manager.writes()).toEqual([]);
   expect(await records(page)).toEqual([]);
+});
+
+test("closing during durable save keeps the applied visible draft without closing the next dialog", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const original = window.IDBDatabase.prototype.transaction;
+    window.IDBDatabase.prototype.transaction = function (names, mode, ...rest) {
+      const tx = original.call(this, names, mode, ...rest);
+      if (
+        this.name === "uniflow-owner-drafts-v1" &&
+        mode === "readwrite" &&
+        window.qaCloseCsvOnSave
+      ) {
+        window.qaCloseCsvOnSave = false;
+        const prop = Object.getOwnPropertyDescriptor(
+          window.IDBTransaction.prototype,
+          "oncomplete",
+        );
+        Object.defineProperty(tx, "oncomplete", {
+          set(handler) {
+            prop.set.call(tx, function (event) {
+              document.querySelector("#modal .dialog-head button")?.click();
+              document.querySelector('[data-action="profile"]')?.click();
+              handler.call(this, event);
+            });
+          },
+        });
+      }
+      return tx;
+    };
+  });
+  const manager = await mockManager(page);
+  await manager.login();
+  const dialog = await open(page);
+  await file(dialog, csv(1, "09:00", "Сохранено после закрытия"));
+  await preview(dialog);
+  await page.evaluate(() => {
+    window.qaCloseCsvOnSave = true;
+  });
+  await dialog
+    .getByRole("button", { name: "Добавить в черновик", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("heading", {
+      name: "Импорт CSV",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await saved(page);
+  const active = (await records(page)).find((r) => r.status === "active");
+  expect(
+    active.changes.some((c) => c.after?.type === "Сохранено после закрытия"),
+  ).toBe(true);
+  expect((await records(page)).some((r) => r.status === "active")).toBe(true);
+  expect(manager.writes()).toEqual([]);
 });

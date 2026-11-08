@@ -10,6 +10,8 @@ import {
   draftChanges,
   recoverChanges,
   catalogReplacementIntents,
+  assertDraftRecoverable,
+  draftFingerprint,
 } from "./drafts.mjs";
 import {
   getOwnerSession,
@@ -3620,7 +3622,11 @@ async function csvExport() {
 }
 async function csvImport() {
   if (!isAdmin() || ownerEnding) return;
-  const epoch = S.epoch;
+  if (S.busy) return toast("Дождись сохранения");
+  const epoch = S.epoch,
+    modalChild = $("modal").firstChild,
+    modalWasOpen = $("modal").open,
+    scope = { groupId: S.groupId, subgroup: S.subgroup };
   try {
     const [
       { createCsvImportEditor },
@@ -3633,9 +3639,18 @@ async function csvImport() {
     ]);
     await loadLessonBatchStyles();
     await draftSaveQueue;
-    if (ownerEnding || !isAdmin() || S.epoch !== epoch || S.busy) return;
+    if (
+      ownerEnding ||
+      !isAdmin() ||
+      S.epoch !== epoch ||
+      S.busy ||
+      $("modal").firstChild !== modalChild ||
+      $("modal").open !== modalWasOpen ||
+      S.groupId !== scope.groupId ||
+      S.subgroup !== scope.subgroup
+    )
+      return;
     const data = clone(draft?.data || S.data);
-    const scope = { groupId: S.groupId, subgroup: S.subgroup };
     const selectedGroup = data.groups.find(
       (group) => group.id === scope.groupId,
     );
@@ -3645,11 +3660,12 @@ async function csvImport() {
       draft,
       generation: draft?.localGeneration,
       revision: S.revision,
-      fingerprint: JSON.stringify([data, draft?.catalogReplacements || []]),
+      fingerprint: draftFingerprint([data, draft?.catalogReplacements || []]),
     };
     let body,
       checked = null,
-      appliedDraft = null;
+      appliedDraft = null,
+      appliedFingerprint = null;
     const authorized = () => {
       if (ownerEnding || !isAdmin() || S.epoch !== epoch)
         throw Error("Войдите владельцем заново.");
@@ -3665,7 +3681,7 @@ async function csvImport() {
         draft?.localGeneration !== opened.generation ||
         S.revision !== opened.revision ||
         draft?.baseConflict ||
-        JSON.stringify([
+        draftFingerprint([
           draft?.data || S.data,
           draft?.catalogReplacements || [],
         ]) !== opened.fingerprint
@@ -3690,14 +3706,14 @@ async function csvImport() {
         unchanged();
         const result = previewScheduleCsv(text, data, { ...scope, mode });
         try {
-          draftChanges(
+          assertDraftRecoverable(
             draft?.before || S.data,
             result.data,
             draft?.catalogReplacements || [],
           );
         } catch {
           throw Error(
-            "Сведения источника или объём изменений нельзя безопасно сохранить в локальный черновик. Файл не применён.",
+            "Порядок записей, сведения источника или объём изменений нельзя точно восстановить из локальной копии. Файл не применён.",
           );
         }
         checked = result;
@@ -3707,7 +3723,12 @@ async function csvImport() {
         await draftSaveQueue;
         authorized();
         if (retry) {
-          if (!appliedDraft || draft !== appliedDraft)
+          if (
+            !appliedDraft ||
+            draft !== appliedDraft ||
+            draftFingerprint([draft.data, draft.catalogReplacements || []]) !==
+              appliedFingerprint
+          )
             throw Error(
               "Черновик изменился. Сохраните его из панели черновика.",
             );
@@ -3720,6 +3741,10 @@ async function csvImport() {
           draft.data = clone(checked.data);
           S.data = visible(draft.data, S.user);
           appliedDraft = draft;
+          appliedFingerprint = draftFingerprint([
+            draft.data,
+            draft.catalogReplacements || [],
+          ]);
         }
         const saved = await persistCurrentDraft(retry);
         if (!ownerEnding) render();
