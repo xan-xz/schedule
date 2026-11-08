@@ -28,3 +28,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+## XML для XLSX
+
+`xmldom-0.9.12.mjs` — браузерная ESM-сборка [@xmldom/xmldom 0.9.12](https://github.com/xmldom/xmldom), без дополнительных runtime зависимостей. Сборка ограничена XML: HTML-режим явно отклоняется, таблица HTML-сущностей исключена. Пять стандартных XML-сущностей сохранены из закреплённого исходника; скрипт проверяет точные места преобразования. Загружается только инструментом XLSX владельца. DTD/ENTITY и любая ошибка/предупреждение парсера отклоняются до чтения ячеек; CSP не ослабляется.
+
+Источник закреплён в package-lock.json и проверяется npm audit. Сборка: `node scripts/xlsx-vendor.mjs --write`; проверка точного совпадения входит в `npm run lint`. Esbuild 0.25.12, browser/ESM/es2022/minify/legalComments=eof. SHA-256: `3c8e46bb256f54eb8e87aca9d796063480421c5483f781a074535bbf71da1f88`. Полная лицензия — [xmldom-LICENSE.txt](xmldom-LICENSE.txt).
