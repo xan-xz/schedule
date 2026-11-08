@@ -65,10 +65,21 @@ export async function optimizeEntry(directory) {
     await transform(
       `
     let returning = false;
-    try { returning = Boolean(localStorage.getItem("uf.student.choice.v1")); } catch {}
+    try { returning = ["uf.student.choice.v1", "uf.group", "uf.settings.v1"].some(key => localStorage.getItem(key)); } catch {}
     const query = new URLSearchParams(location.search);
     if (!document.hidden && !returning && !query.has("g") && !query.has("group") && document.querySelector("[data-initial-choice]"))
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      await new Promise(resolve => {
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          document.removeEventListener("visibilitychange", onVisibility);
+          resolve();
+        };
+        const onVisibility = () => { if (document.hidden) finish(); };
+        document.addEventListener("visibilitychange", onVisibility);
+        requestAnimationFrame(() => requestAnimationFrame(finish));
+      });
     void import("./app.mjs").catch(() => {
       const form = document.querySelector("[data-initial-choice]");
       if (!form) return;
