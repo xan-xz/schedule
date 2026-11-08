@@ -1049,7 +1049,7 @@ function lessonForm(id) {
         old?.type ??
         teachingSettings(S.data).lessonTypes.find((item) => item.enabled)
           ?.name ??
-        "Занятие",
+        "",
       maxLength: 40,
       required: true,
     },
@@ -1112,7 +1112,7 @@ function lessonForm(id) {
     "Сохранить для участников",
     "Будут проверены занятость группы, преподавателя, аудитории и назначенные предметы.",
   );
-  enhanceLessonForm();
+  enhanceLessonForm(old?.type ?? "");
   if (old) {
     const action = document.createElement("div");
     action.className = "section-space";
@@ -3381,7 +3381,7 @@ function csvImport() {
   );
   dialog.showModal();
 }
-function enhanceLessonForm() {
+function enhanceLessonForm(currentType = "") {
   const form = $("dialog-form");
   if (!form) return;
   const settings = teachingSettings(draft?.data || S.data),
@@ -3436,8 +3436,8 @@ function enhanceLessonForm() {
   const typeOptions = dom(
     "datalist",
     { id: "suggest-lesson-types" },
-    lessonTypeSuggestions(draft?.data || S.data, $("field-type").value).map(
-      (value) => dom("option", { value }),
+    lessonTypeSuggestions(draft?.data || S.data, currentType).map((value) =>
+      dom("option", { value }),
     ),
   );
   $("field-type").setAttribute("list", typeOptions.id);
@@ -3517,7 +3517,14 @@ async function openTeachingEditor() {
     const { createTeachingEditor, loadTeachingEditorStyles } =
       await import("./teaching-editor.mjs");
     await loadTeachingEditorStyles();
+    await draftSaveQueue;
     if (ownerEnding || !isAdmin() || S.epoch !== epoch || S.busy) return;
+    const baseline = {
+      draft,
+      generation: draft?.localGeneration,
+      revision: S.revision,
+      fingerprint: JSON.stringify(teachingSettings(draft?.data || S.data)),
+    };
     showTemplateDialog(
       "Звонки и типы",
       createTeachingEditor({
@@ -3530,11 +3537,22 @@ async function openTeachingEditor() {
           if (ownerEnding || !isAdmin() || S.epoch !== epoch)
             throw Error("Войдите владельцем заново.");
           if (S.busy) throw Error("Дождись сохранения");
+          if (
+            draft !== baseline.draft ||
+            draft?.localGeneration !== baseline.generation ||
+            S.revision !== baseline.revision ||
+            JSON.stringify(teachingSettings(draft?.data || S.data)) !==
+              baseline.fingerprint
+          )
+            throw Error(
+              "Версия или настройки изменились. Откройте редактор заново; этот ввод сохранён в открытой форме, черновик не изменён.",
+            );
           await act("teaching.save", { settings });
           closeModal();
         },
       }),
     );
+    $("modal").dataset.revision = String(baseline.revision);
   } catch (problem) {
     if (!ownerEnding) toast(problem.message);
   }

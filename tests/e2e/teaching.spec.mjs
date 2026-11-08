@@ -179,6 +179,7 @@ test("teaching presets save only to a durable owner draft, recover after reauthe
   await publish(page, manager);
   expect(manager.state().data.lessons).toEqual(original.lessons);
   expect(manager.state().data.exceptions).toEqual(original.exceptions);
+  expect(manager.state().data.announcements).toEqual(original.announcements);
   expect(manager.state().data.siteSettings.privateSibling).toEqual(
     original.siteSettings.privateSibling,
   );
@@ -473,4 +474,153 @@ test("fallback offers legacy presets without persisting them and non-owner staff
   ).toHaveCount(0);
   expect(staff.writes()).toEqual([]);
   await other.close();
+});
+
+test("disabled observed types stay out of new suggestions while an existing exact value and manual entry remain valid", async ({
+  page,
+}) => {
+  const manager = await mockManager(page, {
+    prepareData(data) {
+      prepared(data);
+      data.siteSettings.teaching.lessonTypes = [
+        "Лабораторная",
+        "Практика",
+        "Лекция",
+        "Занятие",
+      ].map((name, index) => ({
+        id: "disabled-" + index,
+        name,
+        enabled: false,
+      }));
+    },
+  });
+  await manager.login();
+  await page.locator('[data-page="schedule"]').click();
+  await page
+    .getByRole("button", { name: "Добавить занятие", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Тип занятия", { exact: true })).toHaveValue(
+    "",
+  );
+  const values = await dialog
+    .locator("#suggest-lesson-types option")
+    .evaluateAll((rows) => rows.map((row) => row.value));
+  expect(values).toEqual([]);
+  await dialog.getByRole("button", { name: "Отмена", exact: true }).click();
+  await page
+    .locator("tbody tr")
+    .filter({ hasText: "11:00" })
+    .getByRole("button", { name: "Изменить", exact: true })
+    .click();
+  await expect(dialog.getByLabel("Тип занятия", { exact: true })).toHaveValue(
+    "Лекция",
+  );
+  expect(
+    await dialog
+      .locator("#suggest-lesson-types option")
+      .evaluateAll((rows) => rows.map((row) => row.value)),
+  ).toContain("Лекция");
+  await dialog
+    .getByLabel("Тип занятия", { exact: true })
+    .fill("Введённый вручную тип");
+  await expect(
+    dialog.getByLabel("Тип занятия", { exact: true }),
+  ).toHaveAttribute("maxlength", "40");
+  expect(manager.writes()).toEqual([]);
+});
+
+test("teaching editor remains accessible in the dark theme without oversized checkboxes or horizontal overflow", async ({
+  page,
+}, info) => {
+  const manager = await mockManager(page, { prepareData: prepared });
+  await manager.login();
+  await page.locator('[data-action="profile"]').first().click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Светлая / тёмная тема", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Закрыть", exact: true })
+    .click();
+  const dialog = await open(page);
+  await axe(page);
+  const size = await dialog
+    .getByLabel("Предлагать тип 1", { exact: true })
+    .boundingBox();
+  expect(size.width).toBe(20);
+  expect(size.height).toBe(20);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  const shots = resolve("../../outputs/teaching-next/screenshots");
+  await mkdir(shots, { recursive: true });
+  await page.screenshot({
+    path: join(shots, `editor-dark-${info.project.name}.png`),
+  });
+});
+
+test("a held server refresh cannot turn a stale teaching editor into a fresh-base overwrite", async ({
+  page,
+}) => {
+  const manager = await mockManager(page, { prepareData: prepared });
+  await manager.login();
+  let dialog = await open(page);
+  await dialog
+    .getByLabel("Название типа 1", { exact: true })
+    .fill("Моя несохранённая правка");
+  const remote = settings();
+  remote.lessonTypes[0].name = "Серверная правка";
+  manager.advance("teaching.save", { settings: remote });
+  let release, observed;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const requested = new Promise((resolve) => {
+    observed = resolve;
+  });
+  await page.route("**/functions/v1/uniflow-api", async (route) => {
+    if (route.request().postDataJSON().action === "state") {
+      observed();
+      await gate;
+    }
+    return route.fallback();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await requested;
+  release();
+  await expect(dialog.locator("#form-error")).toContainText(
+    "Данные изменились",
+  );
+  await dialog
+    .getByRole("button", {
+      name: "Сохранить настройки в черновик",
+      exact: true,
+    })
+    .click();
+  await expect(dialog.locator("#form-error")).toContainText(
+    "Откройте редактор заново",
+  );
+  await expect(
+    dialog.getByLabel("Название типа 1", { exact: true }),
+  ).toHaveValue("Моя несохранённая правка");
+  expect(await records(page)).toEqual([]);
+  expect(manager.writes()).toEqual([]);
+  expect(manager.state().data.siteSettings.teaching).toEqual(remote);
+  await dialog.getByRole("button", { name: "Отмена", exact: true }).click();
+  dialog = await open(page);
+  await expect(
+    dialog.getByLabel("Название типа 1", { exact: true }),
+  ).toHaveValue("Серверная правка");
+  await dialog
+    .getByLabel("Название типа 1", { exact: true })
+    .fill("Правка на актуальной версии");
+  await apply(page);
+  await publish(page, manager);
+  expect(manager.state().data.siteSettings.teaching.lessonTypes[0].name).toBe(
+    "Правка на актуальной версии",
+  );
 });

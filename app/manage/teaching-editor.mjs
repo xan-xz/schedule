@@ -4,7 +4,7 @@ import {
   validateTeachingSettings,
 } from "../teaching-settings.mjs";
 
-/** Only authored presets enter this editor; sessions and API response envelopes do not. */
+/** Read only the authored preset subtree; never retain a session or response envelope. */
 export function createTeachingEditor({
   data,
   onSave,
@@ -15,7 +15,7 @@ export function createTeachingEditor({
   let selected =
     settings.defaultBellScheduleId || settings.bellSchedules[0]?.id || "";
   const root = el("form", { class: "teaching-editor" }),
-    error = el("p", { role: "alert", class: "form-error" }),
+    error = el("p", { id: "form-error", role: "alert", class: "form-error" }),
     typeList = el("div", { class: "teaching-list" }),
     schemeBody = el("div", { class: "teaching-scheme" });
   const dirty = () => {
