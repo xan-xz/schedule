@@ -62,6 +62,34 @@ test("an understated Content-Length cannot bypass the actual Unicode body byte l
   await oversized(await handle(tooLarge));
 });
 
+test("UTF-8 BOM bytes count toward the wire limit while a valid boundary body still decodes as JSON", async (t) => {
+  noNetwork(t);
+  const bom = Buffer.from([0xef, 0xbb, 0xbf]);
+  const boundary = Buffer.concat([
+    bom,
+    Buffer.from(sizedJson(limit - bom.length), "utf8"),
+  ]);
+  assert.equal(boundary.byteLength, limit);
+  const accepted = request(boundary);
+  assert.equal(accepted.headers.get("content-length"), null);
+  assert.equal((await handle(accepted)).status, 410);
+  const excess = Buffer.concat([bom, Buffer.from(sizedJson(limit), "utf8")]);
+  assert.equal(excess.byteLength, limit + 3);
+  const tooLarge = request(excess);
+  assert.equal(tooLarge.headers.get("content-length"), null);
+  await oversized(await handle(tooLarge));
+});
+
+test("a small invalid UTF-8 sequence inside a JSON string retains replacement decoding", async (t) => {
+  noNetwork(t);
+  const bytes = Buffer.concat([
+    Buffer.from('{"action":"login","padding":"', "utf8"),
+    Buffer.from([0xff]),
+    Buffer.from('"}', "utf8"),
+  ]);
+  assert.equal((await handle(request(bytes))).status, 410);
+});
+
 test("a declared oversized body rejects before reading it and keeps the413 response contract", async (t) => {
   noNetwork(t);
   const readBody = t.mock.fn(async () => {
@@ -72,6 +100,7 @@ test("a declared oversized body rejects before reading it and keeps the413 respo
       method: "POST",
       headers: new globalThis.Headers({ "Content-Length": String(limit + 1) }),
       text: readBody,
+      arrayBuffer: readBody,
     }),
   );
   assert.equal(readBody.mock.callCount(), 0);
