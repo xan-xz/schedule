@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ReadableStream } from "node:stream/web";
 import { handle } from "../backend/uniflow-api.mjs";
 
 const limit = 2_000_000;
