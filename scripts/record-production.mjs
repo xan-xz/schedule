@@ -2,7 +2,7 @@ import { spawnSync, execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateMetadata } from "./production-base.mjs";
+import { validateMetadata, verifyArchiveIdentity } from "./production-base.mjs";
 import {
   lookupReleaseIncludingDrafts,
   releaseAssets,
@@ -39,6 +39,7 @@ async function main() {
     throw Error(
       "Verified artifact belongs to another production source or workflow run.",
     );
+  verifyArchiveIdentity(archiveBytes, metadata);
   const tag = "uniflow-production-" + run;
   const endpoint = "repos/" + repository + "/releases/tags/" + tag;
   const request = (path, options = []) =>
