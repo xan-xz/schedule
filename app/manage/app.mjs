@@ -44,6 +44,7 @@ import {
   time,
   occurrences,
   catalogImpact,
+  previewLessonBatch,
   isGroupActive,
   mutate,
   validate,
@@ -382,7 +383,7 @@ async function act(op, payload, expected = S.revision) {
   if (S.busy) throw Error("Дождись сохранения");
   const catalogOperation =
     op.startsWith("catalog.") ||
-    ["group.archive", "teaching.save"].includes(op);
+    ["group.archive", "teaching.save", "lesson.batch"].includes(op);
   if (catalogOperation && !draft) startDraft();
   let replacements = draft?.catalogReplacements || [];
   if (
@@ -413,6 +414,7 @@ async function act(op, payload, expected = S.revision) {
       "catalog.duplicate",
       "group.archive",
       "teaching.save",
+      "lesson.batch",
       "import",
     ].includes(op)
   ) {
@@ -639,7 +641,7 @@ function weekGrid() {
 function schedule() {
   return (
     filters() +
-    `<div class="toolbar">${button("Календарь .ics", "exportIcs", {}, "", "download")}${button("Печать", "print", {}, "", "print")}${button("Поделиться", "share", {}, "", "share")}${isAdmin() ? button("Экспорт JSON", "exportJson", {}, "", "download") + button("Импорт JSON", "import", {}, "") : ""}</div>` +
+    `<div class="toolbar">${button("Календарь .ics", "exportIcs", {}, "", "download")}${button("Печать", "print", {}, "", "print")}${button("Поделиться", "share", {}, "", "share")}${isAdmin() ? button("Массовая правка", "lessonBatch", {}, "") + button("Экспорт JSON", "exportJson", {}, "", "download") + button("Импорт JSON", "import", {}, "") : ""}</div>` +
     (S.weekView
       ? weekGrid()
       : `<section class="panel"><div class="panel-head"><h2>${icon("calendar")}Расписание на неделю</h2>${dayButtons()}</div><div class="day-caption"><span>${h(niceDate(S.date, true))}</span><span>${scopedLessons().length} занятий</span></div>${lessonTable(scopedLessons(), S.date)}</section>`)
@@ -2003,6 +2005,10 @@ async function handleAction(action, args, el) {
   if (action === "taskFilter") {
     S.taskFilter = el.dataset.value;
     render();
+    return;
+  }
+  if (action === "lessonBatch") {
+    await openLessonBatchEditor();
     return;
   }
   if (action === "teachingSettings") {
@@ -3556,4 +3562,99 @@ async function openTeachingEditor() {
   } catch (problem) {
     if (!ownerEnding) toast(problem.message);
   }
+}
+
+async function openLessonBatchEditor() {
+  if (!isAdmin() || ownerEnding) return;
+  if (S.busy) throw Error("Дождись сохранения");
+  const epoch = S.epoch;
+  const {
+    createLessonBatchEditor,
+    loadLessonBatchStyles,
+    selectedLessonFingerprint,
+  } = await import("./lesson-batch-editor.mjs");
+  await loadLessonBatchStyles();
+  await draftSaveQueue;
+  if (ownerEnding || !isAdmin() || S.epoch !== epoch || S.busy) return;
+  let checked = null;
+  const opened = {
+    draft,
+    generation: draft?.localGeneration,
+    revision: S.revision,
+    data: draft?.data || S.data,
+  };
+  const authorized = () => {
+    if (ownerEnding || !isAdmin() || S.epoch !== epoch)
+      throw Error("Войдите владельцем заново.");
+    if (S.busy) throw Error("Дождись сохранения");
+  };
+  showTemplateDialog(
+    "Массовая правка",
+    createLessonBatchEditor({
+      data: draft?.data || S.data,
+      groupId: S.groupId,
+      onClose: closeModal,
+      onDirty: () => {
+        draftFormDirty = true;
+      },
+      onInvalidate: () => {
+        checked = null;
+      },
+      onPreview: async (payload) => {
+        authorized();
+        await new Promise((resolve) =>
+          window.requestAnimationFrame(() => setTimeout(resolve, 0)),
+        );
+        await draftSaveQueue;
+        authorized();
+        const current = draft?.data || S.data;
+        if (
+          draft !== opened.draft ||
+          draft?.localGeneration !== opened.generation ||
+          S.revision !== opened.revision ||
+          selectedLessonFingerprint(current, payload.ids) !==
+            selectedLessonFingerprint(opened.data, payload.ids)
+        )
+          throw Error(
+            "Данные изменились после открытия формы. Откройте массовую правку заново; выбор не применён.",
+          );
+        const result = previewLessonBatch(current, payload);
+        checked = result.valid
+          ? {
+              payload: clone(payload),
+              draft,
+              generation: draft?.localGeneration,
+              revision: S.revision,
+              fingerprint: selectedLessonFingerprint(current, payload.ids),
+            }
+          : null;
+        return result;
+      },
+      onApply: async (payload) => {
+        authorized();
+        await draftSaveQueue;
+        authorized();
+        if (
+          !checked ||
+          JSON.stringify(payload) !== JSON.stringify(checked.payload)
+        )
+          throw Error("Выбор или правка изменились. Повторите предпросмотр.");
+        if (
+          draft !== checked.draft ||
+          draft?.localGeneration !== checked.generation ||
+          S.revision !== checked.revision ||
+          selectedLessonFingerprint(
+            draft?.data || S.data,
+            checked.payload.ids,
+          ) !== checked.fingerprint
+        )
+          throw Error(
+            "Исходные занятия или версия изменились. Откройте массовую правку заново и повторите предпросмотр; черновик не изменён.",
+          );
+        await act("lesson.batch", clone(checked.payload), checked.revision);
+        closeModal();
+      },
+    }),
+  );
+  $("modal").dataset.revision = String(S.revision);
 }
