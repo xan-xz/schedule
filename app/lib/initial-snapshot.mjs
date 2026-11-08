@@ -176,6 +176,15 @@ export function projectInitialSnapshot(input) {
     )
       throw Error("Invalid public catalogue label");
   }
+  // A released snapshot is the union of schedules guests can choose. Keep the
+  // exact student/guest audience rule from the server, before bytes enter HTML
+  // or the external public fallback; client-side filtering would be too late.
+  const groupIds = new Set(data.groups.map((group) => group.id));
+  data.announcements = data.announcements.filter(
+    (item) =>
+      item.roles?.includes("student") &&
+      ((!item.groupId && !item.teacherId) || groupIds.has(item.groupId)),
+  );
   for (const key of ["validFrom", "validUntil"])
     if (
       typeof input.data[key] === "string" &&

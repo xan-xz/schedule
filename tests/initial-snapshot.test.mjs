@@ -18,6 +18,7 @@ import {
 } from "../scripts/inline-release-snapshot.mjs";
 import { releaseSnapshot } from "../app/lib/client.mjs";
 import { lessonsForDate } from "../app/lib/time.mjs";
+import { visible } from "../backend/core.mjs";
 const source = JSON.parse(
   await readFile(new URL("../app/bootstrap.json", import.meta.url), "utf8"),
 );
@@ -69,6 +70,94 @@ test("public inline projection preserves all released groups, lessons and timeta
   assert.doesNotMatch(
     JSON.stringify(projected),
     /private-|"accounts"|"users"|"versions"|"attendance"|"requests"|"history"|"token"|"password"/,
+  );
+});
+
+function audienceFixture() {
+  const input = structuredClone(source),
+    group = input.data.groups[0].id,
+    teacher = input.data.teachers[0]?.id || "teacher";
+  const row = (id, roles, extra = {}) => ({
+    id,
+    title: id,
+    body: id + "_BODY",
+    roles,
+    createdAt: input.updatedAt,
+    ...extra,
+  });
+  input.data.announcements = [
+    row("PUBLIC_GLOBAL", ["student"]),
+    row("PUBLIC_GROUP", ["student", "admin"], { groupId: group }),
+    row("PUBLIC_GROUP_AND_TEACHER", ["student"], {
+      groupId: group,
+      teacherId: teacher,
+    }),
+    row("PRIVATE_ADMIN", ["admin"], { groupId: group }),
+    row("PRIVATE_TEACHER", ["teacher"]),
+    row("PRIVATE_TEACHER_ONLY", ["student"], { teacherId: teacher }),
+    row("PRIVATE_UNKNOWN_GROUP", ["student"], { groupId: "missing-group" }),
+    row("PRIVATE_EMPTY_AUDIENCE", []),
+  ];
+  return input;
+}
+
+test("public audience projection exactly matches the union of actual guest visibility across valid groups", () => {
+  const input = audienceFixture();
+  const expected = new Set(
+    input.data.groups.flatMap((group) =>
+      visible(input.data, {
+        id: "guest",
+        role: "guest",
+        groupId: group.id,
+        subgroup: "all",
+      }).announcements.map((item) => item.id),
+    ),
+  );
+  const result = projectInitialSnapshot(input);
+  assert.deepEqual(
+    new Set(result.data.announcements.map((item) => item.id)),
+    expected,
+  );
+  assert.deepEqual(
+    result.data.announcements.map((item) => item.id),
+    ["PUBLIC_GLOBAL", "PUBLIC_GROUP", "PUBLIC_GROUP_AND_TEACHER"],
+  );
+  assert.doesNotMatch(serializeInertSnapshot(input), /PRIVATE_/);
+  input.data.announcements.push({
+    id: "PRIVATE_MISSING_AUDIENCE",
+    title: "Missing",
+    body: "PRIVATE_MISSING_BODY",
+  });
+  assert.doesNotMatch(serializeInertSnapshot(input), /PRIVATE_/);
+  const defensive = readInitialSnapshot(
+    documentFor(
+      JSON.stringify({ format: INITIAL_SNAPSHOT_FORMAT, snapshot: input }),
+    ),
+  );
+  assert.deepEqual(
+    defensive.data.announcements.map((item) => item.id),
+    result.data.announcements.map((item) => item.id),
+  );
+});
+
+test("private announcement bodies never enter either embedded HTML or the rewritten external public snapshot", async (t) => {
+  const input = audienceFixture(),
+    dir = await fixture(t, input);
+  const result = await inlineReleaseSnapshot(dir);
+  assert.equal(result.embedded, true);
+  const html = await readFile(join(dir, "index.html"), "utf8"),
+    external = await readFile(join(dir, "bootstrap.json"), "utf8");
+  assert.doesNotMatch(html, /PRIVATE_/);
+  assert.doesNotMatch(external, /PRIVATE_/);
+  for (const value of [html, external])
+    assert.match(value, /PUBLIC_GROUP_AND_TEACHER_BODY/);
+  assert.equal(
+    JSON.parse(external).data.groups.length,
+    input.data.groups.length,
+  );
+  assert.equal(
+    JSON.parse(external).data.lessons.length,
+    input.data.lessons.length,
   );
 });
 test("HTML closing tags, entity-looking text and Unicode separators round-trip as inert exact text", async (t) => {
@@ -173,6 +262,9 @@ test("100 groups and 4000 lessons are never truncated; large data uses a complet
   }
   // Deliberately incompressible public copy forces the bounded fallback path.
   candidate.data.announcements = [
+    ...audienceFixture().data.announcements.filter((item) =>
+      item.id.startsWith("PRIVATE_"),
+    ),
     {
       id: "large",
       title: "Public",
@@ -191,6 +283,11 @@ test("100 groups and 4000 lessons are never truncated; large data uses a complet
   assert.equal(fallbackResult.initialChoiceRendered, true);
   const fallbackHtml = await readFile(join(large, "index.html"), "utf8");
   assert.equal(dataBlock(fallbackHtml), undefined);
+  assert.doesNotMatch(fallbackHtml, /PRIVATE_/);
+  assert.doesNotMatch(
+    await readFile(join(large, "bootstrap.json"), "utf8"),
+    /PRIVATE_/,
+  );
   assert.match(fallbackHtml, /data-initial-choice/);
   assert.match(fallbackHtml, /data-owner-route/);
   assert.match(fallbackHtml, /rel="preload"/);
