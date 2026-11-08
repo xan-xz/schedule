@@ -67,6 +67,8 @@ const FILES = [
   "./backend/public-data.mjs",
   "./teaching-settings.mjs",
   "./backend/teaching-settings.mjs",
+  "./lesson-batch.mjs",
+  "./backend/lesson-batch.mjs",
   "./lib/personalization.mjs",
   "./lib/appearance-tokens.mjs",
   "./lib/layout-loader.mjs",
@@ -301,7 +303,9 @@ self.addEventListener("fetch", (event) => {
     url.href === sharedPolicy ||
     url.href === sharedGroupState ||
     url.href === sharedPublicData ||
-    url.href === sharedTeaching;
+    url.href === sharedTeaching ||
+    url.href ===
+      new URL("./backend/lesson-batch.mjs", self.registration.scope).href;
   if (
     request.method !== "GET" ||
     url.origin !== self.location.origin ||

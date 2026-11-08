@@ -236,6 +236,7 @@ test("the real release builder keeps teaching out of seed, bootstrap and inert H
     "public-data",
     "group-state",
     "teaching-settings",
+    "lesson-batch",
   ])
     await writeFile(
       join(directory, "backend", name + ".mjs"),

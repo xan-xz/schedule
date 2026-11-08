@@ -1,3 +1,4 @@
+import { buildLessonBatch } from "./lesson-batch.mjs";
 import { validateTeachingSettings } from "./teaching-settings.mjs";
 import { validateAppearancePolicy } from "./appearance-policy.mjs";
 import { isGroupActive } from "./group-state.mjs";
@@ -244,7 +245,10 @@ export function validate(data) {
     "attendance",
     "history",
   ])
-    if (!Array.isArray(data[k]) || data[k].length > 3000)
+    if (
+      !Array.isArray(data[k]) ||
+      data[k].length > (k === "lessons" ? 5000 : 3000)
+    )
       fail("Неверный формат раздела " + k);
   for (const k of [
     "groups",
@@ -739,6 +743,111 @@ function applyCatalogReplacements(data, original, imported, intents = []) {
   }
 }
 
+const batchPreviewFields = [
+  "id",
+  "groupId",
+  "subgroup",
+  "subjectId",
+  "teacherId",
+  "roomId",
+  "day",
+  "week",
+  "start",
+  "end",
+  "endDayOffset",
+  "type",
+  "validFrom",
+  "validUntil",
+  "sharedSessionId",
+];
+function batchPreviewRow(row) {
+  return Object.fromEntries(
+    batchPreviewFields
+      .filter(
+        (key) =>
+          Object.hasOwn(row, key) &&
+          (row[key] === null ||
+            typeof row[key] === "boolean" ||
+            (typeof row[key] === "number" && Number.isFinite(row[key])) ||
+            (typeof row[key] === "string" && row[key].length <= 10000)),
+      )
+      .map((key) => [key, row[key]]),
+  );
+}
+const batchNoop = "Выбранные занятия уже содержат эти значения. Изменений нет";
+/** Read-only closed preview. The exact same whole-model validator gates apply. */
+export function previewLessonBatch(data, payload) {
+  const result = {
+    valid: false,
+    error: null,
+    selectedCount: 0,
+    changedCount: 0,
+    unchangedCount: 0,
+    groups: [],
+    changes: [],
+  };
+  let plan;
+  try {
+    plan = buildLessonBatch(data, payload);
+  } catch (error) {
+    result.error =
+      error?.status === 400
+        ? error.message
+        : "Не удалось подготовить массовое изменение. Обнови данные и повтори выбор";
+    return result;
+  }
+  result.selectedCount = plan.selectedCount;
+  result.changedCount = plan.changedIds.length;
+  result.unchangedCount = plan.unchangedCount;
+  const before = new Map(data.lessons.map((row) => [row.id, row])),
+    changed = new Set(plan.changedIds),
+    groups = new Map();
+  for (const after of plan.lessons)
+    if (changed.has(after.id)) {
+      const groupId =
+        typeof after.groupId === "string" && after.groupId.length <= 100
+          ? after.groupId
+          : "";
+      const group = Array.isArray(data.groups)
+        ? data.groups.find((item) => item?.id === groupId)
+        : undefined;
+      const groupName =
+        typeof group?.name === "string" && group.name.length <= 80
+          ? group.name
+          : groupId;
+      const subgroup =
+        typeof after.subgroup === "string" && after.subgroup.length <= 15
+          ? after.subgroup
+          : "";
+      result.changes.push({
+        id: after.id,
+        groupId,
+        groupName,
+        subgroup,
+        before: batchPreviewRow(before.get(after.id)),
+        after: batchPreviewRow(after),
+      });
+      if (!groups.has(groupId))
+        groups.set(groupId, { id: groupId, name: groupName, count: 0 });
+      groups.get(groupId).count++;
+    }
+  result.groups = [...groups.values()];
+  if (!result.changedCount) {
+    result.error = batchNoop;
+    return result;
+  }
+  try {
+    validate({ ...data, lessons: plan.lessons });
+    result.valid = true;
+  } catch (error) {
+    result.error =
+      error?.status === 400
+        ? error.message
+        : "Не удалось проверить массовое изменение. Обнови данные и повтори выбор";
+  }
+  return result;
+}
+
 export function ownGroups(data, user) {
   return new Set(
     data.lessons
@@ -804,6 +913,12 @@ export function mutate(input, user, op, payload = {}) {
     }
     data.siteSettings = { ...(data.siteSettings || {}), appearance: policy };
     summary = "Обновлены настройки интерфейса";
+  } else if (op === "lesson.batch") {
+    if (!admin) fail("Массовое изменение доступно только владельцу", 403);
+    const plan = buildLessonBatch(data, payload);
+    if (!plan.changedIds.length) fail(batchNoop);
+    data.lessons = plan.lessons;
+    summary = "Изменены выбранные занятия: " + plan.changedIds.length;
   } else if (op === "lesson.save" || op === "lesson.delete") {
     if (!admin) fail("Расписание меняет только администратор", 403);
     const old = data.lessons.find((l) => l.id === payload.id);
