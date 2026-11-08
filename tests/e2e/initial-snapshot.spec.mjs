@@ -25,20 +25,25 @@ test("current choice and legacy group/settings start the application without wai
       const returning = await context.newPage();
       await mockState(returning, { savedChoice: false, ticking: true });
       await returning.clock.pauseAt(new Date("2026-11-06T04:00:01Z"));
-      await returning.addInitScript(
-        (key) =>
-          localStorage.setItem(
-            key,
-            key === "uf.group"
-              ? JSON.stringify("g-main")
-              : JSON.stringify({
-                  version: 1,
-                  groupId: "g-main",
-                  subgroup: "А",
-                }),
-          ),
-        key,
-      );
+      await returning.addInitScript((key) => {
+        localStorage.setItem(
+          key,
+          key === "uf.group"
+            ? JSON.stringify("g-main")
+            : JSON.stringify({
+                version: 1,
+                groupId: "g-main",
+                subgroup: "А",
+              }),
+        );
+        globalThis.PerformanceObserver = class {
+          static supportedEntryTypes = ["paint"];
+          observe() {
+            globalThis.returningPaintWaitStarted = true;
+          }
+          disconnect() {}
+        };
+      }, key);
       const request = returning.waitForRequest("**/schedule/app.mjs");
       await returning.goto(baseURL + "/schedule/");
       await request;
@@ -47,6 +52,9 @@ test("current choice and legacy group/settings start the application without wai
           .locator("form[data-group-choice], #navigation button")
           .first(),
       ).toBeVisible();
+      expect(
+        await returning.evaluate(() => globalThis.returningPaintWaitStarted),
+      ).not.toBe(true);
     } finally {
       await context.close();
     }
@@ -125,9 +133,29 @@ test("moving a fresh visit to the background while frames are pending starts the
   page,
 }) => {
   await mockState(page, { savedChoice: false, ticking: true });
+  await page.addInitScript(() => {
+    const NativeObserver = globalThis.PerformanceObserver;
+    window.PerformanceObserver = class extends NativeObserver {
+      observe(options) {
+        if (options.type === "paint") {
+          document.documentElement.dataset.paintGate = "waiting";
+          return;
+        }
+        super.observe(options);
+      }
+      disconnect() {
+        globalThis.paintObserverDisconnected = true;
+        super.disconnect();
+      }
+    };
+  });
   await page.clock.pauseAt(new Date("2026-11-06T04:00:01Z"));
   const bundleRequested = page.waitForRequest("**/schedule/app.mjs");
   await page.goto("/schedule/");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-paint-gate",
+    "waiting",
+  );
   await expect(page.locator("[data-initial-choice]")).toHaveAttribute(
     "data-choice-guard",
     "native",
@@ -141,7 +169,45 @@ test("moving a fresh visit to the background while frames are pending starts the
   });
   await bundleRequested;
   await expect(page.locator("form[data-group-choice]")).toBeVisible();
+  expect(await page.evaluate(() => globalThis.paintObserverDisconnected)).toBe(
+    true,
+  );
 });
+
+for (const mode of ["unsupported", "observe throws"])
+  test(`Paint Timing ${mode} still loads the application and preserves native choice`, async ({
+    page,
+  }) => {
+    await mockState(page, { savedChoice: false });
+    await page.addInitScript((mode) => {
+      if (mode === "unsupported")
+        Object.defineProperty(
+          globalThis.PerformanceObserver,
+          "supportedEntryTypes",
+          { value: [] },
+        );
+      else
+        globalThis.PerformanceObserver = class {
+          static supportedEntryTypes = ["paint"];
+          observe() {
+            throw Error("Paint observation unavailable");
+          }
+          disconnect() {}
+        };
+    }, mode);
+    await page.goto("/schedule/");
+    await expect(page.locator("form[data-group-choice]")).toBeVisible();
+    await page
+      .getByRole("combobox", { name: "Группа", exact: true })
+      .selectOption("g-main");
+    await page
+      .getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      })
+      .click();
+    await expect(page.locator("#navigation button")).toHaveCount(4);
+  });
 
 test("a failed application bundle gives a visible retry instruction and leaves the chooser usable", async ({
   page,

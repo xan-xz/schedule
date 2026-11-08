@@ -70,15 +70,30 @@ export async function optimizeEntry(directory) {
     if (!document.hidden && !returning && !query.has("g") && !query.has("group") && document.querySelector("[data-initial-choice]"))
       await new Promise(resolve => {
         let finished = false;
+        let observer;
         const finish = () => {
           if (finished) return;
           finished = true;
+          observer?.disconnect();
           document.removeEventListener("visibilitychange", onVisibility);
           resolve();
         };
         const onVisibility = () => { if (document.hidden) finish(); };
         document.addEventListener("visibilitychange", onVisibility);
-        requestAnimationFrame(() => requestAnimationFrame(finish));
+        const frames = () => requestAnimationFrame(() => requestAnimationFrame(finish));
+        try {
+          if (!globalThis.PerformanceObserver?.supportedEntryTypes?.includes("paint")) {
+            frames();
+            return;
+          }
+          observer = new PerformanceObserver(list => {
+            if (list.getEntries().some(entry => entry.name === "first-contentful-paint")) finish();
+          });
+          observer.observe({type: "paint", buffered: true});
+        } catch {
+          observer?.disconnect();
+          frames();
+        }
       });
     void import("./app.mjs").catch(() => {
       const form = document.querySelector("[data-initial-choice]");
