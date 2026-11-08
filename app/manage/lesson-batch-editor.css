@@ -7,6 +7,8 @@
 .template-backup-editor [role="status"]:empty,
 .rollback-preview-editor [role="alert"]:empty,
 .rollback-preview-editor [role="status"]:empty,
+.json-import-editor [role="alert"]:empty,
+.json-import-editor [role="status"]:empty,
 .csv-import-editor [role="alert"]:empty,
 .csv-import-editor [role="status"]:empty {
   display: none;
