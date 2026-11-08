@@ -26,6 +26,38 @@ export function legacyTaskStatuses() {
       .map((id) => [id, "done"]),
   );
 }
+
+/** Only the latest still-current scope may reach the UI. Missing progress is
+ * initialized atomically: migration or another tab may have filled it after
+ * the initial read returned null. Capture legacy input before any awaits. */
+export function createPersonalLoader(store = storage) {
+  let sequence = 0;
+  return async function load({
+    tasksKey,
+    statusesKey,
+    isCurrent = () => true,
+    legacy = legacyTaskStatuses,
+  }) {
+    const request = ++sequence,
+      initial = legacy();
+    const current = () => request === sequence && isCurrent();
+    const [tasks, storedStatuses] = await Promise.all([
+      store.get(tasksKey, []),
+      store.get(statusesKey, null),
+    ]);
+    if (!current()) return null;
+    let statuses = storedStatuses;
+    if (statuses === null) {
+      const result = await store.update(
+        statusesKey,
+        (value) => value ?? initial,
+        null,
+      );
+      statuses = result.value;
+    }
+    return current() ? { tasks, statuses } : null;
+  };
+}
 export function initialSettings() {
   let legacy = "А";
   try {
