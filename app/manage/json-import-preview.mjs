@@ -1,5 +1,5 @@
 import { clone, mutate, DAYS } from "../core.mjs";
-import { draftChanges, recoverChanges } from "./drafts.mjs";
+import { assertDraftRecoverable, draftFingerprint } from "./drafts.mjs";
 
 export const JSON_IMPORT_BYTES = 1_000_000;
 const specs = [
@@ -31,26 +31,10 @@ const properties = [
   ["siteSettings.teaching", "Типы занятий и звонки"],
   ["siteSettings.appearance", "Оформление сайта"],
 ];
-const canonical = (value) =>
-  Array.isArray(value)
-    ? value.map(canonical)
-    : value && typeof value === "object"
-      ? Object.fromEntries(
-          Object.keys(value)
-            .sort()
-            .map((key) => [key, canonical(value[key])]),
-        )
-      : value;
-export const jsonImportFingerprint = (value) =>
-  JSON.stringify(canonical(value));
+export const jsonImportFingerprint = draftFingerprint;
 const equal = (a, b) => jsonImportFingerprint(a) === jsonImportFingerprint(b);
 const property = (data, path) =>
   path.split(".").reduce((value, key) => value?.[key], data);
-const editable = (data) =>
-  Object.fromEntries([
-    ...specs.map(([key]) => [key, data[key]]),
-    ...properties.map(([key]) => [key, property(data, key)]),
-  ]);
 const clip = (value, limit = 700) =>
   Array.from(String(value)).slice(0, limit).join("");
 const labels = {
@@ -169,15 +153,8 @@ export function previewJsonImport(
   // Publication creates its own real announcement/audit. The preview is read-only.
   result.announcements = clone(data.announcements);
   result.history = clone(data.history);
-  let journal;
   try {
-    journal = draftChanges(before, result, replacements);
-    const recovered = recoverChanges(before, journal);
-    if (
-      recovered.conflicts.length ||
-      !equal(editable(recovered.data), editable(result))
-    )
-      throw Error("roundtrip");
+    assertDraftRecoverable(before, result, replacements);
   } catch {
     throw Error(
       "Порядок записей, дополнительные сведения или объём изменений нельзя точно восстановить из локальной копии. Файл не применён; сохраните текущий порядок и поддерживаемые поля экспорта.",

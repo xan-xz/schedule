@@ -25,6 +25,38 @@ const properties = [
 ];
 const clone = (value) => structuredClone(value);
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// Memory-only comparison, including unknown fields and array order. Never store
+// this string: the journal below remains a closed projection of editor changes.
+export function draftFingerprint(value) {
+  const canonical = (item) =>
+    Array.isArray(item)
+      ? item.map(canonical)
+      : item && typeof item === "object"
+        ? Object.fromEntries(
+            Object.keys(item)
+              .sort()
+              .map((key) => [key, canonical(item[key])]),
+          )
+        : item;
+  return JSON.stringify(canonical(value));
+}
+export function assertDraftRecoverable(before, after, replacements = []) {
+  const changes = draftChanges(before, after, replacements);
+  const recovered = recoverChanges(before, changes);
+  const editable = (data) => [
+    ...Object.keys(fields).map((key) => data[key]),
+    ...properties.map((path) =>
+      path.split(".").reduce((value, key) => value?.[key], data),
+    ),
+  ];
+  if (
+    recovered.conflicts.length ||
+    draftFingerprint(editable(recovered.data)) !==
+      draftFingerprint(editable(after))
+  )
+    throw Error("Изменения нельзя точно восстановить из локальной копии.");
+  return changes;
+}
 const plain = (value) =>
   value !== null && Object.getPrototypeOf(value) === Object.prototype;
 const secret =

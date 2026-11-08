@@ -8,6 +8,11 @@ import {
   copyWeek,
 } from "../app/manage/tools.mjs";
 import { conflictPairKey } from "../backend/core.mjs";
+import {
+  assertDraftRecoverable,
+  recoverChanges,
+  draftFingerprint,
+} from "../app/manage/drafts.mjs";
 function fixture() {
   return {
     groups: [
@@ -44,6 +49,81 @@ function fixture() {
   };
 }
 const scope = { groupId: "g", subgroup: "all" };
+
+test("CSV replacement keeps existing positions and unknown metadata through exact journal recovery", () => {
+  const d = fixture();
+  d.lessons[0].source = { sheet: "Sheet", timeCell: "B2" };
+  d.lessons[0].future = { preserve: true };
+  d.lessons.push({
+    ...d.lessons[0],
+    id: "other-row",
+    groupId: "other",
+    day: 2,
+  });
+  d.lessons.push({ ...d.lessons[0], id: "last", day: 4 });
+  const csv =
+    "day,start,end,subject,room,teacher,type,subgroup,week,id\n4,09:00,09:50,s,r,t,Changed,А,odd,last\n0,09:00,09:50,s,r,t,Changed,А,odd,l1";
+  const before = structuredClone(d);
+  const result = previewScheduleCsv(csv, d, {
+    ...scope,
+    mode: "replace-scope",
+  }).data;
+  assert.deepEqual(
+    result.lessons.map((row) => row.id),
+    ["l1", "other-row", "last"],
+  );
+  assert.deepEqual(result.lessons[0].future, { preserve: true });
+  const journal = assertDraftRecoverable(d, result);
+  assert.deepEqual(recoverChanges(d, journal).data, result);
+  assert.deepEqual(d, before);
+});
+
+test("CSV replacement removes scoped rows and appends new rows in file order without moving other scopes", () => {
+  const d = fixture();
+  d.lessons[0].source = { sheet: "Sheet" };
+  d.lessons.push({
+    ...d.lessons[0],
+    id: "other-row",
+    groupId: "other",
+    day: 2,
+  });
+  const csv = "day,start,end,subject\n4,09:00,09:50,s\n3,09:00,09:50,s";
+  const result = previewScheduleCsv(csv, d, {
+    ...scope,
+    mode: "replace-scope",
+  }).data;
+  assert.equal(result.lessons[0].id, "other-row");
+  assert.deepEqual(
+    result.lessons.slice(1).map((row) => row.day),
+    [4, 3],
+  );
+  assert.deepEqual(
+    recoverChanges(d, assertDraftRecoverable(d, result)).data,
+    result,
+  );
+  const reordered = structuredClone(result);
+  reordered.lessons.reverse();
+  assert.throws(
+    () => assertDraftRecoverable(d, reordered),
+    /точно восстановить/,
+  );
+});
+
+test("draft recovery comparison ignores object key order but detects dropped historical fields", () => {
+  const d = fixture();
+  d.exceptions = [
+    { id: "change", lessonId: "l1", date: "2026-11-02", status: "cancelled" },
+  ];
+  const same = Object.fromEntries(Object.entries(d).reverse());
+  assert.equal(draftFingerprint(d), draftFingerprint(same));
+  assert.deepEqual(assertDraftRecoverable(d, same), []);
+  const modified = structuredClone(d);
+  modified.exceptions[0].before = { privateSnapshot: "must not be lost" };
+  assert.throws(
+    () => assertDraftRecoverable(d, modified),
+    /точно восстановить/,
+  );
+});
 test("CSV accepts BOM, commas/semicolons and RFC4180 quoted multiline catalog names", () => {
   const d = fixture();
   d.lessons = [];
