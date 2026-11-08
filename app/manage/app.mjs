@@ -1,3 +1,4 @@
+import { busyRoomIds } from "./resources.mjs";
 import { setMarkup } from "./safe-dom.mjs";
 import {
   createDraftJournal,
@@ -1710,12 +1711,9 @@ function freeRooms() {
       },
     ],
     async (v) => {
+      $("free-results")?.remove();
       if (v.start >= v.end) throw Error("Конец должен быть позже начала");
-      const busy = new Set(
-        occurrences(S.data, v.date, { activeOnly: true })
-          .filter((l) => !l.cancelled && l.start < v.end && l.end > v.start)
-          .map((l) => l.roomId),
-      );
+      const busy = busyRoomIds(S.data, v.date, v.start, v.end);
       const free = S.data.rooms.filter((room) => !busy.has(room.id)),
         rooms = free.filter(
           (room) => !room.capacityEstimated && room.capacity >= v.capacity,

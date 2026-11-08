@@ -781,3 +781,44 @@ test("held rollback blocks catalog edits and publication even after closing its 
     "rollback",
   ]);
 });
+
+test("room finder blocks both sides of an overnight lesson and frees its exact ending boundary", async ({
+  page,
+}) => {
+  const manager = await mockManager(page, {
+    prepareData(data) {
+      data.lessons.push({
+        ...data.lessons[0],
+        id: "overnight-room",
+        start: "23:00",
+        end: "01:00",
+        endDayOffset: 1,
+      });
+    },
+  });
+  await manager.login();
+  await catalog(page, "rooms");
+  await page
+    .getByRole("button", { name: "Найти свободную", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  const find = async (date, start, end) => {
+    await dialog.getByLabel("Дата", { exact: true }).fill(date);
+    await dialog.getByLabel("Начало", { exact: true }).fill(start);
+    await dialog.getByLabel("Конец", { exact: true }).fill(end);
+    await dialog.getByRole("button", { name: "Найти", exact: true }).click();
+  };
+  await find("2026-11-06", "23:30", "23:59");
+  await expect(dialog.locator("#free-results")).toContainText("205 (30 мест)");
+  await expect(dialog.locator("#free-results")).not.toContainText("204");
+  await find("2026-11-07", "00:30", "00:50");
+  await expect(dialog.locator("#free-results")).not.toContainText("204");
+  await find("2026-11-07", "01:00", "01:30");
+  await expect(dialog.locator("#free-results")).toContainText("204 (30 мест)");
+  await find("2026-11-06", "23:30", "00:30");
+  await expect(dialog.locator(".form-error")).toContainText(
+    "Конец должен быть позже начала",
+  );
+  await expect(dialog.locator("#free-results")).toHaveCount(0);
+  expect(manager.writes()).toEqual([]);
+});
