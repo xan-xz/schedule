@@ -163,6 +163,7 @@ export function createCsvImportEditor({
       page = 0;
       renderReview();
       review.querySelector("h3").focus();
+      review.scrollIntoView({ block: "start" });
     } catch (problem) {
       if (root.isConnected && version === generation)
         error.textContent = problem.message;

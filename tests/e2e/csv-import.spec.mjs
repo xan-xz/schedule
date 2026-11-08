@@ -95,6 +95,9 @@ test("CSV preview is read-only, literal and accessible; explicit apply saves a d
     "Добавить: 1. Изменить: 0. Удалить: 0. Без изменений: 2.",
   );
   await expect(dialog.locator("[data-csv-change]")).toHaveCount(1);
+  await expect(dialog.locator("[data-csv-change]").first()).toBeInViewport({
+    ratio: 1,
+  });
   await expect(dialog.locator("img,script")).toHaveCount(0);
   expect(await records(page)).toEqual([]);
   expect(manager.state()).toEqual(before);
