@@ -5,6 +5,17 @@ import { resolve, join } from "node:path";
 import { createRequire } from "node:module";
 
 const owner = "11111111-1111-4111-8111-111111111111";
+const health = new WeakMap();
+test.beforeEach(async ({ page }) => {
+  const issues = [];
+  health.set(page, issues);
+  page.on("pageerror", (error) => issues.push(error.message));
+  page.on("console", (message) => {
+    if (["error", "warning"].includes(message.type()))
+      issues.push(message.text());
+  });
+});
+test.afterEach(async ({ page }) => expect(health.get(page)).toEqual([]));
 const saved = (page) =>
   expect(page.locator("#draft-save-status")).toHaveText(
     "Черновик сохранён на этом устройстве. Не опубликован.",
@@ -336,7 +347,9 @@ test("used group replacement survives reauthentication as a primitive intent and
   expect(state.groups.map((group) => group.id)).toEqual([target, third]);
   expect(state.lessons.every((lesson) => lesson.groupId === target)).toBe(true);
   expect(state.tasks[0].groupId).toBe(target);
-  expect(state.announcements[0].groupId).toBe(target);
+  expect(
+    state.announcements.find((row) => row.id === "private-notice").groupId,
+  ).toBe(target);
   expect(state.requests).toHaveLength(1);
   expect(state.attendance).toHaveLength(1);
   expect(manager.writes()[0].payload.catalogReplacements).toEqual([
@@ -393,7 +406,7 @@ test("incompatible group replacement and a real room collision cannot delete or 
     .getByRole("button", { name: "Заменить в черновике", exact: true })
     .click();
   await expect(page.getByRole("dialog").locator(".form-error")).toContainText(
-    /[Кк]онфликт|пересеч/,
+    "Аудитория уже занята · Пятница 08:00",
   );
   await page
     .getByRole("dialog")
@@ -513,4 +526,258 @@ test("catalog quota failure keeps the previous durable generation and allows an 
       (change) => change.kind === "subjects",
     ).after.shortName,
   ).toBe("Не потерять");
+});
+
+test("a published active group shares a local QR and stable public URL while unpublished or archived groups are blocked", async ({
+  page,
+}, info) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        async writeText(value) {
+          globalThis.catalogCopiedUrl = value;
+        },
+      },
+    }),
+  );
+  const manager = await mockManager(page);
+  await manager.login();
+  await catalog(page);
+  await row(page, "06-057-25-11")
+    .getByRole("button", { name: "Ссылка / QR", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(
+    dialog.getByRole("img", {
+      name: "QR-код публичной ссылки на группу",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await dialog
+    .getByLabel("Подгруппа для ссылки", { exact: true })
+    .selectOption("Б");
+  await dialog
+    .getByRole("button", { name: "Скопировать ссылку", exact: true })
+    .click();
+  const url = new URL(await page.evaluate(() => globalThis.catalogCopiedUrl));
+  expect(url.pathname).toBe("/schedule/");
+  expect([...url.searchParams.keys()].sort()).toEqual(["g", "subgroup"]);
+  expect(url.searchParams.get("g")).toBe("g-main");
+  expect(url.searchParams.get("subgroup")).toBe("Б");
+  expect(url.hash).toBe("");
+  await axe(page);
+  const download = page.waitForEvent("download");
+  await dialog
+    .getByRole("button", { name: "Скачать QR (SVG)", exact: true })
+    .click();
+  expect((await download).suggestedFilename()).toBe("uniflow-group-g-main.svg");
+  const shots = resolve("../../outputs/catalog-next/screenshots");
+  await mkdir(shots, { recursive: true });
+  await page.screenshot({
+    path: join(shots, `group-qr-${info.project.name}.png`),
+  });
+  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await row(page, "06-057-25-11")
+    .getByRole("button", { name: "Дублировать без расписания", exact: true })
+    .click();
+  await dialog
+    .getByLabel("Название копии", { exact: true })
+    .fill("Не опубликована");
+  await dialog
+    .getByRole("button", { name: "Создать копию в черновике", exact: true })
+    .click();
+  await saved(page);
+  await row(page, "Не опубликована")
+    .getByRole("button", { name: "Ссылка / QR", exact: true })
+    .click();
+  await expect(page.locator("#toast")).toContainText(
+    "Сначала опубликуй новую группу",
+  );
+  await expect(dialog).not.toBeVisible();
+  await row(page, "06-057-25-11")
+    .getByRole("button", { name: "В архив", exact: true })
+    .click();
+  await dialog
+    .getByRole("button", { name: "В архив в черновике", exact: true })
+    .click();
+  await saved(page);
+  await page
+    .getByLabel("Состояние групп", { exact: true })
+    .selectOption("archived");
+  await row(page, "06-057-25-11")
+    .getByRole("button", { name: "Ссылка / QR", exact: true })
+    .click();
+  await expect(page.locator("#toast")).toContainText(
+    "восстановления группы из архива",
+  );
+  expect(manager.writes()).toEqual([]);
+});
+
+test("room finder releases archived schedule occupancy and reports unknown capacity separately from rooms meeting the minimum", async ({
+  page,
+}) => {
+  const manager = await mockManager(page, {
+    prepareData(data) {
+      data.rooms.push({
+        id: "unknown",
+        name: "Неизвестная вместимость",
+        capacity: 5,
+        capacityEstimated: true,
+      });
+      data.rooms.push({
+        id: "small",
+        name: "Маленькая подтверждённая",
+        capacity: 5,
+      });
+    },
+  });
+  await manager.login();
+  const findRooms = async () => {
+    await catalog(page, "rooms");
+    await page
+      .getByRole("button", { name: "Найти свободную", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Дата", { exact: true }).fill("2026-11-06");
+    await dialog.getByLabel("Минимум мест", { exact: true }).fill("20");
+    await dialog.getByLabel("Начало", { exact: true }).fill("08:00");
+    await dialog.getByLabel("Конец", { exact: true }).fill("09:00");
+    await dialog.getByRole("button", { name: "Найти", exact: true }).click();
+    await expect(dialog.locator("#free-results")).toContainText(
+      "Вместимость неизвестна; подтвердите отдельно: Неизвестная вместимость",
+    );
+    await expect(dialog.locator("#free-results")).not.toContainText(
+      "Маленькая подтверждённая",
+    );
+    await expect(dialog.locator("#free-results")).not.toContainText("5 мест");
+    return dialog;
+  };
+  let dialog = await findRooms();
+  await expect(dialog.locator("#free-results")).not.toContainText("204");
+  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await catalog(page);
+  await row(page, "06-057-25-11")
+    .getByRole("button", { name: "В архив", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "В архив в черновике", exact: true })
+    .click();
+  await saved(page);
+  dialog = await findRooms();
+  await expect(dialog.locator("#free-results")).toContainText("204 (30 мест)");
+  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await catalog(page);
+  await page
+    .getByLabel("Состояние групп", { exact: true })
+    .selectOption("archived");
+  await row(page, "06-057-25-11")
+    .getByRole("button", { name: "Восстановить", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Восстановить в черновике", exact: true })
+    .click();
+  await saved(page);
+  dialog = await findRooms();
+  await expect(dialog.locator("#free-results")).not.toContainText("204");
+  expect(manager.writes()).toEqual([]);
+});
+
+test("held rollback blocks catalog edits and publication even after closing its dialog, retaining the exact local copy for recovery", async ({
+  page,
+}) => {
+  const manager = await mockManager(page);
+  await manager.login();
+  await catalog(page, "subjects");
+  await row(page, "Алгоритмы")
+    .getByRole("button", { name: "Изменить", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Короткое название", { exact: true })
+    .fill("Published basis");
+  await save(page);
+  await publish(page, manager);
+  await catalog(page);
+  await row(page, "06-057-25-11")
+    .getByRole("button", { name: "Изменить", exact: true })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByLabel("Специальность", { exact: true })
+    .fill("Сохранить перед откатом");
+  await save(page);
+  const pending = (await records(page)).find(
+    (record) => record.status === "active",
+  );
+  let release, observed;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const requested = new Promise((resolve) => {
+    observed = resolve;
+  });
+  await page.route("**/functions/v1/uniflow-api", async (route) => {
+    if (route.request().postDataJSON().action === "rollback") {
+      observed();
+      await gate;
+    }
+    return route.fallback();
+  });
+  await page.locator('[data-page="history"]').click();
+  await page.locator('[data-action="rollback"]').first().click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Восстановить", exact: true })
+    .click();
+  await requested;
+  try {
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Закрыть", exact: true })
+      .click();
+    await page.locator('[data-page="catalogs"]').click();
+    await expect(
+      page.getByRole("button", { name: "Добавить", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "Опубликовать", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      row(page, "06-057-25-11").getByRole("button", {
+        name: "Изменить",
+        exact: true,
+      }),
+    ).toBeDisabled();
+    await page
+      .getByRole("button", { name: "Добавить", exact: true })
+      .evaluate((button) => button.click());
+    await page
+      .getByRole("button", { name: "Опубликовать", exact: true })
+      .evaluate((button) => button.click());
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    expect(manager.writes()).toHaveLength(1);
+    expect(
+      (await records(page)).find((record) => record.id === pending.id),
+    ).toEqual(pending);
+  } finally {
+    release();
+  }
+  await expect(page.locator("#toast")).toContainText("Версия восстановлена");
+  const retained = (await records(page)).find(
+    (record) => record.id === pending.id,
+  );
+  expect(retained.changes).toEqual(pending.changes);
+  expect(retained.generation).toBe(pending.generation + 1);
+  expect(retained.status).toBe("archived");
+  expect(retained.reason).toBe("rollback");
+  await expect(
+    page.getByRole("button", { name: "Создать черновик", exact: true }),
+  ).toBeEnabled();
+  expect(manager.writes().map((call) => call.action)).toEqual([
+    "mutate",
+    "rollback",
+  ]);
 });
