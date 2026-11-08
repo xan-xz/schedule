@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { groupShareUrl } from "../app/manage/group-share.mjs";
 
 const base =
-  "https://xan-xz.github.io/schedule/?demo=admin#access_token=secret";
+  "https://xan-xz.github.io/schedule/?token=discard-me#access_token=secret";
 const group = { id: "g-main", name: "Группа", subgroups: ["А", "Б"] };
 
 test("group invitation uses stable identity and no owner role, credential, date or inherited query", () => {
