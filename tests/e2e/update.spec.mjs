@@ -96,10 +96,15 @@ async function releaseOrigin() {
         response.writeHead(404).end();
         return;
       }
-      const root = ["backend/core.mjs", "compatibility.json"].includes(relative)
-        ? repository
-        : resolve(repository, "app");
-      const file = resolve(root, relative);
+      const shared = {
+        "backend/core.mjs": "backend/core.mjs",
+        "compatibility.json": "compatibility.json",
+        "appearance-policy.mjs": "backend/appearance-policy.mjs",
+        "backend/appearance-policy.mjs": "backend/appearance-policy.mjs",
+      };
+      const isShared = Object.hasOwn(shared, relative);
+      const root = isShared ? repository : resolve(repository, "app");
+      const file = resolve(root, isShared ? shared[relative] : relative);
       if (!file.startsWith(root + sep)) {
         response.writeHead(403).end();
         return;
@@ -189,6 +194,15 @@ async function ready(page, version) {
           "./lib/compatibility.mjs",
           "./lib/compatibility-policy.mjs",
           "./lib/personal-migration.mjs",
+          "./appearance-init.js",
+          "./appearance-policy.mjs",
+          "./backend/appearance-policy.mjs",
+          "./lib/personalization.mjs",
+          "./lib/appearance-tokens.mjs",
+          "./lib/layout-loader.mjs",
+          "./layouts/timeline.mjs",
+          "./layouts/grid.mjs",
+          "./layouts/cards.mjs",
         ].map(async (path) => {
           const response = await fetch(path);
           if (!response.ok) throw Error("Cannot warm offline module: " + path);
