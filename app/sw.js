@@ -83,6 +83,8 @@ const FILES = [
   "./lib/time.mjs",
   "./lib/storage.mjs",
   "./lib/calendar.mjs",
+  "./lib/personal-backup.mjs",
+  "./lib/personal-backup-ui.mjs",
   "./lib/compatibility.mjs",
   "./lib/compatibility-policy.mjs",
   "./lib/personal-migration.mjs",

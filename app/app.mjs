@@ -156,7 +156,8 @@ const statusKey = () =>
   `statuses:live:${S.settings.groupId}:${S.settings.subgroup}`;
 const taskDue = (task) =>
   new Date(task.due + "T" + (task.dueTime || "23:59") + ":00+05:00").getTime();
-const taskStatus = (task) => S.statuses[task.id] || "new";
+const taskStatus = (task) =>
+  S.statuses[task.id] || task.restoredStatus || "new";
 
 function toast(text) {
   $("toast").textContent = text;
@@ -861,6 +862,65 @@ async function changeStatus(id, status) {
   if (!result.persisted) toast(t("storageWarning"));
   render();
 }
+async function personalBackup() {
+  const epoch = S.epoch,
+    key = personalKey();
+  const backupScope = {
+    groupId: S.settings.groupId,
+    subgroup: S.settings.subgroup,
+  };
+  const current = () => epoch === S.epoch && key === personalKey();
+  const check = () => {
+    if (!current()) throw Error("backupScope");
+  };
+  try {
+    await retirement;
+    const [ui, model] = await Promise.all([
+      import("./lib/personal-backup-ui.mjs"),
+      import("./lib/personal-backup.mjs"),
+    ]);
+    check();
+    ui.openPersonalBackup({
+      dialog: $("modal"),
+      t,
+      scope: backupScope,
+      scopeLabel:
+        name("groups", backupScope.groupId, backupScope.groupId) +
+        " · " +
+        backupScope.subgroup,
+      isCurrent: current,
+      read: async () => {
+        check();
+        await loadPersonal();
+        check();
+        return { tasks: S.personal, statuses: S.statuses };
+      },
+      restore: async (backup) => {
+        check();
+        let plan;
+        const result = await storage.update(
+          key,
+          (value) => {
+            check();
+            plan = model.restorePersonalTasks(value, backup, backupScope, () =>
+              crypto.randomUUID(),
+            );
+            return plan.tasks;
+          },
+          [],
+        );
+        check();
+        await loadPersonal();
+        check();
+        if (!result.persisted) throw Error("storageWarning");
+        return { added: plan.added, skipped: plan.skipped };
+      },
+      onClose: () => render(),
+    });
+  } catch {
+    toast(t("backupScope"));
+  }
+}
 async function personalForm() {
   await retirement;
   await loadPersonal();
@@ -1437,6 +1497,11 @@ function renderMore() {
         S.settings.hour12 ? "12" : "24",
         (e) => changeSetting("hour12", e.target.value === "12"),
       ),
+    ),
+    el(
+      "section",
+      { class: "settings-section" },
+      button(t("backupTitle"), personalBackup),
     ),
     calendar,
     reminder,
