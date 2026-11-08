@@ -831,3 +831,215 @@ test("archive policy preserves logout of the current legacy session", async (t) 
     "schedule_sessions?token_hash=eq." + (await sha(token)),
   );
 });
+
+test("owner catalog save, duplicate, archive and replacement keep the CAS path and no account credentials", async (t) => {
+  const { row, calls } = backend(t);
+  row.data.rooms.push({ id: "r2", name: "102", capacity: 40 });
+  row.data.rooms[0].unknown = { preserve: true };
+  for (const [op, payload, verify] of [
+    [
+      "catalog.save",
+      {
+        entity: "rooms",
+        item: { id: "r", building: "A", floor: "цоколь", note: "Owner only" },
+      },
+      (data) => assert.deepEqual(data.rooms[0].unknown, { preserve: true }),
+    ],
+    [
+      "catalog.duplicate",
+      { entity: "teachers", id: "t1", name: "New teacher" },
+      (data) => assert.deepEqual(data.teachers.at(-1).subjects, []),
+    ],
+    [
+      "group.archive",
+      { id: "g", archived: true },
+      (data) => assert.equal(typeof data.groups[0].archivedAt, "string"),
+    ],
+    [
+      "catalog.replace",
+      { entity: "rooms", id: "r", replacementId: "r2" },
+      (data) => assert.equal(data.lessons[0].roomId, "r2"),
+    ],
+  ]) {
+    const response = await handle(
+      request({
+        action: "mutate",
+        token: ownerToken,
+        revision: 7,
+        op,
+        payload,
+      }),
+    );
+    assert.equal(
+      response.status,
+      200,
+      JSON.stringify(await response.clone().json()),
+    );
+    verify((await response.json()).data);
+  }
+  const commits = calls.filter((call) => call.path === "rpc/uf_commit");
+  assert.equal(commits.length, 4);
+  assert.equal(
+    commits.every((call) => call.payload.p_expected === 7),
+    true,
+  );
+  assert.equal(
+    calls.some((call) => /password|salt|verifier/.test(call.path)),
+    false,
+  );
+});
+
+test("common account guard rejects subgroup removal, replacement and rollback before commit", async (t) => {
+  const accounts = [{ role: "student", group_id: "g", subgroup: "Б" }];
+  let version;
+  const { row, calls } = backend(t, {
+    respond: (path) =>
+      path === "uf_accounts?select=role,group_id,subgroup,teacher_id"
+        ? new Response(JSON.stringify(accounts))
+        : path === "uf_versions?revision=eq.2"
+          ? new Response(JSON.stringify([{ data: version }]))
+          : null,
+  });
+  row.data.groups.push({ id: "g2", name: "Other", subgroups: ["А", "Б"] });
+  version = structuredClone(row.data);
+  version.groups[0].subgroups = ["А"];
+  for (const body of [
+    {
+      action: "mutate",
+      op: "catalog.save",
+      payload: { entity: "groups", item: { id: "g", subgroups: ["А"] } },
+    },
+    {
+      action: "mutate",
+      op: "catalog.replace",
+      payload: { entity: "groups", id: "g", replacementId: "g2" },
+    },
+    { action: "rollback", target: 2 },
+  ]) {
+    const response = await handle(
+      request({ token: ownerToken, revision: 7, ...body }),
+    );
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /аккаунта/);
+  }
+  assert.equal(
+    calls.some((call) => call.path === "rpc/uf_commit"),
+    false,
+  );
+  assert.equal(
+    calls
+      .filter((call) => call.path.startsWith("uf_accounts?"))
+      .every(
+        (call) =>
+          call.path === "uf_accounts?select=role,group_id,subgroup,teacher_id",
+      ),
+    true,
+  );
+});
+
+test("teacher catalog replacement cannot orphan a legacy reference even if its regular lessons are reassigned", async (t) => {
+  const { row, calls } = backend(t, {
+    respond: (path) =>
+      path === "uf_accounts?select=role,group_id,subgroup,teacher_id"
+        ? new Response(JSON.stringify([{ role: "teacher", teacher_id: "t1" }]))
+        : null,
+  });
+  row.data.teachers.push({ id: "t2", name: "Other", subjects: ["s"] });
+  const response = await handle(
+    request({
+      action: "mutate",
+      token: ownerToken,
+      revision: 7,
+      op: "catalog.replace",
+      payload: { entity: "teachers", id: "t1", replacementId: "t2" },
+    }),
+  );
+  assert.equal(response.status, 400);
+  assert.equal(
+    calls.some((call) => call.path === "rpc/uf_commit"),
+    false,
+  );
+});
+
+test("replacement publication uses current private references and discards forged uploaded private arrays", async (t) => {
+  const { row, calls } = backend(t);
+  row.data.requests.push({
+    id: "late",
+    lessonId: "l",
+    date: "2026-11-09",
+    status: "rejected",
+    roomId: "r",
+    unknown: { private: "retain" },
+  });
+  row.data.attendance.push({
+    lessonId: "l",
+    date: "2026-11-09",
+    studentId: "private-account",
+    status: "present",
+    roomId: "r",
+  });
+  const candidate = structuredClone(row.data);
+  candidate.rooms = [{ id: "new", name: "New room", capacity: 40 }];
+  candidate.lessons[0].roomId = "new";
+  candidate.requests = [{ forged: true }];
+  candidate.attendance = [{ forged: true }];
+  const response = await handle(
+    request({
+      action: "mutate",
+      token: ownerToken,
+      revision: 7,
+      op: "import",
+      payload: {
+        data: candidate,
+        catalogReplacements: [
+          { entity: "rooms", id: "r", replacementId: "new" },
+        ],
+      },
+    }),
+  );
+  assert.equal(response.status, 200);
+  const committed = calls.find((call) => call.path === "rpc/uf_commit").payload
+    .p_data;
+  assert.equal(committed.requests[0].roomId, "new");
+  assert.deepEqual(committed.requests[0].unknown, { private: "retain" });
+  assert.equal(committed.attendance[0].studentId, "private-account");
+  assert.equal(committed.attendance[0].roomId, "new");
+});
+
+test("catalog writes reject forged identity before platform IO and retain stale/CAS protection", async (t) => {
+  const { calls } = backend(t);
+  for (const op of [
+    "catalog.save",
+    "catalog.delete",
+    "catalog.replace",
+    "catalog.duplicate",
+    "group.archive",
+  ]) {
+    const response = await handle(
+      request({
+        action: "mutate",
+        token: "forged",
+        role: "admin",
+        revision: 7,
+        op,
+        payload: { entity: "rooms", id: "r" },
+      }),
+    );
+    assert.equal(response.status, 401);
+  }
+  assert.deepEqual(calls, []);
+  const stale = await handle(
+    request({
+      action: "mutate",
+      token: ownerToken,
+      revision: 6,
+      op: "catalog.save",
+      payload: { entity: "rooms", item: { id: "r", name: "Changed" } },
+    }),
+  );
+  assert.equal(stale.status, 409);
+  assert.equal(
+    calls.some((call) => call.path === "rpc/uf_commit"),
+    false,
+  );
+});

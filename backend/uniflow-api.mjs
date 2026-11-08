@@ -188,35 +188,6 @@ export async function handle(req) {
       validate(data);
       result = { data, summary };
     } else {
-      if (body.op === "import") {
-        if (user.role !== "admin") fail("Импорт доступен администратору", 403);
-        const imported = body.payload?.data;
-        if (
-          !imported ||
-          !Array.isArray(imported.groups) ||
-          !Array.isArray(imported.teachers)
-        )
-          fail("Нужен экспорт UniFlow");
-        const accounts = await db(
-          "uf_accounts?select=role,group_id,subgroup,teacher_id",
-        );
-        for (const account of accounts) {
-          if (
-            account.role === "student" &&
-            !imported.groups.some(
-              (g) =>
-                g.id === account.group_id &&
-                g.subgroups?.includes(account.subgroup),
-            )
-          )
-            fail("Импорт удалит группу или подгруппу существующего аккаунта");
-          if (
-            account.role === "teacher" &&
-            !imported.teachers.some((t) => t.id === account.teacher_id)
-          )
-            fail("Импорт удалит преподавателя существующего аккаунта");
-        }
-      }
       if (body.op === "attendance.save") {
         const [student] = await db(
           "uf_accounts?id=eq." +
@@ -234,23 +205,35 @@ export async function handle(req) {
         )
           fail("Студент не относится к этой паре");
       }
-      if (
-        body.op === "catalog.delete" &&
-        ["groups", "teachers"].includes(body.payload?.entity)
-      ) {
-        const column =
-          body.payload.entity === "groups" ? "group_id" : "teacher_id";
-        const accounts = await db(
-          "uf_accounts?" +
-            column +
-            "=eq." +
-            encodeURIComponent(body.payload.id) +
-            "&select=id&limit=1",
-        );
-        if (accounts.length)
-          fail("Сначала переназначь аккаунты, связанные с этой записью");
-      }
       result = mutate(row.data, user, body.op, body.payload);
+    }
+    if (
+      body.action === "rollback" ||
+      body.op === "import" ||
+      JSON.stringify(row.data.groups) !== JSON.stringify(result.data.groups) ||
+      JSON.stringify(row.data.teachers) !== JSON.stringify(result.data.teachers)
+    ) {
+      const accounts = await db(
+        "uf_accounts?select=role,group_id,subgroup,teacher_id",
+      );
+      for (const account of accounts) {
+        if (
+          account.role === "student" &&
+          !result.data.groups.some(
+            (group) =>
+              group.id === account.group_id &&
+              group.subgroups?.includes(account.subgroup),
+          )
+        )
+          fail("Изменение удалит группу или подгруппу существующего аккаунта");
+        if (
+          account.role === "teacher" &&
+          !result.data.teachers.some(
+            (teacher) => teacher.id === account.teacher_id,
+          )
+        )
+          fail("Изменение удалит преподавателя существующего аккаунта");
+      }
     }
     const committed = await db("rpc/uf_commit", {
       method: "POST",
