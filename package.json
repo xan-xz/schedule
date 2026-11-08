@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "lint": "eslint . && node scripts/check-syntax.mjs",
-    "format": "prettier --write scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"app/lib/*.mjs\" app/app.mjs app/styles.css app/index.html app/appearance-init.js app/appearance-policy.mjs \"app/layouts/*.mjs\" \"app/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"app/admin/*.{mjs,css,html}\"",
-    "format:check": "prettier --check scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"app/lib/*.mjs\" app/app.mjs app/styles.css app/index.html app/appearance-init.js app/appearance-policy.mjs \"app/layouts/*.mjs\" \"app/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"app/admin/*.{mjs,css,html}\"",
+    "format": "prettier --write scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"app/lib/*.mjs\" app/app.mjs app/styles.css app/index.html app/appearance-init.js app/appearance-policy.mjs app/group-state.mjs app/public-data.mjs \"app/layouts/*.mjs\" \"app/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"app/admin/*.{mjs,css,html}\"",
+    "format:check": "prettier --check scripts tests .github playwright.config.mjs package.json eslint.config.mjs \"app/lib/*.mjs\" app/app.mjs app/styles.css app/index.html app/appearance-init.js app/appearance-policy.mjs app/group-state.mjs app/public-data.mjs \"app/layouts/*.mjs\" \"app/manage/*.{mjs,css,html}\" \"backend/*.mjs\" \"app/admin/*.{mjs,css,html}\"",
     "test": "node --test tests/*.test.mjs",
     "test:e2e": "playwright test",
     "build": "node scripts/build.mjs",
