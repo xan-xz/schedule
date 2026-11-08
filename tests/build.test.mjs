@@ -40,6 +40,9 @@ async function fixture(t) {
     "app/redirect.mjs": "export const redirectOnly=true;\n",
     "app/retirement-worker.js": "self.addEventListener('fetch',()=>{});\n",
     "backend/core.mjs": "export const shared=1;\n",
+    "backend/appearance-policy.mjs": "export const policyVersion=1;\n",
+    "app/appearance-policy.mjs":
+      "export * from '../backend/appearance-policy.mjs';\n",
     "backend/admin.mjs": "throw Error('Do not publish server');\n",
     "app/sw.js": "const VERSION = 'v2';\n",
   }))
@@ -92,6 +95,11 @@ test("one deterministic production artifact preserves local models and excludes 
     await readFile(join(dir, "backend/core.mjs"), "utf8"),
   );
   await assert.rejects(access(join(dir, "dist/backend/admin.mjs")));
+  for (const file of ["appearance-policy.mjs", "backend/appearance-policy.mjs"])
+    assert.equal(
+      await readFile(join(dir, "dist", file), "utf8"),
+      await readFile(join(dir, "backend/appearance-policy.mjs"), "utf8"),
+    );
   assert.equal(
     JSON.parse(await readFile(join(dir, "dist/release.json"), "utf8"))
       .sourceRef,

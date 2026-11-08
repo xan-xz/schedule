@@ -1,3 +1,13 @@
+import {
+  cleanAppearancePreferences,
+  appearancePolicy,
+  resolveAppearance,
+} from "./appearance-policy.mjs";
+import {
+  applyAppearance,
+  renderPersonalization,
+} from "./lib/personalization.mjs";
+import { loadedLayout, loadLayout } from "./lib/layout-loader.mjs";
 import { el, button, field, select, download } from "./lib/dom.mjs";
 import { translator, localeFor } from "./lib/i18n.mjs";
 import {
@@ -124,8 +134,15 @@ function toast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => ($("toast").hidden = true), 5000);
 }
+function currentAppearancePolicy() {
+  return appearancePolicy(
+    data()
+      ? data().siteSettings?.appearance
+      : readPreference("uf.student.appearance.policy.v1", null),
+  );
+}
 function applyTheme() {
-  document.documentElement.dataset.theme = S.settings.theme;
+  applyAppearance(S.settings, currentAppearancePolicy());
   document.documentElement.lang = S.settings.lang;
 }
 function cleanSettings(value = {}) {
@@ -133,9 +150,7 @@ function cleanSettings(value = {}) {
     groupId: typeof value.groupId === "string" ? value.groupId : "g-main",
     subgroup: typeof value.subgroup === "string" ? value.subgroup : "А",
     lang: ["ru", "kk", "en"].includes(value.lang) ? value.lang : "ru",
-    theme: ["system", "light", "dark"].includes(value.theme)
-      ? value.theme
-      : "system",
+    ...cleanAppearancePreferences(value),
     hour12: value.hour12 === true,
     reminder: [0, 5, 10, 15, 30, 60].includes(Number(value.reminder))
       ? Number(value.reminder)
@@ -298,6 +313,8 @@ function isTyping() {
 function setSnapshot(snapshot) {
   const wasChoosing = S.needsChoice;
   S.snapshot = snapshot;
+  writePreference("uf.student.appearance.policy.v1", currentAppearancePolicy());
+  applyTheme();
   validateChoice();
   if (S.migrateChoice && !S.needsChoice) {
     S.migrateChoice = false;
@@ -481,6 +498,20 @@ function allTasks() {
     ...S.personal.map((task) => ({ ...task, personal: true })),
   ].sort((a, b) => taskDue(a) - taskDue(b) || a.id.localeCompare(b.id));
 }
+function announceCurrent(line) {
+  const current = line.current;
+  const key = current?.id + ":" + current?.startDate;
+  if (previousCurrent !== key) {
+    $("announcement").textContent = current
+      ? t("now") +
+        ": " +
+        name("subjects", current.subjectId) +
+        " · " +
+        name("rooms", current.roomId, t("noRoom"))
+      : t("free");
+    previousCurrent = key;
+  }
+}
 function renderToday() {
   const line = timeline(data(), scope(), new Date());
   const current = line.current;
@@ -541,17 +572,7 @@ function renderToday() {
       );
     else hero.append(el("p", {}, t("noLessons")));
   }
-  const key = current?.id + ":" + current?.startDate;
-  if (previousCurrent !== key) {
-    $("announcement").textContent = current
-      ? t("now") +
-        ": " +
-        name("subjects", current.subjectId) +
-        " · " +
-        name("rooms", current.roomId, t("noRoom"))
-      : t("free");
-    previousCurrent = key;
-  }
+  announceCurrent(line);
   const fragment = [
     el("p", { class: "date-line" }, niceDate(line.date, true)),
     hero,
@@ -605,6 +626,11 @@ function renderToday() {
     previous = lesson;
   }
   if (nextList.length) fragment.push(section(t("next"), list));
+  fragment.push(...renderTodayExtras());
+  return fragment;
+}
+function renderTodayExtras() {
+  const fragment = [];
   const deadlines = allTasks()
     .filter(
       (task) =>
@@ -1128,6 +1154,7 @@ async function changeSetting(key, value) {
     if (!group || (key === "subgroup" && !validSubgroup(group, value))) return;
     S.choiceConfirmed = true;
   }
+  if (key === "layout") failedLayouts.delete(value);
   S.settings[key] = value;
   if (key === "groupId") {
     const group = data().groups.find((g) => g.id === value);
@@ -1322,14 +1349,11 @@ function renderMore() {
         (e) => changeSetting("lang", e.target.value),
       ),
     ),
-    field(
-      t("theme"),
-      select(
-        ["system", "light", "dark"].map((value) => [value, t(value)]),
-        S.settings.theme,
-        (e) => changeSetting("theme", e.target.value),
-      ),
-    ),
+    renderPersonalization({
+      settings: S.settings,
+      policy: currentAppearancePolicy(),
+      onChange: changeSetting,
+    }),
     field(
       t("format"),
       select(
@@ -1346,7 +1370,52 @@ function renderMore() {
     installation,
   ];
 }
+const failedLayouts = new Set();
+function renderScheduleLayout() {
+  const id = resolveAppearance(S.settings, currentAppearancePolicy()).layout;
+  if (id === "focus" || failedLayouts.has(id))
+    return S.page === "week" ? renderWeek() : renderToday();
+  const renderer = loadedLayout(id);
+  if (!renderer) {
+    void loadLayout(id)
+      .then(() => {
+        if (
+          resolveAppearance(S.settings, currentAppearancePolicy()).layout ===
+            id &&
+          ["today", "week"].includes(S.page)
+        )
+          render();
+      })
+      .catch(() => {
+        failedLayouts.add(id);
+        toast(t("error"));
+        render();
+      });
+    return S.page === "week" ? renderWeek() : renderToday();
+  }
+  announceCurrent(timeline(data(), scope(), new Date()));
+  return [
+    ...renderer({
+      data: data(),
+      page: S.page,
+      scope: scope(),
+      selected: S.selected,
+      week: S.week,
+      t,
+      niceDate,
+      lessonRow,
+      tasks: allTasks(),
+      selectDate: (date) => {
+        S.selected = date;
+        S.week = monday(date);
+        render();
+      },
+    }),
+    ...(S.page === "today" ? renderTodayExtras() : []),
+  ];
+}
 function render() {
+  applyTheme();
   header();
   updateStatus();
   if (!data()) {
@@ -1372,8 +1441,8 @@ function render() {
   $("main").replaceChildren(
     el("h1", {}, t(S.page)),
     ...{
-      today: renderToday,
-      week: renderWeek,
+      today: renderScheduleLayout,
+      week: renderScheduleLayout,
       tasks: renderTasks,
       more: renderMore,
     }[S.page](),
@@ -1429,6 +1498,10 @@ async function setupWorker() {
 function tick() {
   if (document.hidden || !data()) return;
   if (lastDay !== localDate()) {
+    if (S.selected === lastDay) {
+      S.selected = localDate();
+      S.week = monday(S.selected);
+    }
     lastDay = localDate();
     if (!isTyping()) render();
   }
@@ -1499,6 +1572,7 @@ window.addEventListener("beforeinstallprompt", (event) => {
   installPrompt = event;
 });
 window.addEventListener("online", () => {
+  failedLayouts.clear();
   void refresh();
   beginRetirement();
 });
@@ -1553,3 +1627,8 @@ await loadPersonal();
   void refresh();
 }
 void setupWorker();
+
+matchMedia("(prefers-color-scheme: dark)").addEventListener(
+  "change",
+  applyTheme,
+);

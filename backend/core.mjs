@@ -1,3 +1,4 @@
+import { validateAppearancePolicy } from "./appearance-policy.mjs";
 export const DAYS = [
   "Понедельник",
   "Вторник",
@@ -199,6 +200,21 @@ function timeValid(t) {
   return typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
 }
 export function validate(data) {
+  if (Object.hasOwn(data, "siteSettings")) {
+    if (
+      !data.siteSettings ||
+      typeof data.siteSettings !== "object" ||
+      Array.isArray(data.siteSettings)
+    )
+      fail("Неверный формат настроек сайта");
+    if (Object.hasOwn(data.siteSettings, "appearance")) {
+      try {
+        validateAppearancePolicy(data.siteSettings.appearance);
+      } catch (error) {
+        fail(error.message);
+      }
+    }
+  }
   for (const k of [
     "groups",
     "teachers",
@@ -477,7 +493,17 @@ export function mutate(input, user, op, payload = {}) {
     teacher = user.role === "teacher";
   if (!admin && !teacher) fail("Недостаточно прав", 403);
   let summary = "Изменение";
-  if (op === "lesson.save" || op === "lesson.delete") {
+  if (op === "appearance.save") {
+    if (!admin) fail("Интерфейс сайта меняет только владелец", 403);
+    let policy;
+    try {
+      policy = validateAppearancePolicy(payload.policy);
+    } catch (error) {
+      fail(error.message);
+    }
+    data.siteSettings = { ...(data.siteSettings || {}), appearance: policy };
+    summary = "Обновлены настройки интерфейса";
+  } else if (op === "lesson.save" || op === "lesson.delete") {
     if (!admin) fail("Расписание меняет только администратор", 403);
     const old = data.lessons.find((l) => l.id === payload.id);
     if (op === "lesson.delete") {
@@ -761,12 +787,27 @@ export function mutate(input, user, op, payload = {}) {
       if (k !== "holidays" && imported[k] === null) delete data[k];
       else data[k] = clone(imported[k]);
     }
+    // Only the authored public policy is imported; future/internal siblings survive.
+    if (Object.hasOwn(imported.siteSettings || {}, "appearance")) {
+      let policy;
+      try {
+        policy = validateAppearancePolicy(imported.siteSettings.appearance);
+      } catch (error) {
+        fail(error.message);
+      }
+      data.siteSettings = { ...(data.siteSettings || {}), appearance: policy };
+    }
     // Only the existing database may grandfather conflicts; an uploaded file
     // cannot grant itself exceptions.
     data.sourceConflictPairs = clone(input.sourceConflictPairs || []);
     data.sourceWarnings = clone(imported.sourceWarnings || []);
     data.source = clone(imported.source || null);
-    summary = "Импортировано расписание";
+    summary =
+      Object.hasOwn(imported.siteSettings || {}, "appearance") &&
+      JSON.stringify(input.siteSettings?.appearance) !==
+        JSON.stringify(data.siteSettings?.appearance)
+        ? "Опубликован черновик с настройками интерфейса"
+        : "Импортировано расписание";
     notice(data, summary, "Администратор обновил расписание из файла");
   } else fail("Неизвестное действие");
   validate(data);
@@ -786,6 +827,16 @@ export function visible(data, user) {
     teacher = user.role === "teacher";
   const role = user.role === "guest" ? "student" : user.role;
   if (!admin) {
+    delete d.siteSettings;
+    if (Object.hasOwn(data.siteSettings || {}, "appearance")) {
+      try {
+        d.siteSettings = {
+          appearance: validateAppearancePolicy(data.siteSettings.appearance),
+        };
+      } catch {
+        /* Invalid stored policy is not a public contract. */
+      }
+    }
     d.history = [];
     d.requests = teacher
       ? d.requests.filter((r) => r.teacherId === user.teacherId)
