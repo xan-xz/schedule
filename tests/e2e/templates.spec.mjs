@@ -51,11 +51,20 @@ test("named day templates save locally, survive reload, validate conflicts and a
     .click();
   await dialog.getByLabel("День назначения", { exact: true }).selectOption("4");
   await dialog
-    .getByRole("button", { name: "Добавить в черновик", exact: true })
+    .getByRole("button", { name: "Предпросмотр копирования", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).not.toBeEmpty();
   expect(manager.state().revision).toBe(before.revision);
   await dialog.getByLabel("День назначения", { exact: true }).selectOption("6");
+  await dialog
+    .getByRole("button", { name: "Предпросмотр копирования", exact: true })
+    .click();
+  await expect(
+    dialog.getByRole("heading", {
+      name: "Предпросмотр новых занятий",
+      exact: true,
+    }),
+  ).toBeVisible();
   await dialog
     .getByRole("button", { name: "Добавить в черновик", exact: true })
     .click();
@@ -175,7 +184,7 @@ test("week template keeps the whole selected scope and refuses to overwrite occu
     dialog.getByLabel("День назначения", { exact: true }),
   ).toHaveCount(0);
   await dialog
-    .getByRole("button", { name: "Добавить в черновик", exact: true })
+    .getByRole("button", { name: "Предпросмотр копирования", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).not.toBeEmpty();
   await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();

@@ -10,7 +10,9 @@
 .json-import-editor [role="alert"]:empty,
 .json-import-editor [role="status"]:empty,
 .csv-import-editor [role="alert"]:empty,
-.csv-import-editor [role="status"]:empty {
+.csv-import-editor [role="status"]:empty,
+.transfer-editor [role="alert"]:empty,
+.transfer-editor [role="status"]:empty {
   display: none;
 }
 .batch-actions {
