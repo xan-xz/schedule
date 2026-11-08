@@ -5,7 +5,12 @@ import { fixture, mockState } from "./fixtures.mjs";
 import { mockManager } from "./manager-fixture.mjs";
 import { DEFAULT_APPEARANCE_POLICY as defaults } from "../../backend/appearance-policy.mjs";
 const axePath = createRequire(import.meta.url).resolve("axe-core/axe.min.js");
-async function mockAppearance(page, initial = defaults, clock = {}) {
+async function mockAppearance(
+  page,
+  initial = defaults,
+  clock = {},
+  model = fixture,
+) {
   await mockState(page, clock);
   let policy = structuredClone(initial),
     revision = 7;
@@ -16,7 +21,7 @@ async function mockAppearance(page, initial = defaults, clock = {}) {
     await route.fulfill({
       json: {
         data: {
-          ...structuredClone(fixture),
+          ...structuredClone(model),
           announcements: [
             {
               id: "layout-announcement",
@@ -450,7 +455,15 @@ test("saved palette is applied before the main UI module loads", async ({
       "forest",
     );
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    await expect(page.locator(".skeleton")).toBeVisible();
+    if (process.env.PW_SERVER_ROOT === "dist") {
+      await expect(page.locator("[data-initial-choice]")).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Выбери свою группу", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("combobox", { name: "Группа", exact: true }),
+      ).toBeVisible();
+    } else await expect(page.locator(".skeleton")).toBeVisible();
   } finally {
     await context.close();
   }
@@ -505,4 +518,52 @@ test("an unpinned day selection follows Almaty midnight in an alternative layout
     page.getByRole("heading", { name: "суббота, 7 ноября", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".timeline-list")).toHaveCount(0);
+});
+
+test("timeline retains a previous-night current through midnight and removes it at the exclusive end", async ({
+  page,
+}) => {
+  const night = {
+    ...fixture.lessons[0],
+    id: "overnight-layout-current",
+    day: 4,
+    week: "all",
+    start: "23:00",
+    end: "01:00",
+    endDayOffset: 1,
+  };
+  await mockAppearance(
+    page,
+    defaults,
+    {
+      time: new Date("2026-11-06T18:59:55Z"),
+      ticking: true,
+    },
+    { ...fixture, lessons: [night], exceptions: [] },
+  );
+  await page.goto("/schedule/");
+  await more(page);
+  await page
+    .getByRole("combobox", { name: "Представление расписания", exact: true })
+    .selectOption("timeline");
+  await nav(page, "Сегодня");
+  const current = page.locator('.timeline-list [aria-current="time"]');
+  await expect(current).toHaveCount(1);
+  await expect(current).toContainText("Алгоритмы");
+  await expect(current).toContainText("23:00");
+  await expect(current).toContainText("01:00 +1");
+  await expect(page.locator(".timeline-list .lesson-row")).toHaveCount(1);
+  await page.clock.runFor(5011);
+  await expect(
+    page.getByRole("heading", { name: "суббота, 7 ноября", exact: true }),
+  ).toBeVisible();
+  await expect(current).toHaveCount(1);
+  await expect(current).toContainText("Алгоритмы");
+  await expect(page.locator(".timeline-list .lesson-row")).toHaveCount(1);
+  await page.clock.runFor(60 * 60 * 1000);
+  await expect(current).toHaveCount(0);
+  await expect(page.locator(".timeline-list")).toHaveCount(0);
+  await expect(
+    page.getByText("На этот день занятий нет.", { exact: true }),
+  ).toBeVisible();
 });
