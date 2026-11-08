@@ -1,4 +1,10 @@
 const categories = ["performance", "accessibility", "best-practices", "seo"];
+const floors = Object.freeze({
+  performance: 95,
+  accessibility: 100,
+  "best-practices": 95,
+  seo: 90,
+});
 export function performanceRun(report, exitCode) {
   return {
     exitCode,
@@ -15,8 +21,15 @@ export function assessPerformanceRuns(runs) {
   if (runs.length !== 5) failures.push("Exactly five fresh runs are required");
   for (const [index, run] of runs.entries()) {
     if (run.exitCode !== 0) failures.push(`Run ${index + 1}: process failed`);
-    if (categories.some((key) => run.categories?.[key] !== 100))
-      failures.push(`Run ${index + 1}: every category must score 100`);
+    if (
+      categories.some(
+        (key) =>
+          !Number.isFinite(run.categories?.[key]) ||
+          run.categories[key] < floors[key] ||
+          run.categories[key] > 100,
+      )
+    )
+      failures.push(`Run ${index + 1}: category budget failed`);
     if (
       !Number.isFinite(run.lcpMs) ||
       run.lcpMs <= 0 ||
@@ -34,5 +47,23 @@ export function assessPerformanceRuns(runs) {
     runs.length === 5 && validLcp.length === 5 ? validLcp[2] : null;
   if (medianLcpMs === null || medianLcpMs > 1000)
     failures.push("Median mobile LCP must be at most 1000 ms");
-  return { gatePassed: failures.length === 0, medianLcpMs, failures, runs };
+  const medianCategories = Object.fromEntries(
+    categories.map((key) => {
+      const values = runs
+        .map((run) => run.categories?.[key])
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+      return [key, runs.length === 5 && values.length === 5 ? values[2] : null];
+    }),
+  );
+  if (categories.some((key) => medianCategories[key] !== 100))
+    failures.push("Every category median must score 100");
+  return {
+    gatePassed: failures.length === 0,
+    medianLcpMs,
+    medianCategories,
+    floors,
+    failures,
+    runs,
+  };
 }

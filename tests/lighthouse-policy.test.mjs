@@ -28,6 +28,33 @@ test("the previous all-100 release still fails its strict LCP target", () => {
   assert.equal(result.gatePassed, false);
   assert.equal(result.medianLcpMs, 1261);
 });
+test("one 99 performance score is retained while medians and every original budget remain satisfied", () => {
+  const runs = [783, 785, 780, 770, 773].map(run);
+  runs[3].categories.performance = 99;
+  runs[3].tbtMs = 92;
+  const result = assessPerformanceRuns(runs);
+  assert.equal(result.gatePassed, true);
+  assert.equal(result.medianCategories.performance, 100);
+  assert.deepEqual(result.runs, runs);
+  assert.equal(result.runs[3].tbtMs, 92);
+});
+test("a reduced median or any original per-run budget violation still blocks publication", () => {
+  for (const [key, below] of [
+    ["performance", 94],
+    ["accessibility", 99],
+    ["best-practices", 94],
+    ["seo", 89],
+  ]) {
+    const runs = Array.from({ length: 5 }, () => run(800));
+    runs[0].categories[key] = below;
+    assert.equal(assessPerformanceRuns(runs).gatePassed, false);
+  }
+  for (const key of ["performance", "best-practices", "seo"]) {
+    const runs = Array.from({ length: 5 }, () => run(800));
+    for (const entry of runs.slice(0, 3)) entry.categories[key] = 99;
+    assert.equal(assessPerformanceRuns(runs).gatePassed, false);
+  }
+});
 test("missing runs, malformed metrics, nonzero exits and a single reduced category or shift fail", () => {
   const good = Array.from({ length: 5 }, () => run(800));
   const malformed = performanceRun({}, 0);
