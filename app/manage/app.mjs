@@ -377,6 +377,16 @@ async function act(op, payload, expected = S.revision) {
   if (catalogOperation && !draft) startDraft();
   let replacements = draft?.catalogReplacements || [];
   if (
+    ["catalog.replace", "catalog.delete"].includes(op) &&
+    replacements.some(
+      (item) =>
+        item.entity === payload.entity && item.replacementId === payload.id,
+    )
+  )
+    throw Error(
+      "Эта запись — конечная цель замены в черновике. Цепочки замен и удаление цели не поддерживаются.",
+    );
+  if (
     op === "catalog.replace" &&
     draft.before[payload.entity].some((row) => row.id === payload.id)
   )

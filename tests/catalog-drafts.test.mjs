@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mutate } from "../backend/core.mjs";
+import { fixture } from "./e2e/fixtures.mjs";
 import {
   draftChanges,
   recoverChanges,
@@ -98,4 +100,39 @@ test("archive and room estimate changes survive recovery while unknown live meta
   assert.deepEqual(recovered.data.rooms[0].unknown, { keep: "fresh" });
   assert.equal(recovered.data.rooms[0].note, "Owner note");
   assert.equal(recovered.data.groups[0].archivedAt, after.groups[0].archivedAt);
+});
+
+test("restoring a replacement through the actual import model repoints newly arrived private rows without journaling them", () => {
+  const owner = { id: "owner", role: "admin", name: "Owner" },
+    before = structuredClone(fixture);
+  const added = mutate(before, owner, "catalog.save", {
+    entity: "groups",
+    item: { id: "replacement", name: "New group", subgroups: ["А", "Б"] },
+  }).data;
+  const intent = {
+    entity: "groups",
+    id: "g-main",
+    replacementId: "replacement",
+  };
+  const after = mutate(added, owner, "catalog.replace", intent).data;
+  const changes = draftChanges(before, after, [intent]);
+  const fresh = structuredClone(before);
+  fresh.tasks.push({
+    ...fresh.tasks[0],
+    id: "fresh-private-row",
+    description: "Only on fresh server",
+  });
+  const restored = recoverChanges(fresh, changes);
+  const result = mutate(fresh, owner, "import", {
+    data: restored.data,
+    catalogReplacements: restored.catalogReplacements,
+  }).data;
+  assert.equal(result.tasks.length, 2);
+  assert.equal(
+    result.tasks.every((row) => row.groupId === "replacement"),
+    true,
+  );
+  assert.equal(result.tasks[1].description, "Only on fresh server");
+  assert.equal(JSON.stringify(changes).includes("fresh-private-row"), false);
+  assert.equal(JSON.stringify(changes).includes("shared-task"), false);
 });
