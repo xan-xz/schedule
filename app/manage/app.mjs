@@ -3333,59 +3333,123 @@ async function csvExport() {
     toast(e.message);
   }
 }
-function csvImport() {
-  const dialog = $("modal"),
-    input = dom("input", { type: "file", accept: ".csv,text/csv" }),
-    error = dom("p", { class: "form-error", role: "alert" });
-  const form = dom(
-    "form",
-    {},
-    dom(
-      "p",
-      {},
-      "Добавляет строки в черновик. CSV из Google-таблицы: day,start,end,subject,room,teacher,type,subgroup,week. День: 0 — понедельник. Названия должны совпадать со справочниками.",
-    ),
-    domField("Файл CSV", input),
-    dom(
-      "button",
-      { type: "submit", class: "btn primary" },
-      "Проверить и добавить в черновик",
-    ),
-    error,
-  );
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const file = input.files[0];
-      if (!file) throw Error("Выбери файл");
-      if (file.size > 1000000)
-        throw Error("Размер файла не должен превышать 1 МБ");
-      const { parseScheduleCsv } = await import("./tools.mjs");
-      if (!draft) startDraft();
-      const result = parseScheduleCsv(await file.text(), draft.data, {
-        groupId: S.groupId,
-        subgroup: S.subgroup,
-        mode: "append",
-      });
-      draft.data = result;
-      S.data = visible(draft.data, S.user);
-      dialog.close();
-      render();
-      toast("Импорт проверен. Просмотри черновик и опубликуй.");
-    } catch (e) {
-      error.textContent = e.message;
-    }
-  });
-  dialog.replaceChildren(
-    dom(
-      "div",
-      { class: "dialog-head" },
-      dom("h2", {}, "Импорт CSV"),
-      domButton("Закрыть", closeModal, { class: "btn" }),
-    ),
-    form,
-  );
-  dialog.showModal();
+async function csvImport() {
+  if (!isAdmin() || ownerEnding) return;
+  const epoch = S.epoch;
+  try {
+    const [
+      { createCsvImportEditor },
+      { previewScheduleCsv },
+      { loadLessonBatchStyles },
+    ] = await Promise.all([
+      import("./csv-import-editor.mjs"),
+      import("./tools.mjs"),
+      import("./lesson-batch-editor.mjs"),
+    ]);
+    await loadLessonBatchStyles();
+    await draftSaveQueue;
+    if (ownerEnding || !isAdmin() || S.epoch !== epoch || S.busy) return;
+    const data = clone(draft?.data || S.data);
+    const scope = { groupId: S.groupId, subgroup: S.subgroup };
+    const selectedGroup = data.groups.find(
+      (group) => group.id === scope.groupId,
+    );
+    if (!selectedGroup || !isGroupActive(selectedGroup))
+      throw Error("Выберите активную группу для импорта.");
+    const opened = {
+      draft,
+      generation: draft?.localGeneration,
+      revision: S.revision,
+      fingerprint: JSON.stringify([data, draft?.catalogReplacements || []]),
+    };
+    let body,
+      checked = null,
+      appliedDraft = null;
+    const authorized = () => {
+      if (ownerEnding || !isAdmin() || S.epoch !== epoch)
+        throw Error("Войдите владельцем заново.");
+      if (!body?.isConnected || !$("modal").open)
+        throw Error("Форма импорта закрыта.");
+      if (S.busy) throw Error("Дождись сохранения");
+      if (S.groupId !== scope.groupId || S.subgroup !== scope.subgroup)
+        throw Error("Группа или подгруппа изменились. Откройте импорт заново.");
+    };
+    const unchanged = () => {
+      if (
+        draft !== opened.draft ||
+        draft?.localGeneration !== opened.generation ||
+        S.revision !== opened.revision ||
+        draft?.baseConflict ||
+        JSON.stringify([
+          draft?.data || S.data,
+          draft?.catalogReplacements || [],
+        ]) !== opened.fingerprint
+      )
+        throw Error(
+          "Данные или версия изменились. Откройте импорт заново; этот файл не применён.",
+        );
+    };
+    body = createCsvImportEditor({
+      data,
+      scope,
+      onClose: closeModal,
+      onDirty: () => {
+        draftFormDirty = true;
+      },
+      onInvalidate: () => {
+        checked = null;
+      },
+      onPreview: async (text, mode) => {
+        await draftSaveQueue;
+        authorized();
+        unchanged();
+        const result = previewScheduleCsv(text, data, { ...scope, mode });
+        try {
+          draftChanges(
+            draft?.before || S.data,
+            result.data,
+            draft?.catalogReplacements || [],
+          );
+        } catch {
+          throw Error(
+            "Сведения источника или объём изменений нельзя безопасно сохранить в локальный черновик. Файл не применён.",
+          );
+        }
+        checked = result;
+        return result;
+      },
+      onApply: async (retry) => {
+        await draftSaveQueue;
+        authorized();
+        if (retry) {
+          if (!appliedDraft || draft !== appliedDraft)
+            throw Error(
+              "Черновик изменился. Сохраните его из панели черновика.",
+            );
+        } else {
+          unchanged();
+          if (!checked?.changes.length)
+            throw Error("Повторите предпросмотр CSV.");
+          validate(checked.data);
+          if (!draft) startDraft();
+          draft.data = clone(checked.data);
+          S.data = visible(draft.data, S.user);
+          appliedDraft = draft;
+        }
+        const saved = await persistCurrentDraft(retry);
+        if (!ownerEnding) render();
+        if (saved)
+          toast(
+            "Импорт сохранён в локальный черновик. Публикация выполняется отдельно.",
+          );
+        return { saved, error: appliedDraft.saveError };
+      },
+    });
+    showTemplateDialog("Импорт CSV", body);
+    $("modal").dataset.revision = String(opened.revision);
+  } catch (problem) {
+    if (!ownerEnding) toast(problem.message);
+  }
 }
 function enhanceLessonForm(currentType = "") {
   const form = $("dialog-form");

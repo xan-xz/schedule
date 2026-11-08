@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parseScheduleCsv,
+  previewScheduleCsv,
   exportScheduleCsv,
   copyDay,
   copyWeek,
@@ -150,6 +151,116 @@ test("CSV protects spreadsheet formula cells and remains importable", () => {
       .subjectId,
     "s",
   );
+});
+test("CSV preview is read-only and identifies an append without changing source data", () => {
+  const d = fixture(),
+    before = structuredClone(d);
+  const review = previewScheduleCsv(
+    "day,start,end,subject\n1,10:00,10:50,Subject",
+    d,
+    scope,
+  );
+  assert.deepEqual(d, before);
+  assert.deepEqual(review.counts, {
+    added: 1,
+    updated: 0,
+    removed: 0,
+    unchanged: 1,
+  });
+  assert.equal(review.changes[0].before, null);
+  assert.equal(review.changes[0].after.day, 1);
+  assert.deepEqual(review.data.sourceWarnings, before.sourceWarnings);
+});
+test("CSV replacement preview separates additions, ID edits and deletions with lossless metadata", () => {
+  const d = fixture();
+  d.lessons[0].future = { nested: ["retained"] };
+  d.lessons.push({ ...d.lessons[0], id: "remove", day: 2 });
+  const before = structuredClone(d);
+  const review = previewScheduleCsv(
+    "day,start,end,subject,id\n0,10:00,10:50,Subject,l1\n1,10:00,10:50,Subject,",
+    d,
+    { ...scope, mode: "replace-scope" },
+  );
+  assert.deepEqual(review.counts, {
+    added: 1,
+    updated: 1,
+    removed: 1,
+    unchanged: 0,
+  });
+  const edited = review.data.lessons.find((row) => row.id === "l1");
+  assert.deepEqual(edited.source, { cell: "B2" });
+  assert.deepEqual(edited.future, { nested: ["retained"] });
+  assert.deepEqual(d, before);
+});
+test("unchanged CSV export has no semantic changes, including implicit same-day ending", () => {
+  const d = fixture();
+  const review = previewScheduleCsv(exportScheduleCsv(d, scope), d, {
+    ...scope,
+    mode: "replace-scope",
+  });
+  assert.deepEqual(review.counts, {
+    added: 0,
+    updated: 0,
+    removed: 0,
+    unchanged: 1,
+  });
+  assert.deepEqual(review.changes, []);
+});
+test("CSV preview rejects invalid data, links, unknown columns and resource conflicts without mutation", () => {
+  const d = fixture(),
+    before = structuredClone(d);
+  for (const csv of [
+    "day,start,end,subject\n0,09:00,09:50,Subject",
+    "day,start,end,subject,group\n1,09:00,09:50,Subject,other",
+    "day,start,end,subject\n1,09:00,09:50,Missing",
+  ])
+    assert.throws(() => previewScheduleCsv(csv, d, scope));
+  d.exceptions = [{ lessonId: "l1", date: "2026-11-02", status: "cancelled" }];
+  assert.throws(() =>
+    previewScheduleCsv("day,start,end,subject\n1,10:00,10:50,Subject", d, {
+      ...scope,
+      mode: "replace-scope",
+    }),
+  );
+  d.exceptions = [];
+  assert.deepEqual(d, before);
+});
+test("CSV preview enforces input row and UTF-8 byte bounds before application", () => {
+  const d = fixture();
+  assert.throws(
+    () =>
+      previewScheduleCsv(
+        "day,start,end,subject\n" + "1,10:00,10:50,Subject\n".repeat(1001),
+        d,
+        scope,
+      ),
+    /1000/,
+  );
+  assert.throws(() => previewScheduleCsv("я".repeat(500001), d, scope), /1 МБ/);
+});
+test("CSV review scopes removals to the exact subgroup and never removes common or other-group rows", () => {
+  const d = fixture();
+  d.lessons.push(
+    { ...d.lessons[0], id: "common", day: 2, subgroup: "all" },
+    { ...d.lessons[0], id: "other", day: 3, groupId: "other" },
+  );
+  const review = previewScheduleCsv(
+    "day,start,end,subject\n1,10:00,10:50,Subject",
+    d,
+    { groupId: "g", subgroup: "А", mode: "replace-scope" },
+  );
+  assert.deepEqual(review.counts, {
+    added: 1,
+    updated: 0,
+    removed: 1,
+    unchanged: 0,
+  });
+  assert.equal(
+    review.changes.find((row) => row.kind === "removed").before.id,
+    "l1",
+  );
+  assert.ok(review.data.lessons.some((row) => row.id === "common"));
+  assert.ok(review.data.lessons.some((row) => row.id === "other"));
 });
 test("copyDay appends new IDs, leaves original/source/other groups untouched and validates resources", () => {
   const d = fixture();

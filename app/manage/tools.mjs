@@ -143,8 +143,13 @@ export function parseScheduleCsv(text, data, options = {}) {
   if (rows.length < 2)
     error("CSV должен содержать заголовки и хотя бы одну пару.");
   const headers = rows.shift().map(normalized);
+  if (rows.length > (options.maxRows || 5000))
+    error(`В CSV допускается до ${options.maxRows || 5000} занятий.`);
   if (new Set(headers).size !== headers.length)
     error("Повторяются заголовки CSV.");
+  const supported = new Set(columns.map(normalized));
+  const unknown = headers.filter((header) => !supported.has(header));
+  if (unknown.length) error(`Неизвестные столбцы CSV: ${unknown.join(", ")}.`);
   for (const required of ["day", "start", "end", "subject"])
     if (!headers.includes(required))
       error(`В CSV отсутствует столбец ${required}.`);
@@ -210,6 +215,41 @@ export function parseScheduleCsv(text, data, options = {}) {
   // No orphan removal: existing overrides/tasks/attendance/requests must still validate.
   validate(result);
   return result;
+}
+
+/** A read-only review; exact-ID replacement retains source metadata. */
+export function previewScheduleCsv(text, data, options = {}) {
+  if (
+    typeof text !== "string" ||
+    new TextEncoder().encode(text).byteLength > 1_000_000
+  )
+    error("Размер CSV не должен превышать 1 МБ.");
+  const scope = scopeFor(data, options);
+  const result = parseScheduleCsv(text, data, { ...options, maxRows: 1000 });
+  const before = new Map(data.lessons.map((lesson) => [lesson.id, lesson]));
+  const after = new Map(result.lessons.map((lesson) => [lesson.id, lesson]));
+  const changes = [];
+  let unchanged = 0;
+  for (const lesson of result.lessons.filter((row) => inScope(row, scope))) {
+    const original = before.get(lesson.id);
+    if (!original) changes.push({ kind: "added", before: null, after: lesson });
+    else if (lessonKey(original) !== lessonKey(lesson))
+      changes.push({ kind: "updated", before: original, after: lesson });
+    else unchanged++;
+  }
+  for (const lesson of data.lessons.filter((row) => inScope(row, scope)))
+    if (!after.has(lesson.id))
+      changes.push({ kind: "removed", before: lesson, after: null });
+  return {
+    data: result,
+    changes,
+    counts: {
+      added: changes.filter((row) => row.kind === "added").length,
+      updated: changes.filter((row) => row.kind === "updated").length,
+      removed: changes.filter((row) => row.kind === "removed").length,
+      unchanged,
+    },
+  };
 }
 function csvCell(value) {
   let text = String(value ?? "");
