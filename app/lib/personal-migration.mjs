@@ -212,7 +212,7 @@ async function migrateLocked(config, store, browserStorage) {
         ))
           if (humanIds.has(id) && ["new", "progress", "done"].includes(value))
             imported.set(id, value);
-        await verifiedUpdate(
+        const targetStatuses = await verifiedUpdate(
           store,
           "statuses:live:" + scope,
           (current) => {
@@ -222,6 +222,22 @@ async function migrateLocked(config, store, browserStorage) {
           },
           {},
         );
+        // An empty startup map says nothing about a person's progress. A list
+        // written by an older tab can arrive after this pass read its inputs.
+        // Checkpoint only evidence actually processed, explicit canonical
+        // values, and blocked ID collisions; otherwise late proof is lost.
+        const targetIds = new Set(targetPersonal.map((task) => task.id));
+        const observedProgressIds = new Set([
+          ...imported.keys(),
+          ...conflicts,
+          ...Object.entries(targetStatuses)
+            .filter(
+              ([id, value]) =>
+                targetIds.has(id) &&
+                ["new", "progress", "done"].includes(value),
+            )
+            .map(([id]) => id),
+        ]);
         await verifiedUpdate(store, historyKey, (current) => {
           const latest = current?.processedSources?.[migration.personalFrom];
           return {
@@ -238,7 +254,7 @@ async function migrateLocked(config, store, browserStorage) {
                       ? latest.seenPersonalIds
                       : []),
                     ...(sourcePersonal || []).map((task) => task.id),
-                    ...targetPersonal.map((task) => task.id),
+                    ...targetIds,
                   ]),
                 ],
                 seenProgressIds: [
@@ -247,7 +263,7 @@ async function migrateLocked(config, store, browserStorage) {
                     ...(completedCheckpoint(latest)
                       ? latest.seenProgressIds
                       : []),
-                    ...targetPersonal.map((task) => task.id),
+                    ...observedProgressIds,
                   ]),
                 ],
               },
