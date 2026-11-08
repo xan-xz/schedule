@@ -173,18 +173,65 @@ export function createOwnerSession(
   });
 }
 
-/** Remove the entire invite fragment before any asynchronous work or rendering. */
-export function consumeBootstrapFragment(
+const CALLBACK_ERROR_CODES = {
+  otp_expired: "CALLBACK_EXPIRED",
+  invite_not_found: "CALLBACK_EXPIRED",
+  flow_state_expired: "CALLBACK_EXPIRED",
+  flow_state_not_found: "CALLBACK_EXPIRED",
+  over_email_send_rate_limit: "CALLBACK_RATE_LIMITED",
+  over_request_rate_limit: "CALLBACK_RATE_LIMITED",
+  email_provider_disabled: "CALLBACK_UNAVAILABLE",
+  otp_disabled: "CALLBACK_UNAVAILABLE",
+};
+const callbackErrorFields = ["error", "error_code", "error_description"];
+
+/** Consume callback data synchronously. Provider descriptions never reach UI,
+ * storage or a retained URL; an error never authenticates an accompanying token. */
+export function consumeBootstrapCallback(
   locationObject = location,
   historyObject = history,
 ) {
   const fragment = new URLSearchParams(locationObject.hash.slice(1));
-  const token = fragment.get("access_token") || "";
-  if (locationObject.hash)
+  const query = new URLSearchParams(locationObject.search);
+  const failed = callbackErrorFields.some(
+    (key) => fragment.has(key) || query.has(key),
+  );
+  const nativeCode =
+    fragment.get("error_code") || query.get("error_code") || "";
+  const errorCode = failed
+    ? Object.hasOwn(CALLBACK_ERROR_CODES, nativeCode)
+      ? CALLBACK_ERROR_CODES[nativeCode]
+      : "CALLBACK_ERROR"
+    : null;
+  const token = failed ? "" : fragment.get("access_token") || "";
+  if (failed) {
+    // Remove callback errors and any accompanying credentials from error queries.
+    for (const key of [
+      ...callbackErrorFields,
+      "access_token",
+      "refresh_token",
+      "provider_token",
+      "provider_refresh_token",
+      "token_hash",
+      "code",
+    ])
+      query.delete(key);
+  }
+  if (locationObject.hash || failed) {
+    const search = failed ? query.toString() : locationObject.search.slice(1);
     historyObject.replaceState(
       null,
       "",
-      locationObject.pathname + locationObject.search,
+      locationObject.pathname + (search ? "?" + search : ""),
     );
-  return token;
+  }
+  return { token, errorCode };
+}
+
+/** Compatibility helper for callers that only consume successful invitation proof. */
+export function consumeBootstrapFragment(
+  locationObject = location,
+  historyObject = history,
+) {
+  return consumeBootstrapCallback(locationObject, historyObject).token;
 }

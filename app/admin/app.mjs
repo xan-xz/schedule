@@ -1,12 +1,14 @@
-import { consumeBootstrapFragment } from "./api.mjs";
+import { consumeBootstrapCallback } from "./api.mjs";
 import { setOwnerSession, clearOwnerSession } from "./session-bridge.mjs";
 
-let bootstrapToken = consumeBootstrapFragment();
+let { token: bootstrapToken, errorCode: bootstrapError } =
+  consumeBootstrapCallback();
 let access = null;
 let disposed = false;
 window.addEventListener("pagehide", () => {
   disposed = true;
   bootstrapToken = "";
+  bootstrapError = null;
   access?.dispose();
   clearOwnerSession();
 });
@@ -28,6 +30,7 @@ try {
   if (!disposed)
     access = renderOwnerAccess(document.getElementById("owner-main"), {
       bootstrapToken,
+      bootstrapError,
       async onAuthenticated(session) {
         access.dispose({ clearSession: false });
         setOwnerSession(session);
@@ -82,4 +85,5 @@ try {
       "Не удалось открыть вход. Обновите страницу и повторите попытку.";
 } finally {
   bootstrapToken = "";
+  bootstrapError = null;
 }

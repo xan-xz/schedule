@@ -7,6 +7,14 @@ import {
 } from "./api.mjs";
 
 const MESSAGES = {
+  CALLBACK_EXPIRED:
+    "Ссылка из письма истекла или уже использована. Запросите новое письмо. Скопируйте ссылку с кнопки, не открывая её, и вставьте в поле кода или приглашения. Для обычного входа сначала введите пароль.",
+  CALLBACK_RATE_LIMITED:
+    "Почтовый сервис ограничил число попыток. Подождите и запросите новое письмо; ссылка не подтверждает вход.",
+  CALLBACK_UNAVAILABLE:
+    "Почтовый вход сейчас недоступен. Проверьте настройки Email/SMTP проекта и адрес возврата, затем запросите новое письмо.",
+  CALLBACK_ERROR:
+    "Не удалось подтвердить переход из письма. Начните вход заново или запросите новое приглашение. Ссылку и коды никому передавать не нужно.",
   INVALID_REQUEST: "Проверьте заполненные поля и повторите попытку.",
   INVALID_PROOF:
     "Не удалось подтвердить данные. Проверьте код и срок его действия.",
@@ -22,7 +30,12 @@ const MESSAGES = {
 /** Sole-owner identity and every authentication decision belong to the server. */
 export function renderOwnerAccess(
   target,
-  { request = createOwnerApi(), bootstrapToken = "", onAuthenticated } = {},
+  {
+    request = createOwnerApi(),
+    bootstrapToken = "",
+    bootstrapError = null,
+    onAuthenticated,
+  } = {},
 ) {
   const controller = new AbortController();
   const timers = new Set();
@@ -31,7 +44,17 @@ export function renderOwnerAccess(
   let status = null;
   let challenge = null;
   let session = null;
-  let invite = bootstrapToken;
+  let callbackError = bootstrapError
+    ? [
+        "CALLBACK_EXPIRED",
+        "CALLBACK_RATE_LIMITED",
+        "CALLBACK_UNAVAILABLE",
+        "CALLBACK_ERROR",
+      ].includes(bootstrapError)
+      ? bootstrapError
+      : "CALLBACK_ERROR"
+    : null;
+  let invite = callbackError ? "" : bootstrapToken;
   bootstrapToken = "";
   const feedback = el("p", {
     class: "owner-feedback",
@@ -308,7 +331,7 @@ export function renderOwnerAccess(
     });
     show(
       "Настройка владельца",
-      "Откройте личное приглашение из письма или вставьте ссылку с кнопки письма. Сервер подтвердит владельца до настройки пароля.",
+      "Запросите новое письмо и скопируйте ссылку с его кнопки, не открывая её. Вставьте ссылку в поле приглашения. Сервер подтвердит владельца до настройки пароля.",
       form(
         "Подтвердить приглашение",
         async () => {
@@ -561,6 +584,10 @@ export function renderOwnerAccess(
         showLogin();
       } else if (status.setupRequired === true) showSetup();
       else throw new OwnerAccessError("UNAVAILABLE");
+      if (callbackError) {
+        errorMessage(new OwnerAccessError(callbackError));
+        callbackError = null;
+      }
     } catch (error) {
       if (disposed || view !== ownView) return;
       show(
@@ -583,6 +610,7 @@ export function renderOwnerAccess(
       target.replaceChildren();
       challenge = status = null;
       invite = "";
+      callbackError = null;
       if (clearSession) session?.clear();
       session = null;
     },
