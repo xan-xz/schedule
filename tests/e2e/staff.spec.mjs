@@ -108,9 +108,15 @@ test("copying onto the same day fails without sending a publish request", async 
     .getByRole("combobox", { name: "Куда", exact: true })
     .selectOption("4");
   await dialog
-    .getByRole("button", { name: "Добавить в черновик", exact: true })
+    .getByRole("button", { name: "Предпросмотр копирования", exact: true })
     .click();
   await expect(dialog.getByRole("alert")).not.toBeEmpty();
+  await expect(
+    dialog.getByRole("button", { name: "Добавить в черновик", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByText("Черновик · не опубликован", { exact: true }),
+  ).toHaveCount(0);
   expect(manager.state()).toEqual(before);
   expect(manager.writes()).toEqual([]);
 });

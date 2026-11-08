@@ -2785,66 +2785,10 @@ function templateSaveForm(tools) {
   showTemplateDialog("Новый шаблон", form);
   title.focus();
 }
-function templateApplyForm(tools, template) {
-  if (!isAdmin()) return;
-  const day = domSelect(
-    DAYS.map((label, i) => [String(i), label]),
-    String(dayOf(S.date)),
-    () => {},
-  );
-  const error = dom("p", { class: "form-error", role: "alert" });
-  const form = dom(
-    "form",
-    {},
-    dom(
-      "p",
-      {},
-      "«" +
-        template.name +
-        "» → " +
-        name("groups", S.groupId) +
-        " · " +
-        (S.subgroup === "all" ? "обе подгруппы" : S.subgroup),
-    ),
-    dom(
-      "p",
-      { class: "notice-info section-space" },
-      "Будут добавлены новые пары. Существующие не заменятся. При любом пересечении весь шаблон будет отклонён. Публикация выполняется отдельно после предпросмотра.",
-    ),
-    template.kind === "day" ? templateField("День назначения", day) : null,
-    dom(
-      "div",
-      { class: "row section-space" },
-      dom(
-        "button",
-        { type: "submit", class: "btn primary" },
-        "Добавить в черновик",
-      ),
-      domButton("Назад к шаблонам", () => templateManager(), { class: "btn" }),
-    ),
-    error,
-  );
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    try {
-      // Validate against the complete current draft before creating/modifying it.
-      const result = tools.applyTemplate(draft?.data || S.data, template, {
-        groupId: S.groupId,
-        subgroup: S.subgroup,
-        toDay: Number(day.value),
-      });
-      if (!draft) startDraft();
-      draft.data = result;
-      S.data = visible(draft.data, S.user);
-      closeModal();
-      render();
-      toast("Шаблон добавлен в черновик. Проверь и опубликуй изменения.");
-    } catch (e) {
-      error.textContent = e.message;
-    }
-  });
-  showTemplateDialog("Применить шаблон", form);
+function templateApplyForm(_tools, template) {
+  void transferForm("template", template);
 }
+
 function templateRenameForm(tools, template) {
   if (!isAdmin()) return;
   const title = dom("input", {
@@ -3528,83 +3472,178 @@ function previewDraft() {
   dialog.showModal();
 }
 function bulkForm(kind) {
-  const group = dom(
-    "p",
-    {},
-    name("groups", S.groupId) +
-      " · " +
-      S.subgroup +
-      " · копирование добавляет занятия, не заменяет существующие.",
-  );
-  const options =
-    kind === "day"
-      ? DAYS.map((day, i) => [String(i), day])
-      : [
-          ["odd", "Нечётная"],
-          ["even", "Чётная"],
-        ];
-  const from = domSelect(
-      options,
-      kind === "day" ? String(dayOf(S.date)) : "odd",
-      () => {},
-    ),
-    to = domSelect(
-      options,
-      kind === "day" ? String((dayOf(S.date) + 1) % 7) : "even",
-      () => {},
-    );
-  const error = dom("p", { class: "form-error", role: "alert" }),
-    dialog = $("modal");
-  const form = dom(
-    "form",
-    {},
-    group,
-    domField("Откуда", from),
-    domField("Куда", to),
-    dom(
-      "button",
-      { type: "submit", class: "btn primary" },
-      "Добавить в черновик",
-    ),
-    error,
-  );
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const tools = await import("./tools.mjs");
-      if (!draft) startDraft();
-      draft.data =
-        kind === "day"
-          ? tools.copyDay(draft.data, {
-              groupId: S.groupId,
-              subgroup: S.subgroup,
-              fromDay: Number(from.value),
-              toDay: Number(to.value),
-            })
-          : tools.copyWeek(draft.data, {
-              groupId: S.groupId,
-              subgroup: S.subgroup,
-              fromWeek: from.value,
-              toWeek: to.value,
-            });
-      S.data = visible(draft.data, S.user);
-      dialog.close();
-      render();
-    } catch (e) {
-      error.textContent = e.message;
-    }
-  });
-  dialog.replaceChildren(
-    dom(
-      "div",
-      { class: "dialog-head" },
-      dom("h2", {}, kind === "day" ? "Копировать день" : "Копировать неделю"),
-      domButton("Закрыть", closeModal, { class: "btn" }),
-    ),
-    form,
-  );
-  dialog.showModal();
+  void transferForm(kind);
 }
+async function transferForm(kind, selectedTemplate = null) {
+  if (!isAdmin() || ownerEnding) return;
+  if (S.busy || S.rollbackBusy) return toast("Дождись сохранения");
+  const epoch = S.epoch,
+    scope = { groupId: S.groupId, subgroup: S.subgroup },
+    modalChild = $("modal").firstChild,
+    modalWasOpen = $("modal").open,
+    template = selectedTemplate ? clone(selectedTemplate) : null;
+  try {
+    const [
+      { previewTransfer },
+      { createTransferEditor },
+      { loadLessonBatchStyles },
+      { loadTemplates },
+    ] = await Promise.all([
+      import("./transfer-preview.mjs"),
+      import("./transfer-editor.mjs"),
+      import("./lesson-batch-editor.mjs"),
+      import("./templates.mjs"),
+    ]);
+    await loadLessonBatchStyles();
+    await draftSaveQueue;
+    if (
+      ownerEnding ||
+      !isAdmin() ||
+      epoch !== S.epoch ||
+      S.busy ||
+      S.rollbackBusy ||
+      $("modal").firstChild !== modalChild ||
+      $("modal").open !== modalWasOpen ||
+      S.groupId !== scope.groupId ||
+      S.subgroup !== scope.subgroup
+    )
+      return;
+    const data = clone(draft?.data || S.data),
+      opened = {
+        draft,
+        generation: draft?.localGeneration,
+        revision: S.revision,
+        fingerprint: draftFingerprint([data, draft?.catalogReplacements || []]),
+      };
+    let body,
+      checked = null,
+      appliedDraft = null,
+      appliedFingerprint = null;
+    const authorized = () => {
+      if (ownerEnding || !isAdmin() || epoch !== S.epoch)
+        throw Error("Войдите владельцем заново.");
+      if (!body?.isConnected || !$("modal").open)
+        throw Error("Форма копирования закрыта.");
+      if (S.busy || S.rollbackBusy) throw Error("Дождись сохранения");
+      if (S.groupId !== scope.groupId || S.subgroup !== scope.subgroup)
+        throw Error(
+          "Группа или подгруппа изменились. Откройте копирование заново.",
+        );
+    };
+    const unchanged = () => {
+      if (
+        draft !== opened.draft ||
+        draft?.localGeneration !== opened.generation ||
+        S.revision !== opened.revision ||
+        draft?.baseConflict ||
+        draftFingerprint([
+          draft?.data || S.data,
+          draft?.catalogReplacements || [],
+        ]) !== opened.fingerprint
+      )
+        throw Error(
+          "Данные или версия изменились. Откройте копирование заново; занятия не добавлены.",
+        );
+    };
+    const currentTemplate = () => {
+      if (!template) return;
+      const current = loadTemplates(undefined, true).find(
+        (row) => row.id === template.id,
+      );
+      if (!current || draftFingerprint(current) !== draftFingerprint(template))
+        throw Error(
+          "Шаблон изменён или удалён. Откройте его заново; занятия не добавлены.",
+        );
+    };
+    const group = data.groups.find((row) => row.id === scope.groupId);
+    body = createTransferEditor({
+      kind,
+      template,
+      groupName: group?.name || "",
+      subgroup: scope.subgroup,
+      day: dayOf(S.date),
+      onClose: closeModal,
+      onBack: template
+        ? () => {
+            void templateManager();
+          }
+        : null,
+      onDirty: () => {
+        draftFormDirty = true;
+      },
+      onInvalidate: () => {
+        checked = null;
+      },
+      onPreview: async (options) => {
+        await new Promise((resolve) =>
+          window.requestAnimationFrame(() => setTimeout(resolve, 0)),
+        );
+        await draftSaveQueue;
+        authorized();
+        unchanged();
+        currentTemplate();
+        checked = previewTransfer(
+          data,
+          S.user,
+          { ...options, ...scope, kind, template },
+          {
+            before: draft?.before || data,
+            replacements: draft?.catalogReplacements || [],
+          },
+        );
+        return checked;
+      },
+      onApply: async (retry) => {
+        await draftSaveQueue;
+        authorized();
+        if (retry) {
+          if (
+            !appliedDraft ||
+            draft !== appliedDraft ||
+            draftFingerprint([draft.data, draft.catalogReplacements || []]) !==
+              appliedFingerprint
+          )
+            throw Error(
+              "Черновик изменился. Сохраните его из панели черновика.",
+            );
+        } else {
+          unchanged();
+          currentTemplate();
+          if (!checked?.count)
+            throw Error("Повторите предпросмотр копирования.");
+          validate(checked.data);
+          if (!draft) startDraft();
+          draft.data = clone(checked.data);
+          S.data = visible(draft.data, S.user);
+          appliedDraft = draft;
+          appliedFingerprint = draftFingerprint([
+            draft.data,
+            draft.catalogReplacements || [],
+          ]);
+        }
+        const saved = await persistCurrentDraft(retry);
+        if (!ownerEnding) render();
+        if (saved)
+          toast(
+            "Копирование сохранено в локальный черновик. Публикация выполняется отдельно.",
+          );
+        return { saved, error: appliedDraft.saveError };
+      },
+    });
+    showTemplateDialog(
+      kind === "day"
+        ? "Копировать день"
+        : kind === "week"
+          ? "Копировать неделю"
+          : "Применить шаблон",
+      body,
+    );
+    $("modal").dataset.revision = String(opened.revision);
+  } catch (problem) {
+    if (!ownerEnding) toast(problem.message);
+  }
+}
+
 async function csvExport() {
   try {
     const { exportScheduleCsv } = await import("./tools.mjs");

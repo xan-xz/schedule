@@ -34,6 +34,8 @@ textarea {
 button {
   cursor: pointer;
   touch-action: manipulation;
+  /* Keep foreground/background in sync when switching the management theme. */
+  transition: border-color 0.12s;
 }
 button:disabled {
   opacity: 0.55;
