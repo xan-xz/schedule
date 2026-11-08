@@ -82,6 +82,16 @@ export function showGroupShare(
     throw Error("Сначала опубликуй новую группу, затем создай ссылку.");
   let url = groupShareUrl(group, subgroup);
   const css = new URL("./group-share.css", import.meta.url).href;
+  const previousLabel = dialog.getAttribute("aria-labelledby");
+  dialog.setAttribute("aria-labelledby", "group-share-title");
+  dialog.addEventListener(
+    "close",
+    () => {
+      if (previousLabel === null) dialog.removeAttribute("aria-labelledby");
+      else dialog.setAttribute("aria-labelledby", previousLabel);
+    },
+    { once: true },
+  );
   if (!document.querySelector("link[data-group-share]"))
     document.head.append(
       el("link", { rel: "stylesheet", href: css, "data-group-share": "true" }),
@@ -112,7 +122,7 @@ export function showGroupShare(
     el(
       "div",
       { class: "dialog-head" },
-      el("h2", {}, "Ссылка и QR: " + group.name),
+      el("h2", { id: "group-share-title" }, "Ссылка и QR: " + group.name),
       button("Закрыть", onClose, { class: "btn" }),
     ),
     el(
