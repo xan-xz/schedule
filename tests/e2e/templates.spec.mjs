@@ -77,6 +77,15 @@ test("named day templates save locally, survive reload, validate conflicts and a
     .getByRole("button", { name: "Закрыть", exact: true })
     .click();
   await page.getByRole("button", { name: "Опубликовать", exact: true }).click();
+  await expect(
+    page.getByText(
+      "Черновик опубликован. Предыдущая версия доступна в истории.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Черновик · не опубликован", { exact: true }),
+  ).not.toBeVisible();
   const after = manager.state();
   expect(after.revision).toBe(before.revision + 1);
   expect(after.data.lessons.length).toBeGreaterThan(before.data.lessons.length);
