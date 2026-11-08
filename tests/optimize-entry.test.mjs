@@ -31,19 +31,19 @@ async function fixture(t) {
   );
   return dir;
 }
-test("compiled entry hashes exact inline bytes, bundles imports and retains strict CSP", async (t) => {
+test("compiled entry keeps the bundle outside HTML, hashes inline CSS and retains strict CSP", async (t) => {
   const dir = await fixture(t);
   await optimizeEntry(dir);
   const html = await readFile(join(dir, "index.html"), "utf8"),
-    js = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1],
+    js = await readFile(join(dir, "app.mjs"), "utf8"),
     css = html.match(/<style>([\s\S]*?)<\/style>/)[1];
   const hash = (text) => createHash("sha256").update(text).digest("base64");
-  assert.ok(html.includes(`script-src 'self' 'sha256-${hash(js)}';`));
+  const loader = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
+  assert.ok(html.includes(`script-src 'self' 'sha256-${hash(loader)}';`));
+  assert.match(loader, /import\("\.\/app\.mjs"\)/);
+  assert.ok(!html.includes(js));
   assert.ok(html.includes(`style-src 'self' 'sha256-${hash(css)}';`));
-  assert.doesNotMatch(
-    html,
-    /unsafe-inline|modulepreload|src="\.\/app|href="\.\/styles/,
-  );
+  assert.doesNotMatch(html, /unsafe-inline|modulepreload|href="\.\/styles/);
   assert.doesNotMatch(js, /from\s*["']\.\/helper/);
   assert.match(js, /Алгоритмы/);
   assert.equal(await readFile(join(dir, "app.mjs"), "utf8"), js);
@@ -98,6 +98,6 @@ test("prepaint appearance bootstrap is hashed and stays before the stylesheet an
   const hash = createHash("sha256").update(early).digest("base64");
   assert.ok(html.includes("'sha256-" + hash + "'"));
   assert.ok(html.indexOf("<script>") < html.indexOf("<style>"));
-  assert.ok(html.indexOf("<script>") < html.indexOf('<script type="module">'));
+  assert.ok(html.indexOf("<script>") < html.indexOf('<script type="module"'));
   assert.doesNotMatch(html, /src="\.\/appearance-init|unsafe-inline/);
 });

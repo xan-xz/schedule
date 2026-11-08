@@ -58,16 +58,38 @@ export async function optimizeEntry(directory) {
       legalComments: "none",
     })
   ).code;
+  // A fresh visitor can already use the real chooser. Let it paint before
+  // fetching the larger application. Returning/invited/background tabs start
+  // immediately; no timer or artificial delay is used.
+  const loader = (
+    await transform(
+      `
+    let returning = false;
+    try { returning = Boolean(localStorage.getItem("uf.student.choice.v1")); } catch {}
+    const query = new URLSearchParams(location.search);
+    if (!document.hidden && !returning && !query.has("g") && !query.has("group") && document.querySelector("[data-initial-choice]"))
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    void import("./app.mjs").catch(() => {
+      const form = document.querySelector("[data-initial-choice]");
+      if (!form) return;
+      form.dataset.choiceGuard = "native";
+      form.querySelector('[type="submit"]').disabled = !form.querySelector('[name="g"]').value;
+      form.querySelector(".form-error").textContent = "Не удалось загрузить приложение. Выбери группу и отправь форму, чтобы повторить.";
+    });
+  `,
+      { minify: true, target: "es2022", format: "esm", legalComments: "none" },
+    )
+  ).code;
   if (/<\/script/i.test(js) || /<\/style/i.test(css))
     throw Error("Unsafe closing tag in inline build content");
   html = html
     .replace(earlyTag, () => `<script>${early}</script>`)
-    .replace(script, () => `<script type="module">${js}</script>`)
+    .replace(script, () => `<script type="module">${loader}</script>`)
     .replace(sheet, () => `<style>${css}</style>`)
     .replace(/<link\b(?=[^>]*\brel=["']modulepreload["'])[^>]*>/gi, "")
     .replace(
       "script-src 'self';",
-      `script-src 'self'${early ? " " + cspHash(early) : ""} ${cspHash(js)};`,
+      `script-src 'self'${early ? " " + cspHash(early) : ""} ${cspHash(loader)};`,
     )
     .replace("style-src 'self';", `style-src 'self' ${cspHash(css)};`);
   // Existing worker asset URLs remain available, but no longer block first paint.

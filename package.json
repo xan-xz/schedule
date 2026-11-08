@@ -1,6 +1,6 @@
 {
   "name": "uniflow-schedule",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,7 +19,8 @@
     "preview": "node scripts/serve.mjs --root dist",
     "release:restore": "node scripts/production-base.mjs",
     "guard": "node scripts/check-retirement.mjs",
-    "guard:artifact": "node scripts/check-retirement.mjs --dist"
+    "guard:artifact": "node scripts/check-retirement.mjs --dist",
+    "perf:gate": "node scripts/lighthouse-gate.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.15",

@@ -14,6 +14,146 @@ const release = JSON.parse(
   await readFile(new URL("../../app/bootstrap.json", import.meta.url), "utf8"),
 );
 
+test("the early chooser searches and preserves selection while the application bundle is delayed", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false, time: null });
+  let unblock;
+  const gate = new Promise((resolve) => {
+    unblock = resolve;
+  });
+  await page.route("**/schedule/app.mjs", async (route) => {
+    await gate;
+    await route.continue();
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const bundleRequested = page.waitForRequest("**/schedule/app.mjs");
+  try {
+    await page.goto("/schedule/", { waitUntil: "commit" });
+    const form = page.locator("[data-initial-choice]");
+    await expect(form).toHaveAttribute("data-choice-guard", "native");
+    await bundleRequested;
+    expect(
+      await page.evaluate(
+        () => performance.getEntriesByName("first-contentful-paint").length,
+      ),
+    ).toBe(1);
+    const search = page.getByRole("searchbox", {
+      name: "Найти группу",
+      exact: true,
+    });
+    const group = page.getByRole("combobox", { name: "Группа", exact: true });
+    await search.fill("06-057-25-11");
+    await group.selectOption("g-main");
+    await expect(
+      group.locator('option:not([value=""]):not([hidden])'),
+    ).toHaveCount(1);
+    await page
+      .getByRole("combobox", { name: "Подгруппа", exact: true })
+      .selectOption("Б");
+    await search.focus();
+    expect(
+      await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+    ).toBeNull();
+    unblock();
+    await expect(page.locator("form[data-group-choice]")).toBeVisible();
+    await expect(search).toHaveValue("06-057-25-11");
+    await expect(group).toHaveValue("g-main");
+    await expect(
+      page.getByRole("combobox", { name: "Подгруппа", exact: true }),
+    ).toHaveValue("Б");
+    await expect(search).toBeFocused();
+    await page
+      .getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      })
+      .click();
+    await expect(page.locator("#navigation button")).toHaveCount(4);
+    expect(
+      JSON.parse(
+        await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+      ),
+    ).toMatchObject({ groupId: "g-main", subgroup: "Б" });
+    expect(errors).toEqual([]);
+  } finally {
+    unblock();
+  }
+});
+
+test("a failed application bundle gives a visible retry instruction and leaves the chooser usable", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false });
+  await page.route("**/schedule/app.mjs", (route) => route.abort());
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/schedule/");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Не удалось загрузить приложение. Выбери группу и отправь форму, чтобы повторить.",
+  );
+  await page
+    .getByRole("searchbox", { name: "Найти группу", exact: true })
+    .fill("06-057-25-11");
+  await page
+    .getByRole("combobox", { name: "Группа", exact: true })
+    .selectOption("g-main");
+  await page
+    .getByRole("combobox", { name: "Подгруппа", exact: true })
+    .selectOption("Б");
+  await page
+    .getByRole("button", {
+      name: "Сохранить и открыть расписание",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(/\?g=g-main&subgroup=%D0%91$/);
+  expect(
+    await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+  ).toBeNull();
+  expect(errors).toEqual([]);
+});
+
+test("the early chooser keeps native navigation available before the application bundle arrives", async ({
+  page,
+}) => {
+  await mockState(page, { savedChoice: false });
+  let unblock;
+  const gate = new Promise((resolve) => {
+    unblock = resolve;
+  });
+  await page.route("**/schedule/app.mjs", async (route) => {
+    await gate;
+    await route.abort();
+  });
+  try {
+    await page.goto("/schedule/", { waitUntil: "commit" });
+    await expect(page.locator("[data-initial-choice]")).toHaveAttribute(
+      "data-choice-guard",
+      "native",
+    );
+    await page
+      .getByRole("combobox", { name: "Группа", exact: true })
+      .selectOption("g-main");
+    await page
+      .getByRole("combobox", { name: "Подгруппа", exact: true })
+      .selectOption("Б");
+    await page
+      .getByRole("button", {
+        name: "Сохранить и открыть расписание",
+        exact: true,
+      })
+      .click({ noWaitAfter: true });
+    await expect(page).toHaveURL(/\?g=g-main&subgroup=%D0%91$/);
+    expect(
+      await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+    ).toBeNull();
+  } finally {
+    unblock();
+  }
+});
+
 test("compiled useful chooser is interactive before either snapshot fetch or live API completes", async ({
   page,
 }) => {

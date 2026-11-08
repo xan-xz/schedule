@@ -4,8 +4,8 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockState } from "./fixtures.mjs";
 
-test.describe("compiled inline student entry", () => {
-  test("the strict CSP authorizes exact inline bytes and no external critical modules", async ({
+test.describe("compiled progressive student entry", () => {
+  test("the strict CSP authorizes inline guards and CSS with one local application bundle", async ({
     page,
   }) => {
     const runtimeErrors = [];
@@ -48,11 +48,15 @@ test.describe("compiled inline student entry", () => {
           "'sha256-" + btoa(String.fromCharCode(...new Uint8Array(bytes))) + "'"
         );
       };
-      const entry = document.querySelector('script[type="module"]');
+      const guards = [...document.querySelectorAll("script:not([src])")].filter(
+        (node) => node.type !== "application/json",
+      );
       const style = document.querySelector("style");
       return {
         csp,
-        scriptHash: await hash(entry.textContent),
+        scriptHashes: await Promise.all(
+          guards.map((node) => hash(node.textContent)),
+        ),
         styleHash: await hash(style.textContent),
         background: window.getComputedStyle(document.documentElement)
           .backgroundColor,
@@ -62,7 +66,8 @@ test.describe("compiled inline student entry", () => {
         title: document.title,
       };
     });
-    expect(policy.csp).toContain(policy.scriptHash);
+    expect(policy.scriptHashes.length).toBe(4);
+    for (const hash of policy.scriptHashes) expect(policy.csp).toContain(hash);
     expect(policy.csp).toContain(policy.styleHash);
     expect(policy.csp).not.toMatch(/unsafe-inline|unsafe-eval/);
     expect(policy.csp).toContain("object-src 'none'");

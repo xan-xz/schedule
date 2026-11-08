@@ -46,9 +46,19 @@ export function readInitialSnapshot(document = globalThis.document) {
 }
 
 /** Native released form stays useful while settings/IDB resolve. No scope is saved here. */
-export function guardInitialChoice(document = globalThis.document) {
+export function guardInitialChoice(
+  document = globalThis.document,
+  native = false,
+) {
   const form = document?.querySelector?.("[data-initial-choice]");
   if (!form) return;
+  // The small build-generated guard works before the application bundle arrives.
+  // Upgrade its existing handlers to queue submission once hydration can consume it.
+  form.dataset.choiceGuard = native
+    ? form.dataset.choiceGuard || "native"
+    : "queued";
+  if (form.dataset.choiceBound === "true") return;
+  form.dataset.choiceBound = "true";
   const group = form.querySelector('[name="g"]');
   const subgroup = form.querySelector('[name="subgroup"]');
   const search = form.querySelector("[data-choice-search]");
@@ -93,8 +103,9 @@ export function guardInitialChoice(document = globalThis.document) {
     update();
   });
   form.addEventListener("submit", (event) => {
-    event.preventDefault();
     form.dataset.touched = "true";
+    if (form.dataset.choiceGuard === "native") return;
+    event.preventDefault();
     form.dataset.submitRequested = "true";
     send.disabled = true;
   });
