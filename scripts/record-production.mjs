@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateMetadata } from "./production-base.mjs";
 import {
-  parseGitHubLookup,
+  lookupReleaseIncludingDrafts,
   releaseAssets,
   ensureLockedRelease,
 } from "./locked-release.mjs";
@@ -39,27 +39,37 @@ async function main() {
     );
   const tag = "uniflow-production-" + run;
   const endpoint = "repos/" + repository + "/releases/tags/" + tag;
+  const request = (path, options = []) =>
+    spawnSync(
+      "gh",
+      [
+        "api",
+        ...options,
+        path,
+        "-H",
+        "Accept: application/vnd.github+json",
+        "-H",
+        "X-GitHub-Api-Version: 2026-03-10",
+      ],
+      { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+    );
   const files = { "production-site.tar": archive, "production.json": manifest };
   const outcome = await ensureLockedRelease({
     sourceRef,
     tag,
     assets: releaseAssets(archiveBytes, manifestBytes),
     lookup: async () =>
-      parseGitHubLookup(
-        spawnSync(
-          "gh",
-          [
-            "api",
-            "--include",
-            endpoint,
-            "-H",
-            "Accept: application/vnd.github+json",
-            "-H",
-            "X-GitHub-Api-Version: 2026-03-10",
-          ],
-          { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
-        ),
-      ),
+      lookupReleaseIncludingDrafts({
+        tag,
+        lookupPublished: async () => request(endpoint, ["--include"]),
+        listPages: async () =>
+          request("repos/" + repository + "/releases?per_page=100", [
+            "--paginate",
+            "--slurp",
+          ]),
+        lookupById: async (id) =>
+          request("repos/" + repository + "/releases/" + id, ["--include"]),
+      }),
     createDraft: async () =>
       execFileSync(
         "gh",

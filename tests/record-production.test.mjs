@@ -5,6 +5,7 @@ import {
   releaseAssets,
   inspectRelease,
   ensureLockedRelease,
+  lookupReleaseIncludingDrafts,
 } from "../scripts/locked-release.mjs";
 
 const expected = {
@@ -44,6 +45,104 @@ const response = (status, body, exit = status === 200 ? 0 : 1) => ({
     status +
     " Status\r\nContent-Type: application/json\r\n\r\n" +
     JSON.stringify(body),
+});
+
+test("published-only tag lookup discovers an authenticated draft on a later release page", async () => {
+  const reads = [];
+  const result = await lookupReleaseIncludingDrafts({
+    tag: expected.tag,
+    lookupPublished: async () => {
+      reads.push("tag");
+      return response(404, absent().body);
+    },
+    listPages: async () => ({
+      status: 0,
+      stdout: JSON.stringify([
+        [{ tag_name: "other", id: 1 }],
+        [{ tag_name: expected.tag, id: 321 }],
+      ]),
+    }),
+    lookupById: async (id) => {
+      reads.push(id);
+      return response(
+        200,
+        release({ draft: true, immutable: false, assets: [] }).body,
+      );
+    },
+  });
+  assert.equal(result.body.draft, true);
+  assert.deepEqual(reads, ["tag", 321]);
+});
+
+test("failed, partial or ambiguous draft enumeration never establishes absence", async () => {
+  for (const list of [
+    { status: 1, stdout: "[[]]" },
+    { status: 0, stdout: "garbage" },
+    { status: 0, stdout: "[]" },
+    { status: 0, stdout: "[{}]" },
+    { status: 0, stdout: "[[{}]]" },
+    {
+      status: 0,
+      stdout: JSON.stringify([[{ tag_name: expected.tag, id: "../321" }]]),
+    },
+    {
+      status: 0,
+      stdout: JSON.stringify([
+        [
+          { tag_name: expected.tag, id: 1 },
+          { tag_name: expected.tag, id: 2 },
+        ],
+      ]),
+    },
+  ]) {
+    await assert.rejects(
+      lookupReleaseIncludingDrafts({
+        tag: expected.tag,
+        lookupPublished: async () => response(404, absent().body),
+        listPages: async () => list,
+        lookupById: async () => {
+          throw Error("must not resolve an invalid identity");
+        },
+      }),
+    );
+  }
+  await assert.rejects(
+    lookupReleaseIncludingDrafts({
+      tag: expected.tag,
+      lookupPublished: async () => response(404, absent().body),
+      listPages: async () => ({
+        status: 0,
+        stdout: JSON.stringify([[{ tag_name: expected.tag, id: 1 }]]),
+      }),
+      lookupById: async () => response(404, absent().body),
+    }),
+  );
+});
+
+test("published releases and permission failures do not fall back to draft guessing", async () => {
+  let lists = 0;
+  const driver = {
+    tag: expected.tag,
+    lookupPublished: async () => response(200, release().body),
+    listPages: async () => {
+      lists++;
+      throw Error("not needed");
+    },
+    lookupById: async () => {
+      throw Error("not needed");
+    },
+  };
+  assert.equal(
+    (await lookupReleaseIncludingDrafts(driver)).body.immutable,
+    true,
+  );
+  await assert.rejects(
+    lookupReleaseIncludingDrafts({
+      ...driver,
+      lookupPublished: async () => response(403, {}),
+    }),
+  );
+  assert.equal(lists, 0);
 });
 function fixture(initial = absent()) {
   const f = { current: structuredClone(initial), operations: [], fail: {} };
@@ -114,6 +213,34 @@ test("new release uploads into a draft, verifies exact remote bytes, then publis
     "read",
   ]);
   assert.equal(inspectRelease(f.current, expected).kind, "published");
+});
+
+test("full recording works when the real tag endpoint hides every unpublished draft", async () => {
+  const f = fixture();
+  f.lookup = async () => {
+    f.operations.push("read");
+    return lookupReleaseIncludingDrafts({
+      tag: expected.tag,
+      lookupPublished: async () =>
+        f.current.status === 200 && !f.current.body.draft
+          ? response(200, f.current.body)
+          : response(404, absent().body),
+      listPages: async () => ({
+        status: 0,
+        stdout: JSON.stringify([
+          f.current.status === 200 ? [{ tag_name: expected.tag, id: 321 }] : [],
+        ]),
+      }),
+      lookupById: async () => response(200, f.current.body),
+    });
+  };
+  assert.equal(await f.run(), "created");
+  assert.deepEqual(f.writes(), [
+    "create",
+    "upload:production-site.tar",
+    "upload:production.json",
+    "publish",
+  ]);
 });
 
 test("a partial same-source draft resumes only missing assets, without replacement", async () => {

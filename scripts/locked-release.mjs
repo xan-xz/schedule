@@ -37,6 +37,56 @@ export function parseGitHubLookup(result) {
   return { status, body };
 }
 
+/** The tag endpoint exposes published releases only. A 404 is not evidence
+ * that an authenticated same-tag draft is absent. Enumerate every page before
+ * creating, then fetch the matching draft by its numeric release ID. */
+export async function lookupReleaseIncludingDrafts({
+  tag,
+  lookupPublished,
+  listPages,
+  lookupById,
+}) {
+  if (!/^uniflow-production-\d+$/.test(tag || ""))
+    throw Error("Invalid production tag");
+  const published = parseGitHubLookup(await lookupPublished());
+  if (published.status === 200) return published;
+  const result = await listPages();
+  if (
+    result.error ||
+    result.signal ||
+    result.status !== 0 ||
+    typeof result.stdout !== "string"
+  )
+    throw Error("Complete authenticated draft lookup failed.");
+  let pages;
+  try {
+    pages = JSON.parse(result.stdout);
+  } catch {
+    throw Error("Invalid release pagination response.");
+  }
+  if (
+    !Array.isArray(pages) ||
+    !pages.length ||
+    pages.some((page) => !Array.isArray(page))
+  )
+    throw Error("Incomplete release pagination response.");
+  const rows = pages.flat();
+  if (rows.some((row) => !row || typeof row.tag_name !== "string"))
+    throw Error("Malformed release list.");
+  const matches = rows.filter((row) => row.tag_name === tag);
+  if (!matches.length) return published;
+  if (
+    matches.length !== 1 ||
+    !Number.isSafeInteger(matches[0].id) ||
+    matches[0].id <= 0
+  )
+    throw Error("Ambiguous production draft identity.");
+  const found = parseGitHubLookup(await lookupById(matches[0].id));
+  if (found.status !== 200 || found.body?.tag_name !== tag)
+    throw Error("Production draft identity changed during lookup.");
+  return found;
+}
+
 function expectations({ sourceRef, tag, assets }) {
   if (
     !/^[a-f0-9]{40}$/.test(sourceRef || "") ||
