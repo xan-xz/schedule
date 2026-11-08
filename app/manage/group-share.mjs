@@ -149,7 +149,9 @@ export function showGroupShare(
             .slice(0, 50);
           download(
             "uniflow-group-" + filename + ".svg",
-            new XMLSerializer().serializeToString(image.firstElementChild),
+            new globalThis.XMLSerializer().serializeToString(
+              image.firstElementChild,
+            ),
             "image/svg+xml;charset=utf-8",
           );
         },
