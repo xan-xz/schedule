@@ -5,7 +5,12 @@ import { fixture, mockState } from "./fixtures.mjs";
 /** Local HTTP contract only: no injected session, production data or real mail. */
 export async function mockManager(
   page,
-  { role = "admin", rejectPassword = false, archived = false } = {},
+  {
+    role = "admin",
+    rejectPassword = false,
+    archived = false,
+    prepareData = () => {},
+  } = {},
 ) {
   await mockState(page);
   const calls = [];
@@ -36,6 +41,7 @@ export async function mockManager(
       },
     ];
   }
+  prepareData(data);
   validate(data);
   const versions = [];
   const owner = {

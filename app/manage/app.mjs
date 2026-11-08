@@ -1,5 +1,11 @@
+import { busyRoomIds } from "./resources.mjs";
 import { setMarkup } from "./safe-dom.mjs";
-import { createDraftJournal, draftChanges, recoverChanges } from "./drafts.mjs";
+import {
+  createDraftJournal,
+  draftChanges,
+  recoverChanges,
+  catalogReplacementIntents,
+} from "./drafts.mjs";
 import {
   getOwnerSession,
   clearOwnerSession,
@@ -32,6 +38,8 @@ import {
   isoWeek,
   time,
   occurrences,
+  catalogImpact,
+  isGroupActive,
   mutate,
   validate,
   visible,
@@ -128,8 +136,11 @@ const S = {
   weekView: false,
   taskFilter: "all",
   catalog: "groups",
+  catalogQuery: "",
+  catalogFilter: "active",
   online: false,
   busy: false,
+  rollbackBusy: false,
   epoch: 0,
   draftConflicts: [],
 };
@@ -364,6 +375,24 @@ function connectRealtime() {
 }
 async function act(op, payload, expected = S.revision) {
   if (S.busy) throw Error("Дождись сохранения");
+  const catalogOperation = op.startsWith("catalog.") || op === "group.archive";
+  if (catalogOperation && !draft) startDraft();
+  let replacements = draft?.catalogReplacements || [];
+  if (
+    ["catalog.replace", "catalog.delete"].includes(op) &&
+    replacements.some(
+      (item) =>
+        item.entity === payload.entity && item.replacementId === payload.id,
+    )
+  )
+    throw Error(
+      "Эта запись — конечная цель замены в черновике. Цепочки замен и удаление цели не поддерживаются.",
+    );
+  if (
+    op === "catalog.replace" &&
+    draft.before[payload.entity].some((row) => row.id === payload.id)
+  )
+    replacements = catalogReplacementIntents([...replacements, payload]);
   if (
     draft &&
     [
@@ -373,11 +402,15 @@ async function act(op, payload, expected = S.revision) {
       "exception.delete",
       "catalog.save",
       "catalog.delete",
+      "catalog.replace",
+      "catalog.duplicate",
+      "group.archive",
       "import",
     ].includes(op)
   ) {
     const result = mutate(draft.data, S.user, op, payload);
     draft.data = result.data;
+    draft.catalogReplacements = replacements;
     S.data = visible(draft.data, S.user);
     render();
     toast("Сохранено в черновике. Опубликуй, чтобы увидели студенты.");
@@ -767,22 +800,80 @@ function notifications() {
   const read = new Set(storage.get(myKey("read"), []));
   return `<div class="toolbar"><span class="small muted">${unread()} непрочитанных · уведомления внутри сайта</span><span class="spacer"></span>${button("Прочитать все", "readAll", {}, "", "check")}${isAdmin() ? button("Объявление", "announcement", {}, "primary", "plus") : ""}</div><section class="panel">${S.data.announcements.length ? S.data.announcements.map((n) => `<article class="notice ${read.has(n.id) ? "" : "unread"}"><div class="notice-top"><h3>${h(n.title)}</h3><small>${h(niceDate(n.createdAt.slice(0, 10)))}</small></div><p>${h(n.body)}</p>${tag(n.groupId ? name("groups", n.groupId) : n.teacherId ? name("teachers", n.teacherId) : "Получатели: " + n.roles.map((r) => ROLES[r]).join(", "))}${!read.has(n.id) ? `<div class="notice-action">${button("Прочитано", "read", { id: n.id }, "tiny")}</div>` : ""}</article>`).join("") : empty("Нет уведомлений для твоей роли", "bell")}</section>`;
 }
+const catalogLabels = {
+  groups: "Группы",
+  teachers: "Преподаватели",
+  subjects: "Предметы",
+  rooms: "Аудитории",
+};
+function catalogDetails(kind, x) {
+  if (kind === "groups")
+    return [
+      x.code,
+      x.specialty || "Специальность не указана",
+      { ru: "Русский", kk: "Казахский", en: "Английский" }[x.language] ||
+        "Язык не указан",
+      "Подгруппы: " + x.subgroups.join(", "),
+      isGroupActive(x) ? "Активна" : "В архиве / недоступна",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  if (kind === "teachers")
+    return (
+      x.subjects.map((id) => name("subjects", id)).join(", ") ||
+      "Предметы не назначены"
+    );
+  if (kind === "subjects")
+    return (
+      [x.shortName, x.color].filter(Boolean).join(" · ") || "Учебная дисциплина"
+    );
+  return [
+    x.capacityEstimated
+      ? "Вместимость не подтверждена (оценка: " + x.capacity + ")"
+      : "Мест: " + x.capacity,
+    x.building && "Корпус: " + x.building,
+    x.floor && "Этаж: " + x.floor,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 function catalogs() {
-  const kind = S.catalog;
-  const labels = {
-    groups: "Группы",
-    teachers: "Преподаватели",
-    subjects: "Предметы",
-    rooms: "Аудитории",
-  };
-  return `<div class="toolbar"><div class="tabs">${Object.entries(labels)
+  const kind = S.catalog,
+    query = S.catalogQuery.trim().toLocaleLowerCase("ru"),
+    rows = S.data[kind].filter(
+      (x) =>
+        (kind !== "groups" ||
+          S.catalogFilter === "all" ||
+          isGroupActive(x) === (S.catalogFilter === "active")) &&
+        (!query ||
+          (x.name + " " + catalogDetails(kind, x))
+            .toLocaleLowerCase("ru")
+            .includes(query)),
+    );
+  return `<div class="toolbar"><div class="tabs">${Object.entries(catalogLabels)
     .map(
       ([k, t]) =>
         `<button data-action="catalogTab" data-kind="${k}" class="${k === kind ? "active" : ""}">${t}</button>`,
     )
     .join(
       "",
-    )}</div><span class="spacer"></span>${kind === "rooms" ? button("Найти свободную", "freeRooms", {}, "", "search") : ""}${isAdmin() ? button("Добавить", "catalog", { entity: kind }, "primary", "plus") : ""}</div><section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>НАЗВАНИЕ</th><th>ПОДРОБНОСТИ</th>${isAdmin() ? "<th>ДЕЙСТВИЯ</th>" : ""}</tr></thead><tbody>${S.data[kind].map((x) => `<tr><td><strong>${h(x.name)}</strong></td><td>${h(kind === "groups" ? (x.specialty || "Специальность не указана") + " · " + (x.language === "kk" ? "Казахский" : x.language === "ru" ? "Русский" : "Язык не указан") + " · Подгруппы: " + x.subgroups.join(", ") : kind === "teachers" ? x.subjects.map((id) => name("subjects", id)).join(", ") : kind === "rooms" ? (x.capacityEstimated ? "Вместимость не указана в файле" : "Мест: " + x.capacity) : "Учебная дисциплина")}</td>${isAdmin() ? `<td><div class="actions">${button("Изменить", "catalog", { entity: kind, id: x.id }, "tiny", "edit")}${button("Удалить", "deleteCatalog", { entity: kind, id: x.id }, "tiny danger", "trash")}</div></td>` : ""}</tr>`).join("")}</tbody></table></div>${!S.data[kind].length ? empty("Справочник пока пуст", "layers") : ""}</section>`;
+    )}</div><span class="spacer"></span>${kind === "rooms" ? button("Найти свободную", "freeRooms", {}, "", "search") : ""}${isAdmin() ? button("Добавить", "catalog", { entity: kind }, "primary", "plus") : ""}</div>
+  <div class="toolbar catalog-filters"><label class="form-label">Поиск в справочнике<input id="catalog-search" type="search" value="${h(S.catalogQuery)}" aria-label="Найти в справочнике" placeholder="Название, код, специальность…"></label>${
+    kind === "groups"
+      ? `<label class="form-label">Состояние групп<select id="catalog-visibility" aria-label="Состояние групп">${[
+          ["active", "Активные"],
+          ["archived", "Архивные и недоступные"],
+          ["all", "Все группы"],
+        ]
+          .map(
+            ([v, t]) =>
+              `<option value="${v}" ${S.catalogFilter === v ? "selected" : ""}>${t}</option>`,
+          )
+          .join("")}</select></label>`
+      : ""
+  }<span class="small muted">Найдено: ${rows.length} из ${S.data[kind].length}</span></div>
+  <p class="small muted">Правки справочников сохраняются в локальном черновике. Студенты увидят их после отдельной публикации.</p>
+  <section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>НАЗВАНИЕ</th><th>ПОДРОБНОСТИ</th>${isAdmin() ? "<th>ДЕЙСТВИЯ</th>" : ""}</tr></thead><tbody>${rows.map((x) => `<tr><td><strong>${h(x.name)}</strong></td><td>${h(catalogDetails(kind, x))}</td>${isAdmin() ? `<td><div class="actions">${button("Изменить", "catalog", { entity: kind, id: x.id }, "tiny", "edit")}${button("Дублировать без расписания", "duplicateCatalog", { entity: kind, id: x.id }, "tiny")}${kind === "groups" ? button("Ссылка / QR", "groupShare", { id: x.id }, "tiny", "share") : ""}${kind === "groups" && !x.deletedAt && !x.deleted_at && x.deleted !== true && x.status !== "deleted" ? button(isGroupActive(x) ? "В архив" : "Восстановить", "archiveGroup", { id: x.id, archived: isGroupActive(x) }, "tiny") : ""}${button("Удалить", "deleteCatalog", { entity: kind, id: x.id }, "tiny danger", "trash")}</div></td>` : ""}</tr>`).join("")}</tbody></table></div>${!rows.length ? empty("По этому фильтру записей нет", "layers") : ""}</section>`;
 }
 function historyPage() {
   return `<div class="notice-info">Сохраняются последние 30 версий. Откат восстанавливает расписание, задания, объявления и журнал. Настройки входа владельца не откатываются.</div><section class="panel section-space"><div class="panel-head"><h2>Версии пространства</h2></div>${S.versions.length ? `<div class="list">${S.versions.map((v) => `<div class="list-item">${icon("history")}<div><h3>Версия ${v.revision} · ${h(v.reason)}</h3><p>${h(v.actor)} · ${h(new Date(v.created_at).toLocaleString("ru-RU"))}</p></div><div class="end">${button("Восстановить", "rollback", { revision: v.revision }, "tiny")}</div></div>`).join("")}</div>` : empty("После первого изменения здесь появится версия для восстановления", "history")}</section><section class="panel section-space"><div class="panel-head"><h2>Журнал действий</h2></div><div class="list">${S.data.history.map((e) => `<div class="list-item"><div><h3>${h(e.summary)}</h3><p>${h(e.actor)} · ${h(new Date(e.at).toLocaleString("ru-RU"))}</p></div></div>`).join("")}</div></section>`;
@@ -811,14 +902,24 @@ function render() {
     history: historyPage,
     guide,
   };
-  const search = document.activeElement?.id === "global-search",
+  const search = ["global-search", "catalog-search"].includes(
+      document.activeElement?.id,
+    )
+      ? document.activeElement.id
+      : null,
     pos = search ? document.activeElement.selectionStart : null;
   setMarkup($("app"), shell(pages[S.page]()));
   enhanceWorkspace();
+  if (S.rollbackBusy)
+    $("app")
+      .querySelectorAll("button:not([data-page])")
+      .forEach((control) => {
+        control.disabled = true;
+      });
   queueDraftSave();
   if (search) {
-    $("global-search").focus();
-    if (pos !== null) $("global-search").setSelectionRange(pos, pos);
+    $(search)?.focus();
+    if (pos !== null) $(search)?.setSelectionRange(pos, pos);
   }
 }
 function closeModal() {
@@ -838,16 +939,17 @@ function showForm(
   const revision = S.revision;
   const field = (f) => {
     const id = "field-" + f.name;
+    const accessible = `aria-label="${h(f.label)}"${f.help ? ` aria-describedby="${id}-help"` : ""}`;
     let input;
     if (f.type === "select")
-      input = `<select name="${f.name}" id="${id}" ${f.required ? "required" : ""}>${f.options.map((o) => `<option value="${h(o.value)}" ${o.value === String(f.value ?? "") ? "selected" : ""}>${h(o.label)}</option>`).join("")}</select>`;
+      input = `<select name="${f.name}" id="${id}" ${accessible} ${f.required ? "required" : ""}>${f.options.map((o) => `<option value="${h(o.value)}" ${o.value === String(f.value ?? "") ? "selected" : ""}>${h(o.label)}</option>`).join("")}</select>`;
     else if (f.type === "checks")
       input = `<div class="checklist">${f.options.map((o) => `<label><input type="checkbox" name="${f.name}" value="${h(o.value)}" ${(f.value || []).includes(o.value) ? "checked" : ""}>${h(o.label)}</label>`).join("")}</div>`;
     else if (f.type === "textarea")
-      input = `<textarea name="${f.name}" id="${id}" maxlength="${f.max || 4000}" ${f.required ? "required" : ""}>${h(f.value || "")}</textarea>`;
+      input = `<textarea name="${f.name}" id="${id}" ${accessible} maxlength="${f.max || 4000}" ${f.required ? "required" : ""}>${h(f.value || "")}</textarea>`;
     else
-      input = `<input name="${f.name}" id="${id}" type="${f.type || "text"}" value="${h(f.value ?? "")}" ${f.required ? "required" : ""} ${f.min !== undefined ? 'min="' + f.min + '"' : ""} ${f.max !== undefined && f.type === "number" ? 'max="' + f.max + '"' : ""} maxlength="${f.type === "password" ? 200 : 160}" ${f.type === "password" ? 'autocomplete="new-password"' : ""}>`;
-    return `<label class="form-label ${f.full ? "full" : ""}" for="${id}">${h(f.label)}${input}${f.help ? `<small>${h(f.help)}</small>` : ""}</label>`;
+      input = `<input name="${f.name}" id="${id}" ${accessible} type="${f.type || "text"}" value="${h(f.value ?? "")}" ${f.required ? "required" : ""} ${f.min !== undefined ? 'min="' + f.min + '"' : ""} ${f.max !== undefined && f.type === "number" ? 'max="' + f.max + '"' : ""} maxlength="${f.type === "password" ? 200 : f.maxLength || 160}" ${f.type === "password" ? 'autocomplete="new-password"' : ""}>`;
+    return `<label class="form-label ${f.full ? "full" : ""}" for="${id}">${h(f.label)}${input}${f.help ? `<small id="${id}-help">${h(f.help)}</small>` : ""}</label>`;
   };
   setMarkup(
     $("modal"),
@@ -879,7 +981,9 @@ function showForm(
         render();
       }
     } catch (error) {
-      $("form-error").textContent = error.message;
+      const output = form.querySelector("#form-error");
+      if (form.isConnected && output) output.textContent = error.message;
+      else toast(error.message);
     } finally {
       if (button.isConnected) button.disabled = false;
     }
@@ -1269,12 +1373,6 @@ function announcementForm() {
 function catalogForm(entity, id) {
   if (!isAdmin()) throw Error("Нужны права администратора");
   const old = S.data[entity].find((x) => x.id === id);
-  const labels = {
-    groups: "Группа",
-    teachers: "Преподаватель",
-    subjects: "Предмет",
-    rooms: "Аудитория",
-  };
   const fields = [
     {
       name: "name",
@@ -1285,52 +1383,276 @@ function catalogForm(entity, id) {
     },
   ];
   if (entity === "groups")
-    fields.push({
-      name: "subgroups",
-      label: "Подгруппы через запятую",
-      value: old?.subgroups.join(", ") || "А, Б",
-      required: true,
-      full: true,
-    });
+    fields.push(
+      {
+        name: "code",
+        label: "Публичный код группы",
+        value: old?.code,
+        maxLength: 80,
+        help: "Стабильный код для ссылок; можно оставить пустым.",
+      },
+      { name: "specialty", label: "Специальность", value: old?.specialty },
+      {
+        name: "language",
+        label: "Язык обучения",
+        type: "select",
+        value: old?.language || "",
+        options: [
+          { value: "", label: "Не указан" },
+          { value: "ru", label: "Русский" },
+          { value: "kk", label: "Казахский" },
+          { value: "en", label: "Английский" },
+        ],
+      },
+      {
+        name: "subgroups",
+        label: "Подгруппы через запятую",
+        value: old?.subgroups.join(", ") || "А, Б",
+        required: true,
+        full: true,
+        help: "Удаление используемой подгруппы блокируется проверкой связей.",
+      },
+    );
   if (entity === "teachers")
     fields.push({
       name: "subjects",
       label: "Назначенные предметы",
       type: "checks",
       value: old?.subjects || [],
-      options: S.data.subjects.map((s) => ({ value: s.id, label: s.name })),
+      options: S.data.subjects.map((x) => ({ value: x.id, label: x.name })),
       full: true,
     });
+  if (entity === "subjects")
+    fields.push(
+      {
+        name: "shortName",
+        label: "Короткое название",
+        value: old?.shortName,
+        maxLength: 60,
+      },
+      {
+        name: "color",
+        label: "Цвет (#RRGGBB)",
+        value: old?.color || "#7957d5",
+        maxLength: 7,
+        required: true,
+      },
+    );
   if (entity === "rooms")
-    fields.push({
-      name: "capacity",
-      label: "Количество мест",
-      type: "number",
-      value: old?.capacity || 30,
-      min: 1,
-      max: 500,
-      required: true,
-    });
+    fields.push(
+      {
+        name: "capacity",
+        label: "Количество мест / оценка",
+        type: "number",
+        value: old?.capacity ?? 30,
+        min: 1,
+        max: 500,
+        required: true,
+      },
+      {
+        name: "capacityMode",
+        label: "Достоверность вместимости",
+        type: "select",
+        value: !old || old.capacityEstimated ? "estimated" : "known",
+        options: [
+          { value: "estimated", label: "Не подтверждена — только оценка" },
+          { value: "known", label: "Подтверждённое количество мест" },
+        ],
+      },
+      {
+        name: "building",
+        label: "Корпус",
+        value: old?.building,
+        maxLength: 120,
+      },
+      { name: "floor", label: "Этаж", value: old?.floor, maxLength: 40 },
+      {
+        name: "note",
+        label: "Примечание владельца (не показывается студентам)",
+        type: "textarea",
+        max: 1000,
+        value: old?.note,
+        full: true,
+      },
+    );
   showForm(
-    (old ? "Изменить: " : "Добавить: ") + labels[entity],
+    (old ? "Изменить: " : "Добавить: ") +
+      {
+        groups: "Группа",
+        teachers: "Преподаватель",
+        subjects: "Предмет",
+        rooms: "Аудитория",
+      }[entity],
     fields,
     async (v, rev) => {
-      if (entity === "groups")
-        v.subgroups = [
-          ...new Set(
-            v.subgroups
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
-          ),
-        ];
-      if (entity === "subjects") v.color = "#7957d5";
-      await act(
-        "catalog.save",
-        { entity, item: { ...old, ...v, ...(old ? { id: old.id } : {}) } },
-        rev,
+      if (entity === "groups") {
+        v.subgroups = v.subgroups
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
+        if (!v.language && !old?.language) delete v.language;
+      }
+      if (entity === "rooms") {
+        v.capacityEstimated = v.capacityMode === "estimated";
+        delete v.capacityMode;
+      }
+      const item = Object.fromEntries(
+        Object.entries(v).filter(
+          ([key, value]) =>
+            !old ||
+            (JSON.stringify(old[key]) !== JSON.stringify(value) &&
+              !(value === "" && old[key] === undefined)),
+        ),
       );
+      if (old) item.id = old.id;
+      await act("catalog.save", { entity, item }, rev);
     },
+    "Сохранить",
+    "Изменения останутся в черновике до публикации. Идентификатор и исходные сведения сохраняются.",
+  );
+}
+const impactLabels = {
+  lessons: "Занятия",
+  exceptions: "Изменения по датам",
+  tasks: "Задания",
+  announcements: "Объявления",
+  requests: "Архив заявок",
+  attendance: "Архив посещаемости",
+  holidays: "Каникулы",
+  teachers: "Назначения преподавателей",
+};
+function impactText(entity, id) {
+  const impact = catalogImpact(draft?.data || S.data, entity, id);
+  return {
+    impact,
+    text:
+      "По загруженным данным расписания. Затронутые записи: " +
+      impact.total +
+      ". " +
+      Object.entries(impact.counts)
+        .filter(([, count]) => count)
+        .map(([key, count]) => impactLabels[key] + ": " + count)
+        .join("; ") +
+      ". Сервер повторно проверит связи при публикации.",
+  };
+}
+function catalogRemovalForm({ entity, id }) {
+  const old = S.data[entity].find((row) => row.id === id),
+    { impact, text } = impactText(entity, id);
+  if (!old) throw Error("Запись уже недоступна.");
+  if (impact.blockers?.length)
+    return showForm(
+      "Сохраните историческую запись",
+      [],
+      async () => {},
+      "Понятно",
+      old.name +
+        ". " +
+        text +
+        " Есть неизменяемые исторические ссылки. Удаление и замена заблокированы; для группы можно использовать архивирование.",
+    );
+  const targets = S.data[entity].filter(
+    (row) =>
+      row.id !== id &&
+      (entity !== "groups" ||
+        (isGroupActive(row) &&
+          JSON.stringify([...row.subgroups].sort()) ===
+            JSON.stringify([...old.subgroups].sort()))),
+  );
+  if (!impact.total)
+    return showForm(
+      "Удалить запись справочника",
+      [],
+      async (_, rev) => act("catalog.delete", { entity, id }, rev),
+      "Удалить в черновике",
+      old.name + ". " + text + " Удаление произойдёт после публикации.",
+    );
+  if (!targets.length)
+    return showForm(
+      "Запись используется",
+      [],
+      async () => {},
+      "Понятно",
+      old.name +
+        ". " +
+        text +
+        " Удаление заблокировано. Сначала создайте совместимую запись для замены. Для группы нужны те же подгруппы.",
+    );
+  showForm(
+    "Заменить ссылки и удалить",
+    [
+      {
+        name: "replacementId",
+        label: "Конечная запись для замены",
+        type: "select",
+        value: "",
+        required: true,
+        options: [
+          { value: "", label: "Выберите замену" },
+          ...targets.map((row) => ({ value: row.id, label: row.name })),
+        ],
+        full: true,
+      },
+    ],
+    async (v, rev) =>
+      act(
+        "catalog.replace",
+        { entity, id, replacementId: v.replacementId },
+        rev,
+      ),
+    "Заменить в черновике",
+    old.name +
+      ". " +
+      text +
+      " Все ссылки будут перенесены на выбранную запись, исходная запись удалена. Цепочки замен не поддерживаются. Публикация — отдельным действием.",
+  );
+}
+function catalogDuplicateForm({ entity, id }) {
+  const old = S.data[entity].find((row) => row.id === id);
+  showForm(
+    "Дублировать без расписания",
+    [
+      {
+        name: "name",
+        label: "Название копии",
+        value: old.name + " — копия",
+        required: true,
+        full: true,
+      },
+      ...(entity === "groups"
+        ? [
+            {
+              name: "code",
+              label: "Новый публичный код (необязательно)",
+              maxLength: 80,
+            },
+          ]
+        : []),
+    ],
+    async (v, rev) => {
+      await act("catalog.duplicate", { entity, id, ...v }, rev);
+      S.catalogQuery = "";
+      S.catalogFilter = "active";
+      render();
+    },
+    "Создать копию в черновике",
+    "Копируются только редактируемые сведения. Расписание, задания, архивы и исходные ссылки не копируются. Назначения преподавателя нужно задать отдельно.",
+  );
+}
+function archiveGroupForm({ id, archived }) {
+  const group = S.data.groups.find((row) => row.id === id),
+    { text } = impactText("groups", id);
+  showForm(
+    archived ? "Перенести группу в архив" : "Восстановить группу",
+    [],
+    async (_, rev) => act("group.archive", { id, archived }, rev),
+    archived ? "В архив в черновике" : "Восстановить в черновике",
+    group.name +
+      ". " +
+      text +
+      (archived
+        ? " Данные и расписание сохранятся; после публикации группа исчезнет из активного выбора студентов и расчёта ресурсов."
+        : " После публикации группа снова станет доступна студентам. Проверьте конфликты перед публикацией."),
   );
 }
 function loginForm() {
@@ -1389,15 +1711,14 @@ function freeRooms() {
       },
     ],
     async (v) => {
+      $("free-results")?.remove();
       if (v.start >= v.end) throw Error("Конец должен быть позже начала");
-      const busy = new Set(
-        occurrences(S.data, v.date)
-          .filter((l) => !l.cancelled && l.start < v.end && l.end > v.start)
-          .map((l) => l.roomId),
-      );
-      const rooms = S.data.rooms.filter(
-        (r) => r.capacity >= v.capacity && !busy.has(r.id),
-      );
+      const busy = busyRoomIds(S.data, v.date, v.start, v.end);
+      const free = S.data.rooms.filter((room) => !busy.has(room.id)),
+        rooms = free.filter(
+          (room) => !room.capacityEstimated && room.capacity >= v.capacity,
+        ),
+        unknown = free.filter((room) => room.capacityEstimated);
       let output = $("free-results");
       if (!output) {
         output = document.createElement("div");
@@ -1405,10 +1726,16 @@ function freeRooms() {
         output.className = "notice-info section-space";
         $("dialog-form").append(output);
       }
-      output.textContent = rooms.length
-        ? "Свободны: " +
-          rooms.map((r) => r.name + " (" + r.capacity + " мест)").join(", ")
-        : "Свободных аудиторий с такими условиями нет";
+      output.textContent =
+        (rooms.length
+          ? "Свободны, подтверждённая вместимость подходит: " +
+            rooms.map((r) => r.name + " (" + r.capacity + " мест)").join(", ")
+          : "Свободных аудиторий с подтверждённой вместимостью по этим условиям нет.") +
+        (unknown.length
+          ? " Вместимость неизвестна; подтвердите отдельно: " +
+            unknown.map((room) => room.name).join(", ") +
+            ". Эти свободные аудитории не подтверждены по минимуму мест."
+          : "");
       return false;
     },
     "Найти",
@@ -1545,32 +1872,67 @@ function exportIcs() {
   toast("Экспортированы ближайшие 28 дней по текущему фильтру");
 }
 async function rollback(revision) {
+  if (S.busy) throw Error("Дождись сохранения");
   showForm(
     "Восстановить версию " + revision,
     [],
     async (_values, expected) => {
-      const pending = draft;
-      if (pending && !(await persistCurrentDraft()))
-        throw Error("Сначала сохраните локальную копию черновика.");
-      const result = await api("rollback", {
-        revision: expected,
-        target: revision,
-      });
-      if (pending?.localGeneration)
-        try {
-          await draftJournal.archive(
-            ownerSession.owner.id,
-            { id: pending.localId, generation: pending.localGeneration },
-            "rollback",
-          );
-        } catch (error) {
-          toast(error.message);
-        }
-      draft = null;
-      install(result);
-      await loadLocalDrafts();
+      if (S.busy) throw Error("Дождись сохранения");
+      S.busy = true;
+      S.rollbackBusy = true;
       render();
-      toast("Версия восстановлена");
+      try {
+        const pending = draft;
+        if (pending && !(await persistCurrentDraft()))
+          throw Error("Сначала сохраните локальную копию черновика.");
+        const submitted = pending && {
+          id: pending.localId,
+          generation: pending.localGeneration,
+          fingerprint: JSON.stringify([
+            pending.data,
+            pending.catalogReplacements || [],
+          ]),
+        };
+        const result = await api("rollback", {
+          revision: expected,
+          target: revision,
+        });
+        const changed =
+          draft !== pending ||
+          (pending &&
+            submitted.fingerprint !==
+              JSON.stringify([
+                pending.data,
+                pending.catalogReplacements || [],
+              ]));
+        if (submitted?.generation && !changed)
+          try {
+            await draftJournal.archive(
+              ownerSession.owner.id,
+              { id: submitted.id, generation: submitted.generation },
+              "rollback",
+            );
+          } catch (error) {
+            toast(error.message);
+          }
+        if (!changed) draft = null;
+        install(result);
+        if (changed && draft) {
+          draft.baseConflict = true;
+          S.data = visible(draft.data, S.user);
+        }
+        await loadLocalDrafts();
+        render();
+        toast(
+          changed
+            ? "Версия восстановлена. Более новые правки остались в черновике и требуют сверки."
+            : "Версия восстановлена",
+        );
+      } finally {
+        S.busy = false;
+        S.rollbackBusy = false;
+        render();
+      }
     },
     "Восстановить",
     "Будет восстановлен весь документ: расписания ВСЕХ групп, задания, объявления и посещаемость. Настройки входа владельца не меняются. Текущая версия сохранится для отката.",
@@ -1578,6 +1940,8 @@ async function rollback(revision) {
 }
 async function handleAction(action, args, el) {
   if (ownerEnding) return;
+  if (S.rollbackBusy && !["page", "closeModal"].includes(action))
+    throw Error("Дождись восстановления версии. Правки временно недоступны.");
   if (action === "page") {
     S.page = args.page;
     S.search = "";
@@ -1625,6 +1989,7 @@ async function handleAction(action, args, el) {
   }
   if (action === "catalogTab") {
     S.catalog = el.dataset.kind;
+    S.catalogQuery = "";
     render();
     return;
   }
@@ -1703,13 +2068,15 @@ async function handleAction(action, args, el) {
     return;
   }
   if (action === "deleteCatalog") {
-    showForm(
-      "Удалить запись справочника",
-      [],
-      async (_, rev) => act("catalog.delete", args, rev),
-      "Удалить",
-      "Если запись используется в расписании или связанных учебных данных, удаление будет запрещено.",
-    );
+    catalogRemovalForm(args);
+    return;
+  }
+  if (action === "duplicateCatalog") {
+    catalogDuplicateForm(args);
+    return;
+  }
+  if (action === "archiveGroup") {
+    archiveGroupForm(args);
     return;
   }
   if (action === "read" || action === "readAll") {
@@ -1736,20 +2103,40 @@ async function handleAction(action, args, el) {
     window.print();
     return;
   }
-  if (action === "share") {
-    const url = new URL("../", import.meta.url);
-    url.search = "";
-    url.searchParams.set("g", S.groupId);
-    url.searchParams.set("subgroup", S.subgroup);
-    url.searchParams.set("date", S.date);
-    await navigator.clipboard.writeText(url.toString());
-    toast("Ссылка на выбранную группу скопирована");
+  if (action === "share" || action === "groupShare") {
+    await openGroupShare(
+      args.id || S.groupId,
+      action === "share" ? S.subgroup : "all",
+    );
     return;
   }
   if (action === "rollback") {
     rollback(args.revision);
     return;
   }
+}
+async function openGroupShare(id, subgroup) {
+  if (!isAdmin() || ownerEnding) return;
+  const published = () =>
+    (draft?.before || S.data).groups.some((row) => row.id === id);
+  const check = () => {
+    const group = S.data?.groups.find((row) => row.id === id);
+    if (!group || !published())
+      throw Error("Сначала опубликуй новую группу, затем создай ссылку.");
+    if (!isGroupActive(group))
+      throw Error("Ссылка доступна после восстановления группы из архива.");
+    if (subgroup !== "all" && !group.subgroups.includes(subgroup))
+      throw Error("Подгруппы изменились. Выберите актуальную подгруппу.");
+    return group;
+  };
+  check();
+  const epoch = S.epoch;
+  const { showGroupShare } = await import("./group-share.mjs");
+  if (ownerEnding || !isAdmin() || epoch !== S.epoch) return;
+  showGroupShare($("modal"), check(), subgroup, {
+    published: published(),
+    onClose: closeModal,
+  });
 }
 document.addEventListener("click", (event) => {
   const nav = event.target.closest("[data-page]");
@@ -1774,6 +2161,10 @@ document.addEventListener("click", (event) => {
 document.addEventListener("change", async (event) => {
   const el = event.target;
   try {
+    if (el.id === "catalog-visibility") {
+      S.catalogFilter = el.value;
+      render();
+    }
     if (el.dataset.filter) {
       S[el.dataset.filter] = el.value;
       if (el.dataset.filter === "groupId") {
@@ -1799,6 +2190,10 @@ document.addEventListener("change", async (event) => {
   }
 });
 document.addEventListener("input", (event) => {
+  if (event.target.id === "catalog-search") {
+    S.catalogQuery = event.target.value;
+    render();
+  }
   if (event.target.id === "global-search") {
     S.search = event.target.value;
     S.page = "schedule";
@@ -1871,6 +2266,14 @@ function enhanceWorkspace() {
     class: "draft-controls",
     "aria-label": "Черновик расписания",
   });
+  if (S.rollbackBusy)
+    controls.append(
+      dom(
+        "p",
+        { role: "status" },
+        "Восстанавливаем версию. Изменения временно недоступны.",
+      ),
+    );
   if (draft) {
     controls.append(
       dom("strong", {}, "Черновик · не опубликован"),
@@ -1958,6 +2361,7 @@ function startDraft() {
     data: clone(S.data),
     before: clone(S.data),
     revision: S.revision,
+    catalogReplacements: [],
     localId: crypto.randomUUID(),
     localGeneration: 0,
     queuedFingerprint: null,
@@ -2250,6 +2654,7 @@ function templateDeleteForm(tools, template) {
   showTemplateDialog("Удалить шаблон", form);
 }
 async function discardDraft() {
+  if (S.rollbackBusy) return;
   if (!draft) return;
   const pending = draft;
   if (!(await persistCurrentDraft())) return;
@@ -2276,6 +2681,7 @@ async function publishDraft() {
   await persistCurrentDraft();
   if (draft !== pending || S.busy) return;
   const submittedData = clone(pending.data),
+    submittedReplacements = clone(pending.catalogReplacements || []),
     submittedGeneration = pending.localGeneration;
   S.busy = true;
   try {
@@ -2285,7 +2691,10 @@ async function publishDraft() {
       );
     const result = await api("mutate", {
       op: "import",
-      payload: { data: submittedData },
+      payload: {
+        data: submittedData,
+        catalogReplacements: submittedReplacements,
+      },
       revision: pending.revision,
     });
     const changedDuringPublish =
@@ -2348,7 +2757,11 @@ function queueDraftSave(force = false) {
   const pending = draft;
   let changes, fingerprint;
   try {
-    changes = draftChanges(pending.before, pending.data);
+    changes = draftChanges(
+      pending.before,
+      pending.data,
+      pending.catalogReplacements,
+    );
     fingerprint = JSON.stringify(changes);
   } catch (error) {
     pending.saveError = error.message;
@@ -2476,6 +2889,15 @@ function localChangeLabel(change, reference) {
     sourceWarnings: "Замечания источника",
   };
   if (!change) return "Изменённая запись";
+  if (change.kind === "catalogReplacement")
+    return (
+      "Переназначение ссылок: " +
+      (reference[change.entity].find((row) => row.id === change.id)?.name ||
+        change.id) +
+      " → " +
+      (reference[change.entity].find((row) => row.id === change.replacementId)
+        ?.name || change.replacementId)
+    );
   if (change.kind === "property")
     return labels[change.path] || "Настройка расписания";
   const item = change.after || change.before;
@@ -2547,6 +2969,7 @@ function localReviewValues(value, reference) {
   );
 }
 async function recoverLocalDraft(id) {
+  if (S.rollbackBusy) return;
   if (draft && draft.localId !== id) {
     toast(
       "Сначала опубликуйте или отмените текущий черновик. Его правки не заменены.",
@@ -2591,7 +3014,10 @@ async function recoverLocalDraft(id) {
             JSON.stringify(
               {
                 Было: localReviewValues(change.before, fresh.data),
-                Правки: localReviewValues(change.after, fresh.data),
+                Правки:
+                  change.kind === "catalogReplacement"
+                    ? localChangeLabel(change, fresh.data)
+                    : localReviewValues(change.after, fresh.data),
               },
               null,
               2,
@@ -2680,15 +3106,22 @@ async function recoverLocalDraft(id) {
               throw Error(
                 "Копия изменилась в другой вкладке. Откройте проверку заново.",
               );
-            const candidate = recoverChanges(fresh.data, record.changes, {
+            const restored = recoverChanges(fresh.data, record.changes, {
               force: checked.checked,
-            }).data;
+            });
+            const candidate = restored.catalogReplacements.length
+              ? mutate(fresh.data, S.user, "import", {
+                  data: restored.data,
+                  catalogReplacements: restored.catalogReplacements,
+                }).data
+              : restored.data;
             validate(candidate);
             install(fresh);
             draft = {
               before: clone(fresh.data),
               data: candidate,
               revision: fresh.revision,
+              catalogReplacements: restored.catalogReplacements,
               localId: crypto.randomUUID(),
               localGeneration: 0,
               queuedFingerprint: null,

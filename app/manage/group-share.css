@@ -1,0 +1,16 @@
+.group-share-image {
+  display: grid;
+  place-items: center;
+  margin: 1rem 0;
+}
+#modal:has(.group-share-qr) .field {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.group-share-qr {
+  max-width: 100%;
+  height: auto;
+  background: white;
+  border: 1px solid #64748b;
+}

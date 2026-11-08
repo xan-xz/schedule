@@ -254,6 +254,10 @@ test("owner shares subgroup Б through a canonical link that a fresh student con
   await page.locator('[data-page="schedule"]').click();
   await page.locator('[data-filter="subgroup"]').last().selectOption("Б");
   await page.getByRole("button", { name: "Поделиться", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Скопировать ссылку", exact: true })
+    .click();
   await expect
     .poll(() => page.evaluate(() => globalThis.managerCopiedUrl))
     .toBeTruthy();
