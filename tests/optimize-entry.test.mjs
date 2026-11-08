@@ -77,3 +77,27 @@ test("missing CSP is rejected, an already compiled/non-app fixture is left uncha
     "<!doctype html><title>Fixture</title>",
   );
 });
+
+test("prepaint appearance bootstrap is hashed and stays before the stylesheet and UI module", async (t) => {
+  const dir = await fixture(t),
+    file = join(dir, "index.html");
+  await writeFile(
+    file,
+    (await readFile(file, "utf8")).replace(
+      '<link rel="stylesheet"',
+      '<script src="./appearance-init.js"></script><link rel="stylesheet"',
+    ),
+  );
+  await writeFile(
+    join(dir, "appearance-init.js"),
+    'document.documentElement.dataset.palette="forest";',
+  );
+  await optimizeEntry(dir);
+  const html = await readFile(file, "utf8"),
+    early = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const hash = createHash("sha256").update(early).digest("base64");
+  assert.ok(html.includes("'sha256-" + hash + "'"));
+  assert.ok(html.indexOf("<script>") < html.indexOf("<style>"));
+  assert.ok(html.indexOf("<script>") < html.indexOf('<script type="module">'));
+  assert.doesNotMatch(html, /src="\.\/appearance-init|unsafe-inline/);
+});

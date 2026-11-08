@@ -58,6 +58,15 @@ const FILES = [
   "./index.html",
   "./app.mjs",
   "./styles.css",
+  "./appearance-init.js",
+  "./appearance-policy.mjs",
+  "./backend/appearance-policy.mjs",
+  "./lib/personalization.mjs",
+  "./lib/appearance-tokens.mjs",
+  "./lib/layout-loader.mjs",
+  "./layouts/timeline.mjs",
+  "./layouts/grid.mjs",
+  "./layouts/cards.mjs",
   "./lib/dom.mjs",
   "./lib/client.mjs",
   "./lib/i18n.mjs",
@@ -74,15 +83,24 @@ const FILES = [
   "./icons/icon-192.png",
   "./icons/icon-512.png",
 ];
-const PREVIOUS_FILES = FILES.filter(
-  (path) =>
-    ![
-      "./lib/compatibility.mjs",
-      "./lib/compatibility-policy.mjs",
-      "./lib/personal-migration.mjs",
-      "./compatibility.json",
-    ].includes(path),
-);
+// Frozen published shell contract: new optional assets cannot invalidate an old complete cache.
+const PREVIOUS_FILES = [
+  "./",
+  "./index.html",
+  "./app.mjs",
+  "./styles.css",
+  "./lib/dom.mjs",
+  "./lib/client.mjs",
+  "./lib/i18n.mjs",
+  "./lib/time.mjs",
+  "./lib/storage.mjs",
+  "./lib/calendar.mjs",
+  "./bootstrap.json",
+  "./seed.json",
+  "./manifest.webmanifest",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -254,10 +272,15 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   const sharedModel = new URL("./backend/core.mjs", self.registration.scope)
     .href;
+  const sharedPolicy = new URL(
+    "./backend/appearance-policy.mjs",
+    self.registration.scope,
+  ).href;
+  const sharedAsset = url.href === sharedModel || url.href === sharedPolicy;
   if (
     request.method !== "GET" ||
     url.origin !== self.location.origin ||
-    (!url.href.startsWith(self.registration.scope) && url.href !== sharedModel)
+    (!url.href.startsWith(self.registration.scope) && !sharedAsset)
   )
     return;
   const relative = url.pathname.slice(SCOPE.pathname.length);
@@ -265,9 +288,9 @@ self.addEventListener("fetch", (event) => {
   // Retired aliases and the private workspace use the network
   // or their own more specific worker.
   if (
-    url.href !== sharedModel &&
+    !sharedAsset &&
     relative.includes("/") &&
-    !["lib", "icons"].includes(relative.split("/")[0])
+    !["lib", "icons", "layouts"].includes(relative.split("/")[0])
   )
     return;
   if (request.mode === "navigate") {

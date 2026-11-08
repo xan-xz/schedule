@@ -22,6 +22,22 @@ export async function optimizeEntry(directory) {
     throw Error(
       "Cannot safely optimize entry: expected strict CSP and local stylesheet",
     );
+  const earlyTag = /<script src="\.\/appearance-init\.js"><\/script>/;
+  let early = "";
+  if (earlyTag.test(html)) {
+    early = (
+      await transform(
+        await readFile(resolve(directory, "appearance-init.js"), "utf8"),
+        {
+          loader: "js",
+          minify: true,
+          target: "es2022",
+          legalComments: "none",
+        },
+      )
+    ).code;
+    if (/<\/script/i.test(early)) throw Error("Unsafe appearance bootstrap");
+  }
   const js = (
     await build({
       entryPoints: [resolve(directory, "app.mjs")],
@@ -45,10 +61,14 @@ export async function optimizeEntry(directory) {
   if (/<\/script/i.test(js) || /<\/style/i.test(css))
     throw Error("Unsafe closing tag in inline build content");
   html = html
+    .replace(earlyTag, () => `<script>${early}</script>`)
     .replace(script, () => `<script type="module">${js}</script>`)
     .replace(sheet, () => `<style>${css}</style>`)
     .replace(/<link\b(?=[^>]*\brel=["']modulepreload["'])[^>]*>/gi, "")
-    .replace("script-src 'self';", `script-src 'self' ${cspHash(js)};`)
+    .replace(
+      "script-src 'self';",
+      `script-src 'self'${early ? " " + cspHash(early) : ""} ${cspHash(js)};`,
+    )
     .replace("style-src 'self';", `style-src 'self' ${cspHash(css)};`);
   // Existing worker asset URLs remain available, but no longer block first paint.
   await writeFile(resolve(directory, "app.mjs"), js);

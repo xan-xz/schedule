@@ -21,7 +21,8 @@ async function walk(path) {
     ))
       if (
         !/\bsrc\s*=/.test(match[1]) &&
-        /\btype\s*=\s*["']module["']/.test(match[1])
+        (!/\btype\s*=/.test(match[1]) ||
+          /\btype\s*=\s*["']module["']/.test(match[1]))
       )
         js += gzipSync(match[2]).length;
     for (const match of code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi))
