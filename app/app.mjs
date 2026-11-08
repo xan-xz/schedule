@@ -913,6 +913,7 @@ async function personalBackup() {
         check();
         await loadPersonal();
         check();
+        render();
         if (!result.persisted) throw Error("storageWarning");
         return { added: plan.added, skipped: plan.skipped };
       },

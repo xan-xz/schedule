@@ -246,3 +246,79 @@ test("scope changes invalidate an open preview before any personal write", async
   expect(rows[0]).toHaveLength(1);
   expect(rows[1]).toEqual([]);
 });
+
+test("closing during a delayed save still updates the visible task list when persistence completes", async ({
+  page,
+}) => {
+  await mockState(page, { ticking: true });
+  await page.goto("/schedule/");
+  await open(page);
+  const doc = {
+    format: "uniflow-personal-tasks-v1",
+    scope,
+    tasks: [
+      {
+        id: "delayed-origin",
+        title: "Saved after closing",
+        due: "2026-11-09",
+        dueTime: "",
+        subjectId: "",
+        description: "",
+        status: "done",
+      },
+    ],
+  };
+  await upload(page, doc);
+  await expect(
+    page.getByText("Будет добавлено: 1.", { exact: false }),
+  ).toBeVisible();
+  await page.clock.pauseAt(new Date("2026-11-06T04:00:30Z"));
+  await page.evaluate(() => {
+    const proto = globalThis.IDBTransaction.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, "oncomplete");
+    let gateUsed = false;
+    const gate = new Promise((resolve) => {
+      globalThis.releaseBackupSave = resolve;
+    });
+    Object.defineProperty(proto, "oncomplete", {
+      configurable: true,
+      get: descriptor.get,
+      set(callback) {
+        if (this.mode === "readwrite" && !gateUsed) {
+          gateUsed = true;
+          descriptor.set.call(this, function (event) {
+            globalThis.backupSaveHeld = true;
+            void gate.then(() => callback.call(this, event));
+          });
+        } else descriptor.set.call(this, callback);
+      },
+    });
+    globalThis.restoreBackupTransaction = () =>
+      Object.defineProperty(proto, "oncomplete", descriptor);
+  });
+  try {
+    await page
+      .getByRole("button", { name: "Восстановить задания", exact: true })
+      .click();
+    await expect
+      .poll(() => page.evaluate(() => globalThis.backupSaveHeld))
+      .toBe(true);
+    await page.getByRole("button", { name: "Закрыть", exact: true }).click();
+    await page.getByRole("button", { name: "Задания", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "Saved after closing", exact: true }),
+    ).toHaveCount(0);
+    await page.evaluate(() => {
+      globalThis.restoreBackupTransaction();
+      globalThis.releaseBackupSave();
+    });
+    await expect(
+      page.getByRole("heading", { name: "Saved after closing", exact: true }),
+    ).toBeVisible();
+  } finally {
+    await page.evaluate(() => {
+      globalThis.restoreBackupTransaction();
+      globalThis.releaseBackupSave();
+    });
+  }
+});
