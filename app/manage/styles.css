@@ -1777,3 +1777,20 @@ body.dark .notice h3 {
     transition: none !important;
   }
 }
+.draft-preview-json {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 18rem;
+  overflow: auto;
+}
+.draft-conflict-confirm {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-block: 16px;
+}
+.draft-conflict-confirm input {
+  flex: none;
+  width: 24px;
+  min-height: 24px;
+}

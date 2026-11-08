@@ -1,4 +1,5 @@
 import { setMarkup } from "./safe-dom.mjs";
+import { createDraftJournal, draftChanges, recoverChanges } from "./drafts.mjs";
 import {
   getOwnerSession,
   clearOwnerSession,
@@ -13,6 +14,11 @@ import {
   download as fileDownload,
 } from "../lib/dom.mjs";
 let draft = null;
+let draftFormDirty = false;
+const draftJournal = createDraftJournal();
+let savedDrafts = [],
+  localDraftLoadError = "",
+  draftSaveQueue = Promise.resolve();
 import {
   DAYS,
   SHORT,
@@ -27,6 +33,7 @@ import {
   time,
   occurrences,
   mutate,
+  validate,
   visible,
 } from "../core.mjs";
 import {
@@ -356,6 +363,7 @@ function connectRealtime() {
     });
 }
 async function act(op, payload, expected = S.revision) {
+  if (S.busy) throw Error("Дождись сохранения");
   if (
     draft &&
     [
@@ -780,7 +788,7 @@ function historyPage() {
   return `<div class="notice-info">Сохраняются последние 30 версий. Откат восстанавливает расписание, задания, объявления и журнал. Настройки входа владельца не откатываются.</div><section class="panel section-space"><div class="panel-head"><h2>Версии пространства</h2></div>${S.versions.length ? `<div class="list">${S.versions.map((v) => `<div class="list-item">${icon("history")}<div><h3>Версия ${v.revision} · ${h(v.reason)}</h3><p>${h(v.actor)} · ${h(new Date(v.created_at).toLocaleString("ru-RU"))}</p></div><div class="end">${button("Восстановить", "rollback", { revision: v.revision }, "tiny")}</div></div>`).join("")}</div>` : empty("После первого изменения здесь появится версия для восстановления", "history")}</section><section class="panel section-space"><div class="panel-head"><h2>Журнал действий</h2></div><div class="list">${S.data.history.map((e) => `<div class="list-item"><div><h3>${h(e.summary)}</h3><p>${h(e.actor)} · ${h(new Date(e.at).toLocaleString("ru-RU"))}</p></div></div>`).join("")}</div></section>`;
 }
 function guide() {
-  return `<section class="panel guide"><h2>Управление учебной неделей</h2><p>UniFlow объединяет расписание, задания, объявления и изменения по датам. Время показывается по Казахстану, UTC+5.</p><h3>Публикация расписания</h3><ol><li>Выберите группу, подгруппу и нужный день.</li><li>Создайте черновик. Редактируйте регулярные пары или применяйте изменения только на выбранную дату.</li><li>Проверьте предпросмотр студента и конфликты, затем нажмите «Опубликовать».</li><li>Предыдущая версия остаётся в истории. Восстановление затрагивает весь документ расписания.</li></ol><h3>Шаблоны и справочники</h3><p>Шаблоны дня и недели сохраняются только в этом браузере. Применение добавляет занятия в черновик и проверяет пересечения. В справочниках можно изменять группы, аудитории, предметы и назначения преподавателей. Доступ к управлению есть только у подтверждённого владельца. Публичная регистрация и создание дополнительных аккаунтов через этот экран недоступны.</p><h3>Разовые изменения</h3><p>«Изменить» меняет регулярное занятие. «По дате» отменяет или переносит одну встречу. Перенос сохраняет уведомление на исходную дату и показывает занятие на новой дате.</p><h3>Сохранение и доступ</h3><p>Права проверяет сервер. Вход владельца требует пароль, подтверждение почты и TOTP. Сессия хранится только в памяти вкладки; access token действует 15 минут, refresh token — до одного часа. Перезагрузка потребует повторного входа. Редактирование и публикация требуют связи. При одновременном редактировании устаревшая версия не перезапишет новую.</p><h3>Инструменты</h3><ul><li>Поиск, просмотр дня или недели, подбор свободного кабинета.</li><li>Экспорт календаря .ics и печать расписания.</li><li>Импорт CSV или JSON проходит через черновик и проверку перед публикацией.</li><li>Личные заметки и шаблоны остаются на устройстве; это не облачная резервная копия.</li></ul><h3>Уведомления</h3><p>Изменения и объявления доступны внутри сайта. Внешние уведомления, Telegram-клиент и фоновая доставка пока не подключены.</p><a class="btn" href="https://github.com/xan-xz/schedule" target="_blank" rel="noopener">GitHub проекта</a></section>`;
+  return `<section class="panel guide"><h2>Управление учебной неделей</h2><p>UniFlow объединяет расписание, задания, объявления и изменения по датам. Время показывается по Казахстану, UTC+5.</p><h3>Публикация расписания</h3><ol><li>Выберите группу, подгруппу и нужный день.</li><li>Создайте черновик. Редактируйте регулярные пары или применяйте изменения только на выбранную дату.</li><li>Проверьте предпросмотр студента и конфликты, затем нажмите «Опубликовать».</li><li>Предыдущая версия остаётся в истории. Восстановление затрагивает весь документ расписания.</li></ol><h3>Шаблоны и справочники</h3><p>Шаблоны дня и недели сохраняются только в этом браузере. Применение добавляет занятия в черновик и проверяет пересечения. В справочниках можно изменять группы, аудитории, предметы и назначения преподавателей. Доступ к управлению есть только у подтверждённого владельца. Публичная регистрация и создание дополнительных аккаунтов через этот экран недоступны.</p><h3>Разовые изменения</h3><p>«Изменить» меняет регулярное занятие. «По дате» отменяет или переносит одну встречу. Перенос сохраняет уведомление на исходную дату и показывает занятие на новой дате.</p><h3>Сохранение и доступ</h3><p>Права проверяет сервер. Вход владельца требует пароль, подтверждение почты и TOTP. Сессия хранится только в памяти вкладки; access token действует 15 минут, refresh token — до одного часа. Перезагрузка потребует повторного входа и явного восстановления локальной копии. Применённые правки черновика сохраняются на устройстве; незавершённый ввод в открытой форме требует подтверждения. Публикация требует связи. При одновременном редактировании устаревшая версия не перезапишет новую.</p><h3>Инструменты</h3><ul><li>Поиск, просмотр дня или недели, подбор свободного кабинета.</li><li>Экспорт календаря .ics и печать расписания.</li><li>Импорт CSV или JSON проходит через черновик и проверку перед публикацией.</li><li>Личные заметки и шаблоны остаются на устройстве; это не облачная резервная копия.</li></ul><h3>Уведомления</h3><p>Изменения и объявления доступны внутри сайта. Внешние уведомления, Telegram-клиент и фоновая доставка пока не подключены.</p><a class="btn" href="https://github.com/xan-xz/schedule" target="_blank" rel="noopener">GitHub проекта</a></section>`;
 }
 function render() {
   if (!S.data) {
@@ -807,12 +815,14 @@ function render() {
     pos = search ? document.activeElement.selectionStart : null;
   setMarkup($("app"), shell(pages[S.page]()));
   enhanceWorkspace();
+  queueDraftSave();
   if (search) {
     $("global-search").focus();
     if (pos !== null) $("global-search").setSelectionRange(pos, pos);
   }
 }
 function closeModal() {
+  draftFormDirty = false;
   $("modal").close();
   $("modal").replaceChildren();
   $("modal").dataset.revision = "";
@@ -824,6 +834,7 @@ function showForm(
   submit = "Сохранить",
   subtitle = "",
 ) {
+  draftFormDirty = false;
   const revision = S.revision;
   const field = (f) => {
     const id = "field-" + f.name;
@@ -1538,7 +1549,26 @@ async function rollback(revision) {
     "Восстановить версию " + revision,
     [],
     async (_values, expected) => {
-      install(await api("rollback", { revision: expected, target: revision }));
+      const pending = draft;
+      if (pending && !(await persistCurrentDraft()))
+        throw Error("Сначала сохраните локальную копию черновика.");
+      const result = await api("rollback", {
+        revision: expected,
+        target: revision,
+      });
+      if (pending?.localGeneration)
+        try {
+          await draftJournal.archive(
+            ownerSession.owner.id,
+            { id: pending.localId, generation: pending.localGeneration },
+            "rollback",
+          );
+        } catch (error) {
+          toast(error.message);
+        }
+      draft = null;
+      install(result);
+      await loadLocalDrafts();
       render();
       toast("Версия восстановлена");
     },
@@ -1821,6 +1851,8 @@ if (!ownerSession) {
   };
   render();
   await refresh();
+  await loadLocalDrafts();
+  if (S.data) render();
   connectRealtime();
 }
 
@@ -1845,19 +1877,46 @@ function enhanceWorkspace() {
       dom(
         "p",
         {},
-        "Регулярное расписание и разовые изменения сохраняются только в памяти этой вкладки до публикации.",
+        "Правки расписания сохраняются на этом устройстве. После перезагрузки потребуется вход и явное восстановление; публикация выполняется отдельно.",
       ),
       dom(
         "div",
         { class: "row" },
         domButton("Предпросмотр студента", previewDraft, { class: "btn" }),
-        domButton("Опубликовать", publishDraft, { class: "btn primary" }),
+        domButton("Опубликовать", publishDraft, {
+          class: "btn primary",
+          disabled: S.busy,
+        }),
         domButton("Отменить черновик", discardDraft, { class: "btn" }),
       ),
+      dom(
+        "p",
+        { id: "draft-save-status", role: "status", class: "small" },
+        draftSaveText(),
+      ),
+      domButton("Повторить сохранение", () => persistCurrentDraft(true), {
+        class: "btn",
+        id: "draft-save-retry",
+        hidden: !draft.saveError,
+      }),
+      ...(draft.baseConflict
+        ? [
+            domButton(
+              "Перенести на новую версию",
+              () => recoverLocalDraft(draft.localId),
+              { class: "btn" },
+            ),
+          ]
+        : []),
     );
   } else
     controls.append(
       domButton("Создать черновик", startDraft, { class: "btn" }),
+    );
+  if (savedDrafts.length)
+    controls.append(
+      dom("p", { class: "small" }, "Локальных копий: " + savedDrafts.length),
+      domButton("Локальные черновики", showLocalDrafts, { class: "btn" }),
     );
   if (S.page === "schedule") {
     controls.append(
@@ -1874,15 +1933,33 @@ function enhanceWorkspace() {
       ),
     );
   }
+  if (localDraftLoadError)
+    controls.append(
+      dom("p", { role: "status", class: "small" }, localDraftLoadError),
+      domButton(
+        "Повторить чтение копий",
+        async () => {
+          await loadLocalDrafts();
+          render();
+        },
+        { class: "btn" },
+      ),
+    );
   main.insertBefore(controls, back.nextSibling);
 }
 function startDraft() {
   if (!isAdmin()) throw Error("Нужны права администратора");
+  if (S.busy) throw Error("Дождись сохранения");
   if (draft) return;
   draft = {
     data: clone(S.data),
     before: clone(S.data),
     revision: S.revision,
+    localId: crypto.randomUUID(),
+    localGeneration: 0,
+    queuedFingerprint: null,
+    pending: 0,
+    saveError: "",
   };
   render();
 }
@@ -1897,6 +1974,7 @@ function templateField(label, control) {
   );
 }
 function showTemplateDialog(title, body) {
+  draftFormDirty = false;
   const dialog = $("modal");
   dialog.setAttribute("aria-labelledby", "template-title");
   dialog.addEventListener(
@@ -2168,33 +2246,497 @@ function templateDeleteForm(tools, template) {
   });
   showTemplateDialog("Удалить шаблон", form);
 }
-function discardDraft() {
+async function discardDraft() {
   if (!draft) return;
+  const pending = draft;
+  if (!(await persistCurrentDraft())) return;
+  if (draft !== pending) return;
+  if (pending.localGeneration)
+    try {
+      await draftJournal.archive(
+        ownerSession.owner.id,
+        { id: pending.localId, generation: pending.localGeneration },
+        "discarded",
+      );
+    } catch (error) {
+      toast(error.message);
+      return;
+    }
   S.data = draft.before;
   draft = null;
+  await loadLocalDrafts();
   render();
 }
 async function publishDraft() {
   if (!draft || S.busy) return;
   const pending = draft;
+  await persistCurrentDraft();
+  if (draft !== pending || S.busy) return;
+  const submittedData = clone(pending.data),
+    submittedGeneration = pending.localGeneration;
   S.busy = true;
   try {
-    if (!S.online) throw Error("Нет сети. Черновик остаётся в этой вкладке.");
+    if (!S.online)
+      throw Error(
+        "Нет сети. Черновик не отправлен; локальная копия сохраняется отдельно.",
+      );
     const result = await api("mutate", {
       op: "import",
-      payload: { data: pending.data },
+      payload: { data: submittedData },
       revision: pending.revision,
     });
-    draft = null;
+    const changedDuringPublish =
+      JSON.stringify(pending.data) !== JSON.stringify(submittedData);
+    if (submittedGeneration && !changedDuringPublish)
+      try {
+        await draftJournal.archive(
+          ownerSession.owner.id,
+          { id: pending.localId, generation: submittedGeneration },
+          "published",
+        );
+      } catch (error) {
+        toast(error.message);
+      }
+    draft = changedDuringPublish ? pending : null;
     install(result);
+    if (changedDuringPublish) {
+      pending.baseConflict = true;
+      S.data = visible(pending.data, S.user);
+    }
+    await loadLocalDrafts();
     render();
-    toast("Черновик опубликован. Предыдущая версия доступна в истории.");
+    toast(
+      changedDuringPublish
+        ? "Отправленная версия опубликована. Более новые правки остались в черновике и требуют сверки."
+        : "Черновик опубликован. Предыдущая версия доступна в истории.",
+    );
   } catch (error) {
-    toast(error.message);
+    if (error.status === 409) {
+      pending.baseConflict = true;
+      render();
+    }
+    toast(
+      error.status
+        ? error.message
+        : pending.saveError
+          ? "Не удалось отправить черновик. Работа осталась в этой вкладке; локальное сохранение тоже требует повторной попытки."
+          : "Не удалось отправить черновик. Локальная копия сохранена; проверьте сеть и повторите публикацию.",
+    );
   } finally {
     S.busy = false;
   }
 }
+function draftSaveText() {
+  if (!draft) return "";
+  if (draft.pending) return "Сохраняем локальную копию…";
+  if (draft.saveError) return draft.saveError;
+  return draft.localGeneration
+    ? "Черновик сохранён на этом устройстве. Не опубликован."
+    : "Пока нет правок для сохранения.";
+}
+function updateDraftStatus() {
+  const status = $("draft-save-status"),
+    retry = $("draft-save-retry");
+  if (status) status.textContent = draftSaveText();
+  if (retry) retry.hidden = !draft?.saveError;
+}
+function queueDraftSave(force = false) {
+  if (!draft || !isAdmin() || !draft.before || !ownerSession?.owner?.id) return;
+  const pending = draft;
+  let changes, fingerprint;
+  try {
+    changes = draftChanges(pending.before, pending.data);
+    fingerprint = JSON.stringify(changes);
+  } catch (error) {
+    pending.saveError = error.message;
+    updateDraftStatus();
+    return;
+  }
+  if (!changes.length && !pending.localGeneration) {
+    pending.queuedFingerprint = fingerprint;
+    return;
+  }
+  if (!force && fingerprint === pending.queuedFingerprint) return;
+  pending.queuedFingerprint = fingerprint;
+  pending.pending++;
+  updateDraftStatus();
+  const owner = ownerSession.owner.id;
+  draftSaveQueue = draftSaveQueue
+    .catch(() => {})
+    .then(async () => {
+      try {
+        const result = await draftJournal.save(owner, {
+          id: pending.localId,
+          generation: pending.localGeneration,
+          baseRevision: pending.revision,
+          changes,
+        });
+        pending.localId = result.record.id;
+        pending.localGeneration = result.record.generation;
+        pending.saveError = "";
+        if (result.forked)
+          toast(
+            "Другая вкладка изменила черновик. Ваши правки сохранены отдельной копией.",
+          );
+      } catch (error) {
+        pending.saveError = error.message;
+      } finally {
+        pending.pending--;
+        if (draft === pending) updateDraftStatus();
+      }
+    });
+}
+async function persistCurrentDraft(force = false) {
+  const pending = draft;
+  queueDraftSave(force);
+  await draftSaveQueue;
+  if (pending?.saveError) {
+    toast(pending.saveError);
+    return false;
+  }
+  return true;
+}
+async function loadLocalDrafts() {
+  if (!ownerSession || ownerEnding || !S.data || !S.online || !isAdmin())
+    return;
+  try {
+    savedDrafts = await draftJournal.list(ownerSession.owner.id);
+    localDraftLoadError = "";
+  } catch (error) {
+    localDraftLoadError =
+      "Не удалось прочитать локальные копии. " + error.message;
+    if (draft) {
+      draft.saveError = error.message;
+      updateDraftStatus();
+    }
+  }
+}
+async function showLocalDrafts() {
+  await loadLocalDrafts();
+  const body = dom(
+    "div",
+    {},
+    dom(
+      "p",
+      { class: "notice-info" },
+      "Копии доступны только после входа владельца в этом браузере. Это не облачная резервная копия. Восстановление создаёт новый черновик и ничего не публикует.",
+    ),
+  );
+  for (const record of savedDrafts) {
+    const section = dom(
+      "section",
+      { class: "panel section-space", "data-local-draft": record.id },
+      dom("h3", {}, new Date(record.updatedAt).toLocaleString("ru-RU")),
+      dom(
+        "p",
+        {},
+        "Исходная версия " +
+          record.baseRevision +
+          " · правок: " +
+          record.changes.length +
+          " · " +
+          (record.status === "active"
+            ? "Не завершён"
+            : "Архив: " +
+              ({
+                published: "опубликован",
+                discarded: "отменён",
+                recovered: "восстановлен",
+                rollback: "перед откатом",
+              }[record.reason] || "сохранён")),
+      ),
+      domButton(
+        "Проверить восстановление",
+        () => recoverLocalDraft(record.id),
+        { class: "btn" },
+      ),
+    );
+    body.append(section);
+  }
+  if (!savedDrafts.length)
+    body.append(dom("p", {}, "Локальных копий пока нет."));
+  showTemplateDialog("Локальные черновики", body);
+}
+function localChangeLabel(change, reference) {
+  const labels = {
+    groups: "Группа",
+    subjects: "Предмет",
+    teachers: "Преподаватель",
+    rooms: "Аудитория",
+    lessons: "Занятие",
+    exceptions: "Изменение по дате",
+    holidays: "Каникулы",
+    validFrom: "Начало семестра",
+    validUntil: "Окончание семестра",
+    "siteSettings.appearance": "Оформление",
+    source: "Исходный файл",
+    sourceWarnings: "Замечания источника",
+  };
+  if (!change) return "Изменённая запись";
+  if (change.kind === "property")
+    return labels[change.path] || "Настройка расписания";
+  const item = change.after || change.before;
+  const lesson =
+    change.kind === "exceptions"
+      ? reference.lessons.find((row) => row.id === item.lessonId)
+      : item;
+  const subject = reference.subjects.find(
+    (row) => row.id === lesson?.subjectId,
+  )?.name;
+  return [
+    labels[change.kind] || "Запись",
+    item.name ||
+      item.date ||
+      (lesson?.start ? lesson.start + "–" + lesson.end : ""),
+    subject,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+function localReviewValues(value, reference) {
+  const labels = {
+    name: "Название",
+    roomId: "Аудитория",
+    groupId: "Группа",
+    subjectId: "Предмет",
+    teacherId: "Преподаватель",
+    subgroup: "Подгруппа",
+    day: "День",
+    start: "Начало",
+    end: "Окончание",
+    week: "Чётность",
+    type: "Тип",
+    date: "Дата",
+    targetDate: "Новая дата",
+    status: "Действие",
+    note: "Комментарий",
+    capacity: "Количество мест",
+    subgroups: "Подгруппы",
+    specialty: "Специальность",
+    language: "Язык",
+    color: "Цвет",
+    source: "Источник",
+    present: "Задано",
+    value: "Значение",
+  };
+  const links = {
+    roomId: "rooms",
+    groupId: "groups",
+    subjectId: "subjects",
+    teacherId: "teachers",
+  };
+  if (!value || Array.isArray(value) || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "id")
+      .map(([key, field]) => [
+        labels[key] || key,
+        links[key]
+          ? reference[links[key]].find((row) => row.id === field)?.name || field
+          : key === "day"
+            ? DAYS[field]
+            : key === "status"
+              ? { cancelled: "Отмена", moved: "Перенос" }[field] || field
+              : key === "value"
+                ? localReviewValues(field, reference)
+                : field,
+      ]),
+  );
+}
+async function recoverLocalDraft(id) {
+  if (draft && draft.localId !== id) {
+    toast(
+      "Сначала опубликуйте или отмените текущий черновик. Его правки не заменены.",
+    );
+    return;
+  }
+  try {
+    if (draft && !(await persistCurrentDraft())) return;
+    const records = await draftJournal.list(ownerSession.owner.id),
+      record = records.find((item) => item.id === id);
+    if (!record) throw Error("Локальная копия не найдена.");
+    const fresh = await api("state", {
+      groupId: S.groupId,
+      subgroup: S.subgroup,
+    });
+    if (fresh.user?.role !== "admin")
+      throw Error("Для восстановления войдите владельцем.");
+    const preview = recoverChanges(fresh.data, record.changes);
+    const body = dom(
+      "div",
+      {},
+      dom(
+        "p",
+        {},
+        "Черновик версии " +
+          record.baseRevision +
+          ". Сейчас на сервере версия " +
+          fresh.revision +
+          ". Публикация произойдёт только по отдельной команде.",
+      ),
+    );
+    body.append(dom("p", {}, "Изменений: " + record.changes.length));
+    for (const change of record.changes)
+      body.append(
+        dom(
+          "details",
+          {},
+          dom("summary", {}, localChangeLabel(change, fresh.data)),
+          dom(
+            "pre",
+            { class: "draft-preview-json" },
+            JSON.stringify(
+              {
+                Было: localReviewValues(change.before, fresh.data),
+                Правки: localReviewValues(change.after, fresh.data),
+              },
+              null,
+              2,
+            ),
+          ),
+        ),
+      );
+    if (record.baseRevision !== fresh.revision)
+      body.append(
+        dom(
+          "p",
+          { class: "notice-info" },
+          "Серверная версия изменилась. Правки будут перенесены на текущие данные; остальные серверные поля сохранятся.",
+        ),
+      );
+    const checked = dom("input", { type: "checkbox" });
+    if (preview.conflicts.length) {
+      body.append(
+        dom(
+          "p",
+          { role: "alert", class: "notice-info" },
+          "Спорных записей: " +
+            preview.conflicts.length +
+            ". Проверьте значения перед восстановлением.",
+        ),
+      );
+      for (const conflict of preview.conflicts)
+        body.append(
+          dom(
+            "details",
+            {},
+            dom(
+              "summary",
+              {},
+              localChangeLabel(
+                record.changes.find(
+                  (change) =>
+                    (change.kind === "property"
+                      ? change.path
+                      : change.kind + " · " + change.id) === conflict.label,
+                ),
+                fresh.data,
+              ),
+            ),
+            dom(
+              "pre",
+              { class: "draft-preview-json" },
+              JSON.stringify(
+                {
+                  Было: localReviewValues(conflict.before, fresh.data),
+                  Сейчас: localReviewValues(conflict.current, fresh.data),
+                  "Локальные правки": localReviewValues(
+                    conflict.after,
+                    fresh.data,
+                  ),
+                },
+                null,
+                2,
+              ),
+            ),
+          ),
+        );
+      body.append(
+        dom(
+          "label",
+          { class: "draft-conflict-confirm" },
+          checked,
+          "Я проверил спорные правки и выбираю локальные значения",
+        ),
+      );
+    }
+    const error = dom("p", { class: "form-error", role: "alert" });
+    body.append(
+      domButton(
+        record.baseRevision === fresh.revision && !preview.conflicts.length
+          ? "Восстановить в черновик"
+          : "Перенести в текущую версию",
+        async () => {
+          try {
+            if (preview.conflicts.length && !checked.checked)
+              throw Error("Сначала подтвердите проверку спорных правок.");
+            const latest = (
+              await draftJournal.list(ownerSession.owner.id)
+            ).find((item) => item.id === id);
+            if (!latest || latest.generation !== record.generation)
+              throw Error(
+                "Копия изменилась в другой вкладке. Откройте проверку заново.",
+              );
+            const candidate = recoverChanges(fresh.data, record.changes, {
+              force: checked.checked,
+            }).data;
+            validate(candidate);
+            install(fresh);
+            draft = {
+              before: clone(fresh.data),
+              data: candidate,
+              revision: fresh.revision,
+              localId: crypto.randomUUID(),
+              localGeneration: 0,
+              queuedFingerprint: null,
+              pending: 0,
+              saveError: "",
+            };
+            S.data = visible(candidate, S.user);
+            const persisted = await persistCurrentDraft();
+            if (persisted && record.status === "active")
+              try {
+                await draftJournal.archive(
+                  ownerSession.owner.id,
+                  record,
+                  "recovered",
+                );
+              } catch (e) {
+                toast(e.message);
+              }
+            closeModal();
+            await loadLocalDrafts();
+            render();
+            if (persisted)
+              toast(
+                "Локальная копия восстановлена в новый черновик. Проверьте предпросмотр перед публикацией.",
+              );
+          } catch (e) {
+            error.textContent = e.message;
+          }
+        },
+        { class: "btn primary" },
+      ),
+      error,
+    );
+    showTemplateDialog("Проверка восстановления", body);
+  } catch (error) {
+    toast(error.message + " Локальная копия не удалена.");
+  }
+}
+window.addEventListener("beforeunload", (event) => {
+  if (draftFormDirty || (draft && (draft.pending || draft.saveError))) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+document.addEventListener("input", (event) => {
+  if ($("modal")?.contains(event.target)) draftFormDirty = true;
+});
+$("modal").addEventListener("close", () => {
+  draftFormDirty = false;
+});
+
 function previewDraft() {
   if (!draft) return;
   const dialog = $("modal");
