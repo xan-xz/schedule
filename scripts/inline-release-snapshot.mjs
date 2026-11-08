@@ -2,18 +2,44 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { transform } from "esbuild";
 import { isGroupActive } from "../backend/group-state.mjs";
 import {
   INITIAL_SNAPSHOT_ID,
   INITIAL_SNAPSHOT_FORMAT,
   MAX_INITIAL_SNAPSHOT_BYTES,
   projectInitialSnapshot,
+  guardInitialChoice,
 } from "../app/lib/initial-snapshot.mjs";
 
 export const MAX_INITIAL_DOCUMENT_GZIP = 60 * 1024;
 const ownerRouteCode = (
   await readFile(new URL("../app/owner-route.js", import.meta.url), "utf8")
 ).replace(/\r\n?/g, "\n");
+const choiceGuardCode = (
+  await transform(
+    `(${guardInitialChoice.toString()})(globalThis.document, true);`,
+    {
+      minify: true,
+      target: "es2022",
+      legalComments: "none",
+    },
+  )
+).code;
+if (/<\/script/i.test(choiceGuardCode))
+  throw Error("Unsafe initial choice guard");
+function addChoiceGuard(html) {
+  const hash = createHash("sha256").update(choiceGuardCode).digest("base64");
+  return html
+    .replace(
+      /script-src ([^;]+);/,
+      (_all, policy) => `script-src ${policy} 'sha256-${hash}';`,
+    )
+    .replace(
+      "</main>",
+      () => `</main><script data-choice-guard>${choiceGuardCode}</script>`,
+    );
+}
 function prependOwnerRoute(html) {
   const code = ownerRouteCode;
   const hash =
@@ -85,15 +111,17 @@ export async function inlineReleaseSnapshot(directory) {
     choice &&
     /<main\b[^>]*\bid=["']main["'][^>]*>[\s\S]*?<\/main>/i.test(html)
   ) {
-    const prerendered = html
-      .replace(
-        /(<main\b[^>]*\bid=["']main["'][^>]*>)[\s\S]*?(<\/main>)/i,
-        (_all, start, end) => start + choice + end,
-      )
-      .replace(
-        /(<p\b[^>]*\bid=["']identity["'][^>]*>)[\s\S]*?(<\/p>)/i,
-        (_all, start, end) => start + "Выбери группу" + end,
-      );
+    const prerendered = addChoiceGuard(
+      html
+        .replace(
+          /(<main\b[^>]*\bid=["']main["'][^>]*>)[\s\S]*?(<\/main>)/i,
+          (_all, start, end) => start + choice + end,
+        )
+        .replace(
+          /(<p\b[^>]*\bid=["']identity["'][^>]*>)[\s\S]*?(<\/p>)/i,
+          (_all, start, end) => start + "Выбери группу" + end,
+        ),
+    );
     if (gzipSync(prerendered).length <= MAX_INITIAL_DOCUMENT_GZIP) {
       html = prerendered;
       initialChoiceRendered = true;

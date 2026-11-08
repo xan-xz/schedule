@@ -39,6 +39,11 @@ async function walk(path) {
     for (const match of code.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi))
       css += gzipSync(match[1]).length;
     specifiers.push(
+      // The progressive entry imports its required application bundle after
+      // the useful native chooser paints. It still belongs to the JS budget.
+      ...[...code.matchAll(/\bimport\(\s*["'](\.\/app\.mjs)["']\s*\)/g)].map(
+        (match) => match[1],
+      ),
       ...[
         ...code.matchAll(/(?:src|href)=["'](\.\/[^"']+\.(?:m?js|css))["']/g),
       ].map((m) => m[1]),

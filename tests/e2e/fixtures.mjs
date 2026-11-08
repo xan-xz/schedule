@@ -95,8 +95,12 @@ export async function mockState(
         /* Restricted-storage scenarios deliberately keep this unavailable. */
       }
     });
-  if (ticking) await page.clock.install({ time });
-  else await page.clock.setFixedTime(time);
+  // Paint/Resource Timing assertions require the real Performance API. Explicit
+  // null opts out of the fake clock without changing existing timed scenarios.
+  if (time !== null) {
+    if (ticking) await page.clock.install({ time });
+    else await page.clock.setFixedTime(time);
+  }
   await page.route(
     "https://anfwdrcazwbkkayczkxg.supabase.co/**",
     async (route) => {

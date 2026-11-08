@@ -33,12 +33,12 @@ jobs:
             if curl -fsS -o /dev/null http://127.0.0.1:4174/schedule/; then break; fi
             sleep 0.2
           done
-          LH_OUTPUT=/tmp/uniflow.lighthouse.json npm run perf -- "http://127.0.0.1:4174/schedule/"
+          LH_REPORT_DIR=/tmp/uniflow-lighthouse npm run perf:gate -- "http://127.0.0.1:4174/schedule/"
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: lighthouse-release-report
-          path: /tmp/uniflow.lighthouse.json
+          path: /tmp/uniflow-lighthouse/
           if-no-files-found: ignore
       - name: Verify the exact compiled candidate and offline behavior
         env:

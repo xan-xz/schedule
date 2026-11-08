@@ -191,7 +191,17 @@ test("HTML closing tags, entity-looking text and Unicode separators round-trip a
   const result = await inlineReleaseSnapshot(dir);
   const html = await readFile(join(dir, "index.html"), "utf8");
   assert.equal(result.embedded, true);
-  assert.equal((html.match(/<script\b/g) || []).length, 3);
+  assert.equal((html.match(/<script\b/g) || []).length, 4);
+  const guardCode = html.match(
+    /<script data-choice-guard>([\s\S]*?)<\/script>/,
+  )[1];
+  assert.ok(
+    html.includes(
+      "'sha256-" +
+        createHash("sha256").update(guardCode).digest("base64") +
+        "'",
+    ),
+  );
   assert.doesNotMatch(dataBlock(html), /[<>&\u2028\u2029]/);
   assert.equal(
     readInitialSnapshot(documentFor(dataBlock(html))).data.groups[0].name,
