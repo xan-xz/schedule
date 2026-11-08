@@ -91,6 +91,13 @@ const server = createServer(async (req, res) => {
       file = resolve(root, "backend/public-data.mjs");
     else if (source && pathname === "/model.mjs")
       file = resolve(root, "backend/core.mjs");
+    else if (
+      source &&
+      ["/teaching-settings.mjs", "/backend/teaching-settings.mjs"].includes(
+        pathname,
+      )
+    )
+      file = resolve(root, "backend/teaching-settings.mjs");
     else if (file !== content && !file.startsWith(content + sep)) {
       res.writeHead(403).end();
       return;
