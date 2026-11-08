@@ -101,8 +101,17 @@ function csvRows(input) {
   if (field || row.length) endRow();
   return rows;
 }
-function resolve(data, collection, value, line, optional = false) {
-  const clean = value.trim().replace(/^'(?=[=+\-@\t\r])/, "");
+function resolve(
+  data,
+  collection,
+  value,
+  line,
+  optional = false,
+  literal = false,
+) {
+  const clean = literal
+    ? value.trim()
+    : value.trim().replace(/^'(?=[=+\-@\t\r])/, "");
   if (!clean && optional) return "";
   const matches = data[collection].filter(
     (item) => item.id === clean || normalized(item.name) === normalized(clean),
@@ -175,9 +184,30 @@ export function parseScheduleCsv(text, data, options = {}) {
       day: Number(row.day),
       start: row.start,
       end: row.end,
-      subjectId: resolve(data, "subjects", row.subject, i + 2),
-      roomId: resolve(data, "rooms", row.room || "", i + 2, true),
-      teacherId: resolve(data, "teachers", row.teacher || "", i + 2, true),
+      subjectId: resolve(
+        data,
+        "subjects",
+        row.subject,
+        i + 2,
+        false,
+        options.literalReferences,
+      ),
+      roomId: resolve(
+        data,
+        "rooms",
+        row.room || "",
+        i + 2,
+        true,
+        options.literalReferences,
+      ),
+      teacherId: resolve(
+        data,
+        "teachers",
+        row.teacher || "",
+        i + 2,
+        true,
+        options.literalReferences,
+      ),
       type: row.type || "Пара",
       week: row.week || "all",
     };

@@ -2,16 +2,13 @@ import { el, button, field, select } from "../lib/dom.mjs";
 import { DAYS } from "../core.mjs";
 
 const PAGE = 40;
-export function createCsvImportEditor({
-  data,
-  scope,
-  onPreview,
-  onApply,
-  onInvalidate,
-  onDirty,
-  onClose,
-}) {
+export function createCsvImportEditor(
+  { data, scope, onPreview, onApply, onInvalidate, onDirty, onClose },
+  { workbookReader, template } = {},
+) {
+  const format = workbookReader ? "XLSX" : "CSV";
   let plan = null,
+    workbook = null,
     page = 0,
     generation = 0,
     pending = false,
@@ -25,9 +22,17 @@ export function createCsvImportEditor({
   const status = el("p", { role: "status" });
   const review = el("section", {
     class: "batch-preview",
-    "aria-label": "Предпросмотр импорта CSV",
+    "aria-label": `Предпросмотр импорта ${format}`,
   });
-  const file = el("input", { type: "file", accept: ".csv,text/csv" });
+  const file = el("input", {
+    type: "file",
+    accept: workbookReader
+      ? ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : ".csv,text/csv",
+  });
+  const sheet = select([], "", invalidate);
+  const sheetField = field("Лист XLSX", sheet);
+  sheetField.hidden = true;
   const mode = select(
     [
       ["append", "Добавить занятия"],
@@ -39,7 +44,7 @@ export function createCsvImportEditor({
   const preview = el(
     "button",
     { type: "submit", class: "btn" },
-    "Предпросмотр CSV",
+    workbookReader ? "Прочитать XLSX" : "Предпросмотр CSV",
   );
   const apply = button("Добавить в черновик", save, {
     class: "btn primary",
@@ -52,6 +57,9 @@ export function createCsvImportEditor({
     `${DAYS[row.day]} · ${row.start}–${row.end}${row.endDayOffset ? " (+1 день)" : ""} · ${name("subjects", row.subjectId)} · ${name("rooms", row.roomId)} · ${name("teachers", row.teacherId)} · ${row.type} · ${row.subgroup === "all" ? "Все подгруппы" : row.subgroup} · ${{ all: "Каждую неделю", odd: "Нечётная", even: "Чётная" }[row.week] || row.week}`;
   function controls() {
     file.disabled = mode.disabled = preview.disabled = pending || applied;
+    sheet.disabled = pending || applied;
+    preview.textContent =
+      workbookReader && !workbook ? "Прочитать XLSX" : `Предпросмотр ${format}`;
     apply.disabled = pending || !plan?.changes.length;
     apply.textContent = applied
       ? "Повторить сохранение"
@@ -66,7 +74,12 @@ export function createCsvImportEditor({
     onDirty();
     controls();
   }
-  file.addEventListener("change", invalidate);
+  file.addEventListener("change", () => {
+    workbook = null;
+    sheet.replaceChildren();
+    sheetField.hidden = true;
+    invalidate();
+  });
   function renderReview() {
     const counts = plan.counts;
     const list = el("div", { class: "batch-list" });
@@ -76,7 +89,11 @@ export function createCsvImportEditor({
       list.append(
         el(
           "article",
-          { class: "batch-change", "data-csv-change": change.kind },
+          {
+            class: "batch-change",
+            [workbookReader ? "data-xlsx-change" : "data-csv-change"]:
+              change.kind,
+          },
           el(
             "strong",
             {},
@@ -144,19 +161,42 @@ export function createCsvImportEditor({
     pending = true;
     controls();
     try {
-      if (!selected) throw Error("Выбери файл CSV.");
+      if (!selected) throw Error(`Выбери файл ${format}.`);
       if (selected.size > 1_000_000)
-        throw Error("Размер CSV не должен превышать 1 МБ.");
-      const bytes = await selected.arrayBuffer();
+        throw Error(`Размер ${format} не должен превышать 1 МБ.`);
+      const bytes = workbook ? null : await selected.arrayBuffer();
       if (!root.isConnected || version !== generation) return;
-      if (bytes.byteLength > 1_000_000)
-        throw Error("Размер CSV не должен превышать 1 МБ.");
-      let text;
-      try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      } catch {
-        throw Error("Сохрани CSV в кодировке UTF-8 и выбери файл заново.");
+      if (bytes?.byteLength > 1_000_000)
+        throw Error(`Размер ${format} не должен превышать 1 МБ.`);
+      if (workbookReader && !workbook) {
+        const loaded = await workbookReader(bytes);
+        if (!root.isConnected || version !== generation) return;
+        workbook = loaded;
+        sheet.replaceChildren(
+          el("option", { value: "" }, "Выбери лист"),
+          ...loaded.sheets.map((s) =>
+            el(
+              "option",
+              { value: s.id, disabled: s.state !== "visible" },
+              s.name + (s.state !== "visible" ? " (скрытый)" : ""),
+            ),
+          ),
+        );
+        sheet.value = "";
+        sheetField.hidden = false;
+        status.textContent = `Листов: ${loaded.sheets.length}. Выбери видимый лист и выполни предпросмотр. Черновик не изменён.`;
+        sheet.disabled = false;
+        sheet.focus();
+        return;
       }
+      let text;
+      if (workbook) text = await workbook.readSheet(sheet.value);
+      else
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch {
+          throw Error("Сохрани CSV в кодировке UTF-8 и выбери файл заново.");
+        }
       const result = await onPreview(text, selectedMode);
       if (!root.isConnected || version !== generation) return;
       plan = result;
@@ -206,15 +246,26 @@ export function createCsvImportEditor({
     el(
       "p",
       { class: "notice-info" },
-      "Файл до 1 МБ, до 1000 загружаемых занятий, UTF-8. Предпросмотр ничего не сохраняет. Применение создаёт локальный черновик; публикация выполняется отдельно.",
+      `Файл до 1 МБ, до 1000 загружаемых занятий${workbookReader ? " на выбранном листе" : ", UTF-8"}. Предпросмотр ничего не сохраняет. Применение создаёт локальный черновик; публикация выполняется отдельно.`,
     ),
     el("p", {}, `${name("groups", scope.groupId)} · ${subgroup}`),
     el(
       "p",
       { class: "small" },
-      "Столбцы: day,start,end,subject,room,teacher,type,subgroup,week,endDayOffset,id. Обязательны day,start,end,subject. День: 0 — понедельник. Названия или ID должны совпадать со справочниками. CSV с ID из экспорта загружайте в режиме замены области.",
+      `Столбцы: day,start,end,subject,room,teacher,type,subgroup,week,endDayOffset,id. Обязательны day,start,end,subject. День: 0 — понедельник. Названия или ID должны совпадать со справочниками. ${format} с ID из экспорта загружайте в режиме замены области.`,
     ),
-    field("Файл CSV", file),
+    ...(workbookReader
+      ? [
+          el(
+            "p",
+            { class: "small" },
+            "Таблица с заголовками в строке 1, одно занятие на строку. Время: HH:MM или время Excel без даты и секунд. Формулы, объединённые и скрытые ячейки, внешние ссылки не принимаются. Исходную сетку расписания сначала приведите к этой таблице.",
+          ),
+          button("Скачать шаблон XLSX", template, { class: "btn" }),
+        ]
+      : []),
+    field(`Файл ${format}`, file),
+    sheetField,
     field("Режим импорта", mode),
     el(
       "div",

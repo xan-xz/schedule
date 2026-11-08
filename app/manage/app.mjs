@@ -2480,6 +2480,8 @@ function enhanceWorkspace() {
         domButton("Шаблоны", () => templateManager(), { class: "btn" }),
         domButton("Импорт CSV", csvImport, { class: "btn" }),
         domButton("Экспорт CSV", csvExport, { class: "btn" }),
+        domButton("Импорт XLSX", xlsxImport, { class: "btn" }),
+        domButton("Экспорт XLSX", xlsxExport, { class: "btn" }),
       ),
     );
   }
@@ -3662,6 +3664,27 @@ async function csvExport() {
   }
 }
 async function csvImport() {
+  return scheduleImport("CSV");
+}
+async function xlsxExport() {
+  try {
+    const { exportScheduleXlsx } = await import("./xlsx.mjs");
+    fileDownload(
+      "uniflow-schedule.xlsx",
+      exportScheduleXlsx(draft?.data || S.data, {
+        groupId: S.groupId,
+        subgroup: S.subgroup,
+      }),
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+  } catch (e) {
+    toast(e.message);
+  }
+}
+async function xlsxImport() {
+  return scheduleImport("XLSX");
+}
+async function scheduleImport(format) {
   if (!isAdmin() || ownerEnding) return;
   if (S.busy) return toast("Дождись сохранения");
   const epoch = S.epoch,
@@ -3669,15 +3692,14 @@ async function csvImport() {
     modalWasOpen = $("modal").open,
     scope = { groupId: S.groupId, subgroup: S.subgroup };
   try {
-    const [
-      { createCsvImportEditor },
-      { previewScheduleCsv },
-      { loadLessonBatchStyles },
-    ] = await Promise.all([
-      import("./csv-import-editor.mjs"),
-      import("./tools.mjs"),
-      import("./lesson-batch-editor.mjs"),
-    ]);
+    const [editor, { previewScheduleCsv }, { loadLessonBatchStyles }] =
+      await Promise.all([
+        format === "XLSX"
+          ? import("./xlsx-import-editor.mjs")
+          : import("./csv-import-editor.mjs"),
+        import("./tools.mjs"),
+        import("./lesson-batch-editor.mjs"),
+      ]);
     await loadLessonBatchStyles();
     await draftSaveQueue;
     if (
@@ -3731,7 +3753,11 @@ async function csvImport() {
           "Данные или версия изменились. Откройте импорт заново; этот файл не применён.",
         );
     };
-    body = createCsvImportEditor({
+    const createImportEditor =
+      format === "XLSX"
+        ? editor.createXlsxImportEditor
+        : editor.createCsvImportEditor;
+    body = createImportEditor({
       data,
       scope,
       onClose: closeModal,
@@ -3745,7 +3771,20 @@ async function csvImport() {
         await draftSaveQueue;
         authorized();
         unchanged();
-        const result = previewScheduleCsv(text, data, { ...scope, mode });
+        let result;
+        try {
+          result = previewScheduleCsv(
+            format === "XLSX" ? text.text : text,
+            data,
+            { ...scope, mode, literalReferences: format === "XLSX" },
+          );
+        } catch (problem) {
+          if (format === "XLSX")
+            throw Error(
+              `Лист «${text.sheet}»: ${problem.message.replace(/CSV/g, "XLSX").replace(/Строка (\d+)/g, (_, n) => `Строка ${text.lineNumbers[Number(n) - 1] || n}`)}`,
+            );
+          throw problem;
+        }
         try {
           assertDraftRecoverable(
             draft?.before || S.data,
@@ -3776,7 +3815,7 @@ async function csvImport() {
         } else {
           unchanged();
           if (!checked?.changes.length)
-            throw Error("Повторите предпросмотр CSV.");
+            throw Error(`Повторите предпросмотр ${format}.`);
           validate(checked.data);
           if (!draft) startDraft();
           draft.data = clone(checked.data);
@@ -3796,7 +3835,7 @@ async function csvImport() {
         return { saved, error: appliedDraft.saveError };
       },
     });
-    showTemplateDialog("Импорт CSV", body);
+    showTemplateDialog(`Импорт ${format}`, body);
     $("modal").dataset.revision = String(opened.revision);
   } catch (problem) {
     if (!ownerEnding) toast(problem.message);
