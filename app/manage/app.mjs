@@ -2636,10 +2636,15 @@ function templateSaveForm(tools) {
     ),
     error,
   );
+  const lockStatus = dom("p", { role: "status", class: "small" });
+  form.append(lockStatus);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (pending) return;
     pending = true;
+    form.setAttribute("aria-busy", "true");
+    form.querySelector('[type="submit"]').disabled = true;
+    lockStatus.textContent = "Ожидаем безопасную запись библиотеки…";
     try {
       const template = tools.createTemplate(draft?.data || S.data, {
         name: title.value,
@@ -2668,6 +2673,11 @@ function templateSaveForm(tools) {
       if (form.isConnected) error.textContent = e.message;
     } finally {
       pending = false;
+      if (form.isConnected) {
+        form.setAttribute("aria-busy", "false");
+        form.querySelector('[type="submit"]').disabled = false;
+        lockStatus.textContent = "";
+      }
     }
   });
   showTemplateDialog("Новый шаблон", form);
@@ -2755,10 +2765,15 @@ function templateRenameForm(tools, template) {
     ),
     error,
   );
+  const lockStatus = dom("p", { role: "status", class: "small" });
+  form.append(lockStatus);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (pending) return;
     pending = true;
+    form.setAttribute("aria-busy", "true");
+    form.querySelector('[type="submit"]').disabled = true;
+    lockStatus.textContent = "Ожидаем безопасную запись библиотеки…";
     const nextName = title.value;
     try {
       await tools.withTemplateLock(() => {
@@ -2780,6 +2795,11 @@ function templateRenameForm(tools, template) {
       if (form.isConnected) error.textContent = e.message;
     } finally {
       pending = false;
+      if (form.isConnected) {
+        form.setAttribute("aria-busy", "false");
+        form.querySelector('[type="submit"]').disabled = false;
+        lockStatus.textContent = "";
+      }
     }
   });
   showTemplateDialog("Переименовать шаблон", form);
@@ -2808,10 +2828,15 @@ function templateDeleteForm(tools, template) {
     ),
     error,
   );
+  const lockStatus = dom("p", { role: "status", class: "small" });
+  form.append(lockStatus);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (pending) return;
     pending = true;
+    form.setAttribute("aria-busy", "true");
+    form.querySelector('[type="submit"]').disabled = true;
+    lockStatus.textContent = "Ожидаем безопасную запись библиотеки…";
     try {
       await tools.withTemplateLock(() => {
         if (
@@ -2832,6 +2857,11 @@ function templateDeleteForm(tools, template) {
       if (form.isConnected) error.textContent = e.message;
     } finally {
       pending = false;
+      if (form.isConnected) {
+        form.setAttribute("aria-busy", "false");
+        form.querySelector('[type="submit"]').disabled = false;
+        lockStatus.textContent = "";
+      }
     }
   });
   showTemplateDialog("Удалить шаблон", form);

@@ -146,6 +146,12 @@ test("week template keeps the whole selected scope and refuses to overwrite occu
   await dialog
     .getByRole("button", { name: "Сохранить шаблон", exact: true })
     .click();
+  await expect(
+    dialog.getByRole("button", {
+      name: "Применить шаблон Учебная неделя",
+      exact: true,
+    }),
+  ).toBeVisible();
   const template = await page.evaluate(
     () => JSON.parse(localStorage.getItem("uf.schedule.templates.v1.live"))[0],
   );

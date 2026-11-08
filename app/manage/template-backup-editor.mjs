@@ -126,6 +126,7 @@ export function createTemplateBackupEditor({
     pending = true;
     controls();
     error.textContent = "";
+    status.textContent = "Ожидаем безопасную запись библиотеки…";
     try {
       const result = await onApply(plan);
       if (root.isConnected) {

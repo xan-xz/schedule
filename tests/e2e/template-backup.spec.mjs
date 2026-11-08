@@ -336,9 +336,32 @@ test("a second owner tab changes the library; stale import rejects and shared wr
   await otherDialog
     .getByLabel("Название шаблона", { exact: true })
     .fill("Другая вкладка");
+  await page.evaluate(() => {
+    window.qaWriterLockReady = false;
+    window.qaWriterLock = navigator.locks.request(
+      "uniflow-template-library-v1",
+      () =>
+        new Promise((resolve) => {
+          window.qaWriterLockReady = true;
+          window.qaReleaseWriter = resolve;
+        }),
+    );
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.qaWriterLockReady))
+    .toBe(true);
   await otherDialog
     .getByRole("button", { name: "Сохранить шаблон", exact: true })
     .click();
+  await expect(otherDialog.getByRole("status")).toHaveText(
+    "Ожидаем безопасную запись библиотеки…",
+  );
+  await expect(
+    otherDialog.getByRole("button", { name: "Сохранить шаблон", exact: true }),
+  ).toBeDisabled();
+  expect(JSON.parse(await stored(page))).toHaveLength(1);
+  await page.evaluate(() => window.qaReleaseWriter());
+  await page.evaluate(() => window.qaWriterLock);
   await expect(
     otherDialog.getByRole("heading", {
       name: "Шаблоны расписания",
