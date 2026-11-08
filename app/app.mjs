@@ -36,6 +36,7 @@ import { retireCompatibility } from "./lib/compatibility.mjs";
 import {
   guardInitialChoice,
   readInitialChoice,
+  readChoiceForm,
 } from "./lib/initial-snapshot.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -1105,7 +1106,9 @@ function clearInvite() {
   history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 function renderGroupChoice() {
-  const initialChoice = readInitialChoice();
+  const initialChoice =
+    readInitialChoice() ||
+    readChoiceForm($("main").querySelector("[data-group-choice]"));
   let groups = availableGroups();
   const current = groups.find((group) => group.id === S.settings.groupId);
   const invited = !S.inviteHandled && invitedGroup();
@@ -1130,7 +1133,7 @@ function renderGroupChoice() {
     [["", t("chooseGroup")], ...groups.map((group) => [group.id, group.name])],
     draftGroup,
     () => updateSubgroups(),
-    { required: true },
+    { required: true, name: "g" },
   );
   const subgroupSelect = select(
     [],
@@ -1138,7 +1141,7 @@ function renderGroupChoice() {
     () => {
       draftSubgroup = subgroupSelect.value;
     },
-    { required: true },
+    { required: true, name: "subgroup" },
   );
   const subgroupField = field(t("subgroup"), subgroupSelect);
   const send = el(
@@ -1164,6 +1167,7 @@ function renderGroupChoice() {
   }
   const search = el("input", {
     type: "search",
+    "data-choice-search": "",
     autocomplete: "off",
     placeholder: t("searchGroup"),
     oninput: () => updateGroups(false),
@@ -1198,13 +1202,23 @@ function renderGroupChoice() {
   }
   const form = el(
     "form",
-    { class: "settings-section", "data-group-choice": "" },
+    {
+      class: "settings-section",
+      "data-group-choice": "",
+      "data-touched": initialChoice?.touched ? "true" : "false",
+    },
     field(t("searchGroup"), search),
     field(t("group"), groupSelect),
     subgroupField,
     send,
     error,
   );
+  form.addEventListener("input", () => {
+    form.dataset.touched = "true";
+  });
+  form.addEventListener("change", () => {
+    form.dataset.touched = "true";
+  });
   form.addEventListener("catalogue-updated", () => updateGroups(true));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();

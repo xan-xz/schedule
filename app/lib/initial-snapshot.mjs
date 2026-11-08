@@ -102,11 +102,22 @@ export function guardInitialChoice(document = globalThis.document) {
 }
 
 export function readInitialChoice(document = globalThis.document) {
-  const form = document?.querySelector?.("[data-initial-choice]");
+  return readChoiceForm(
+    document?.querySelector?.("[data-initial-choice]"),
+    document,
+  );
+}
+
+/** Capture a chooser draft before a background catalogue replaces its DOM. */
+export function readChoiceForm(
+  form,
+  document = form?.ownerDocument || globalThis.document,
+) {
   if (!form) return null;
   const search = form.querySelector("[data-choice-search]");
   const group = form.querySelector('[name="g"]');
   const subgroup = form.querySelector('[name="subgroup"]');
+  if (!search || !group || !subgroup) return null;
   return {
     groupId: group.value,
     subgroup: subgroup.value,
@@ -114,11 +125,11 @@ export function readInitialChoice(document = globalThis.document) {
     touched: form.dataset.touched === "true",
     submitRequested: form.dataset.submitRequested === "true",
     focus:
-      document.activeElement === search
+      document?.activeElement === search
         ? "search"
-        : document.activeElement === group
+        : document?.activeElement === group
           ? "group"
-          : document.activeElement === subgroup
+          : document?.activeElement === subgroup
             ? "subgroup"
             : "",
     selectionStart: search.selectionStart,
