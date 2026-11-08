@@ -50,6 +50,10 @@
   gap: 12px;
   min-width: 0;
 }
+.batch-preview,
+.lesson-batch-editor #form-error {
+  scroll-margin-top: 160px;
+}
 .batch-lesson {
   display: flex;
   flex-direction: row;

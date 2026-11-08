@@ -513,6 +513,7 @@ export function createLessonBatchEditor({
         ? "Предпросмотр готов. Проверьте изменения перед применением."
         : "Проверка завершена. Исправьте ошибку перед применением.";
       drawPreview();
+      (result.valid ? review : error).scrollIntoView({ block: "start" });
     } catch (problem) {
       error.textContent = problem.message;
       status.textContent =

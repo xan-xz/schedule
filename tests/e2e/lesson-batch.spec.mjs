@@ -61,8 +61,15 @@ async function preview(page, valid = true) {
     name: "Применить в черновике",
     exact: true,
   });
-  if (valid) await expect(apply).toBeEnabled();
-  else {
+  if (valid) {
+    await expect(apply).toBeEnabled();
+    await expect(
+      page.getByRole("heading", {
+        name: "Предпросмотр изменений",
+        exact: true,
+      }),
+    ).toBeInViewport({ ratio: 1 });
+  } else {
     await expect(
       page.getByRole("dialog").locator("#form-error"),
     ).not.toBeEmpty();
@@ -148,6 +155,9 @@ test("explicit selected IDs preview only actual changes, recover as ordinary dur
     dialog.locator('[data-batch-preview-row="now-a"]'),
   ).toContainText("Было: 08:00–09:50");
   await axe(page);
+  await dialog
+    .getByRole("heading", { name: "Предпросмотр изменений", exact: true })
+    .scrollIntoViewIfNeeded();
   const shots = resolve("../../outputs/bulk-next/screenshots");
   await mkdir(shots, { recursive: true });
   await page.screenshot({
