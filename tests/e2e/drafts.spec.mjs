@@ -356,6 +356,12 @@ test("discard and rollback archive local work without silently restoring it into
   await page.locator('[data-action="rollback"]').first().click();
   await page
     .getByRole("dialog")
+    .getByLabel("Подтверждаю восстановление всей версии для всех групп", {
+      exact: true,
+    })
+    .check();
+  await page
+    .getByRole("dialog")
     .getByRole("button", { name: "Восстановить", exact: true })
     .click();
   await expect(

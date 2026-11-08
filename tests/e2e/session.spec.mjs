@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { mockState, fixture } from "./fixtures.mjs";
 import { readFile } from "node:fs/promises";
+import { previewRollback } from "../../backend/rollback-preview.mjs";
 
 const axePath = new URL(
   "../../node_modules/axe-core/axe.min.js",
@@ -95,10 +96,21 @@ async function signedFixture(page) {
                 },
               ]
             : [],
-          capabilities: { logoutAll: true },
+          capabilities: { logoutAll: true, rollbackPreview: true },
         },
       });
       return;
+    }
+    if (body.action === "rollback.preview") {
+      const previous = structuredClone(fixture);
+      previous.lessons[0].type = "Прежний тип";
+      return route.fulfill({
+        json: await previewRollback(fixture, previous, {
+          revision,
+          target: 6,
+          page: body.page ?? 0,
+        }),
+      });
     }
     if (body.action === "rollback") {
       await route.fulfill({
@@ -166,6 +178,12 @@ test("rollback confirmation retains its original revision when a refresh arrives
   const { calls, setRevision } = await signedFixture(page);
   await page.locator('[data-page="history"]').click();
   await page.locator('[data-action="rollback"]').first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog
+    .getByLabel("Подтверждаю восстановление всей версии для всех групп", {
+      exact: true,
+    })
+    .check();
   setRevision(8);
   await page.evaluate(() =>
     document.dispatchEvent(new Event("visibilitychange")),
@@ -180,8 +198,9 @@ test("rollback confirmation retains its original revision when a refresh arrives
   await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
     "Данные уже изменились",
   );
-  const request = calls.find((call) => call.action === "rollback");
-  expect(request).toMatchObject({ revision: 7, target: 6 });
+  const preview = calls.find((call) => call.action === "rollback.preview");
+  expect(preview).toMatchObject({ revision: 7, target: 6 });
+  expect(calls.filter((call) => call.action === "rollback")).toEqual([]);
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.locator("#toast")).not.toHaveText("Версия восстановлена");
 });

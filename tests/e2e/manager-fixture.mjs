@@ -1,5 +1,10 @@
 import { expect } from "@playwright/test";
 import { mutate, visible, validate } from "../../backend/core.mjs";
+import {
+  buildRollbackData,
+  previewRollback,
+  rollbackFingerprint,
+} from "../../backend/rollback-preview.mjs";
 import { fixture, mockState } from "./fixtures.mjs";
 
 /** Local HTTP contract only: no injected session, production data or real mail. */
@@ -77,7 +82,11 @@ export async function mockManager(
       authenticated && role === "admin"
         ? versions.map(({ data: _data, ...value }) => value)
         : [],
-    capabilities: { logoutAll: true, allSubgroupTasks: true },
+    capabilities: {
+      logoutAll: true,
+      allSubgroupTasks: true,
+      rollbackPreview: true,
+    },
   });
   await page.routeWebSocket(/supabase\.co/, (socket) => socket.close());
   await page.route(
@@ -145,7 +154,7 @@ export async function mockManager(
         return route.fulfill({ json: response(authenticated) });
       if (!authenticated || role !== "admin")
         return route.fulfill({ status: 403, json: { error: "Нет доступа" } });
-      if (!["mutate", "rollback"].includes(body.action))
+      if (!["mutate", "rollback", "rollback.preview"].includes(body.action))
         return route.fulfill({ status: 410, json: { error: "Недоступно" } });
       if (body.revision !== revision)
         return route.fulfill({
@@ -164,8 +173,33 @@ export async function mockManager(
         } else {
           const prior = versions.find((item) => item.revision === body.target);
           if (!prior) throw Error("Версия не найдена");
-          data = structuredClone(prior.data);
-          validate(data);
+          const restored = buildRollbackData(
+            data,
+            prior.data,
+            body.target,
+            user.name,
+          ).data;
+          if (body.action === "rollback.preview")
+            return route.fulfill({
+              json: await previewRollback(data, restored, {
+                revision,
+                target: body.target,
+                page: body.page ?? 0,
+              }),
+            });
+          if (
+            body.previewFingerprint !== undefined &&
+            body.previewFingerprint !==
+              (await rollbackFingerprint(data, restored, revision, body.target))
+          )
+            return route.fulfill({
+              status: 409,
+              json: {
+                error:
+                  "Просмотр версии устарел. Повторите проверку восстановления.",
+              },
+            });
+          data = restored;
           reason = "Откат к версии " + body.target;
         }
         versions.unshift({
@@ -205,6 +239,18 @@ export async function mockManager(
       data = result.data;
       revision++;
       return response(true);
+    },
+    checkpoint() {
+      versions.unshift({
+        revision,
+        actor: user.name,
+        reason: "Локальная контрольная версия",
+        created_at: "2026-11-06T04:00:00Z",
+        data: structuredClone(data),
+      });
+    },
+    editVersion(edit) {
+      edit(versions[0].data);
     },
     state: () => ({
       data: structuredClone(data),

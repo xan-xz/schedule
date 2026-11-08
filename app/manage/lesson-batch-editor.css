@@ -3,6 +3,8 @@
   gap: 18px;
   min-width: 0;
 }
+.rollback-preview-editor [role="alert"]:empty,
+.rollback-preview-editor [role="status"]:empty,
 .csv-import-editor [role="alert"]:empty,
 .csv-import-editor [role="status"]:empty {
   display: none;
