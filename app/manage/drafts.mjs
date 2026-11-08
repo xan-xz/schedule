@@ -1,4 +1,5 @@
 // Authored editor deltas only. Never pass API responses or session objects here.
+import { validateTeachingSettings } from "../teaching-settings.mjs";
 const FORMAT = "uniflow-owner-draft-v1";
 const DB = "uniflow-owner-drafts-v1";
 const STORE = "drafts";
@@ -18,6 +19,7 @@ const properties = [
   "validFrom",
   "validUntil",
   "siteSettings.appearance",
+  "siteSettings.teaching",
   "source",
   "sourceWarnings",
 ];
@@ -99,6 +101,35 @@ function property(data, path) {
   const name = child || key;
   if (!object || !Object.hasOwn(object, name)) return { present: false };
   const value = object[name];
+  if (path === "siteSettings.teaching") {
+    const checked = validateTeachingSettings(value);
+    return {
+      present: true,
+      value: selectedObject(
+        checked,
+        ["version", "lessonTypes", "bellSchedules", "defaultBellScheduleId"],
+        {
+          lessonTypes: (rows) =>
+            rows.map((row) => selectedObject(row, ["id", "name", "enabled"])),
+          bellSchedules: (rows) =>
+            rows.map((row) =>
+              selectedObject(row, ["id", "name", "enabled", "slots"], {
+                slots: (slots) =>
+                  slots.map((slot) =>
+                    selectedObject(slot, [
+                      "id",
+                      "name",
+                      "start",
+                      "end",
+                      "endDayOffset",
+                    ]),
+                  ),
+              }),
+            ),
+        },
+      ),
+    };
+  }
   if (path === "source")
     return {
       present: true,

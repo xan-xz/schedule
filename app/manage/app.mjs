@@ -1,3 +1,8 @@
+import {
+  teachingSettings,
+  lessonTypeSuggestions,
+  validateTeachingSettings,
+} from "../teaching-settings.mjs";
 import { busyRoomIds } from "./resources.mjs";
 import { setMarkup } from "./safe-dom.mjs";
 import {
@@ -375,7 +380,9 @@ function connectRealtime() {
 }
 async function act(op, payload, expected = S.revision) {
   if (S.busy) throw Error("Дождись сохранения");
-  const catalogOperation = op.startsWith("catalog.") || op === "group.archive";
+  const catalogOperation =
+    op.startsWith("catalog.") ||
+    ["group.archive", "teaching.save"].includes(op);
   if (catalogOperation && !draft) startDraft();
   let replacements = draft?.catalogReplacements || [];
   if (
@@ -405,6 +412,7 @@ async function act(op, payload, expected = S.revision) {
       "catalog.replace",
       "catalog.duplicate",
       "group.archive",
+      "teaching.save",
       "import",
     ].includes(op)
   ) {
@@ -857,7 +865,7 @@ function catalogs() {
     )
     .join(
       "",
-    )}</div><span class="spacer"></span>${kind === "rooms" ? button("Найти свободную", "freeRooms", {}, "", "search") : ""}${isAdmin() ? button("Добавить", "catalog", { entity: kind }, "primary", "plus") : ""}</div>
+    )}</div><span class="spacer"></span>${isAdmin() ? button("Звонки и типы", "teachingSettings", {}, "") : ""}${kind === "rooms" ? button("Найти свободную", "freeRooms", {}, "", "search") : ""}${isAdmin() ? button("Добавить", "catalog", { entity: kind }, "primary", "plus") : ""}</div>
   <div class="toolbar catalog-filters"><label class="form-label">Поиск в справочнике<input id="catalog-search" type="search" value="${h(S.catalogQuery)}" aria-label="Найти в справочнике" placeholder="Название, код, специальность…"></label>${
     kind === "groups"
       ? `<label class="form-label">Состояние групп<select id="catalog-visibility" aria-label="Состояние групп">${[
@@ -1037,7 +1045,12 @@ function lessonForm(id) {
     {
       name: "type",
       label: "Тип занятия",
-      value: old?.type || "Лабораторная",
+      value:
+        old?.type ??
+        teachingSettings(S.data).lessonTypes.find((item) => item.enabled)
+          ?.name ??
+        "Занятие",
+      maxLength: 40,
       required: true,
     },
     {
@@ -1089,6 +1102,7 @@ function lessonForm(id) {
     async (v, rev) => {
       v.day = Number(v.day);
       v.endDayOffset = Number(v.endDayOffset);
+      if (old && $("field-type").value === old.type) v.type = old.type;
       await act(
         "lesson.save",
         { ...old, ...v, ...(old ? { id: old.id } : {}) },
@@ -1771,6 +1785,10 @@ function exportJson() {
       "validUntil",
     ].map((k) => [k, data[k]]),
   );
+  if (S.data.siteSettings?.teaching !== undefined)
+    allowed.siteSettings = {
+      teaching: validateTeachingSettings(S.data.siteSettings.teaching),
+    };
   download(
     "uniflow-schedule.json",
     JSON.stringify(
@@ -1985,6 +2003,10 @@ async function handleAction(action, args, el) {
   if (action === "taskFilter") {
     S.taskFilter = el.dataset.value;
     render();
+    return;
+  }
+  if (action === "teachingSettings") {
+    await openTeachingEditor();
     return;
   }
   if (action === "catalogTab") {
@@ -2885,6 +2907,7 @@ function localChangeLabel(change, reference) {
     validFrom: "Начало семестра",
     validUntil: "Окончание семестра",
     "siteSettings.appearance": "Оформление",
+    "siteSettings.teaching": "Звонки и типы занятий",
     source: "Исходный файл",
     sourceWarnings: "Замечания источника",
   };
@@ -3361,27 +3384,70 @@ function csvImport() {
 function enhanceLessonForm() {
   const form = $("dialog-form");
   if (!form) return;
-  const bells = [
-    ["", "Выбрать время"],
-    ...Array.from({ length: 14 }, (_, i) => {
-      const h = String(i + 8).padStart(2, "0");
-      return [h + ":00", h + ":00–" + h + ":50"];
-    }),
-  ];
-  const bell = domSelect(
-    bells,
+  const settings = teachingSettings(draft?.data || S.data),
+    schemes = settings.bellSchedules.filter((scheme) => scheme.enabled);
+  const slot = domSelect(
+    [["", "Без подстановки — оставить время"]],
     "",
     (event) => {
-      if (!event.target.value) return;
-      const value = event.target.value;
-      $("field-start").value = value;
-      $("field-end").value = value.slice(0, 2) + ":50";
+      const scheme = schemes.find((item) => item.id === schemePicker.value),
+        chosen = scheme?.slots.find((item) => item.id === event.target.value);
+      if (!chosen) return;
+      $("field-start").value = chosen.start;
+      $("field-end").value = chosen.end;
+      $("field-endDayOffset").value = String(chosen.endDayOffset);
+      draftFormDirty = true;
     },
-    { "aria-label": "Шаблон звонков" },
+    { "aria-label": "Интервал звонков" },
   );
+  const schemePicker = domSelect(
+    [
+      ["", "Время вручную"],
+      ...schemes.map((scheme) => [scheme.id, scheme.name]),
+    ],
+    settings.defaultBellScheduleId,
+    () => redrawSlots(),
+    { "aria-label": "Схема звонков" },
+  );
+  function redrawSlots() {
+    const scheme = schemes.find((item) => item.id === schemePicker.value);
+    slot.replaceChildren(
+      dom("option", { value: "" }, "Без подстановки — оставить время"),
+      ...(scheme?.slots || []).map((item) =>
+        dom(
+          "option",
+          { value: item.id },
+          item.name +
+            " · " +
+            item.start +
+            "–" +
+            item.end +
+            (item.endDayOffset ? " (+1 день)" : ""),
+        ),
+      ),
+    );
+    slot.value = "";
+  }
+  redrawSlots();
+  for (const name of ["start", "end", "endDayOffset"])
+    $("field-" + name).addEventListener("input", () => {
+      slot.value = "";
+    });
+  const typeOptions = dom(
+    "datalist",
+    { id: "suggest-lesson-types" },
+    lessonTypeSuggestions(draft?.data || S.data, $("field-type").value).map(
+      (value) => dom("option", { value }),
+    ),
+  );
+  $("field-type").setAttribute("list", typeOptions.id);
   form
     .querySelector(".form-grid")
-    .prepend(domField("Шаблон звонков · 50 минут", bell));
+    .prepend(
+      domField("Схема звонков", schemePicker),
+      domField("Интервал звонков · подставить явно", slot),
+      typeOptions,
+    );
   for (const [fieldName, label, kind] of [
     ["subjectId", "Найти предмет", "subjects"],
     ["roomId", "Найти аудиторию", "rooms"],
@@ -3440,5 +3506,36 @@ async function openAppearanceEditor() {
     );
   } catch (error) {
     if (!ownerEnding) toast(error.message);
+  }
+}
+
+async function openTeachingEditor() {
+  if (!isAdmin() || ownerEnding) return;
+  if (S.busy) throw Error("Дождись сохранения");
+  const epoch = S.epoch;
+  try {
+    const { createTeachingEditor, loadTeachingEditorStyles } =
+      await import("./teaching-editor.mjs");
+    await loadTeachingEditorStyles();
+    if (ownerEnding || !isAdmin() || S.epoch !== epoch || S.busy) return;
+    showTemplateDialog(
+      "Звонки и типы",
+      createTeachingEditor({
+        data: draft?.data || S.data,
+        onClose: closeModal,
+        onDirty: () => {
+          draftFormDirty = true;
+        },
+        onSave: async (settings) => {
+          if (ownerEnding || !isAdmin() || S.epoch !== epoch)
+            throw Error("Войдите владельцем заново.");
+          if (S.busy) throw Error("Дождись сохранения");
+          await act("teaching.save", { settings });
+          closeModal();
+        },
+      }),
+    );
+  } catch (problem) {
+    if (!ownerEnding) toast(problem.message);
   }
 }
