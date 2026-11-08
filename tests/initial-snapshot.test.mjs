@@ -101,6 +101,26 @@ function audienceFixture() {
   return input;
 }
 
+test("release tasks are the union of guest-visible groups, never teacher-only or dangling records", () => {
+  const input = structuredClone(source);
+  input.data.tasks = [
+    {
+      id: "public",
+      title: "PUBLIC_TASK",
+      groupId: input.data.groups[0].id,
+      subgroup: "all",
+    },
+    { id: "teacher-only", title: "PRIVATE_TEACHER_TASK", teacherId: "teacher" },
+    { id: "dangling", title: "PRIVATE_DANGLING_TASK", groupId: "missing" },
+  ];
+  const projected = projectInitialSnapshot(input);
+  assert.deepEqual(
+    projected.data.tasks.map((item) => item.id),
+    ["public"],
+  );
+  assert.doesNotMatch(serializeInertSnapshot(input), /PRIVATE_/);
+});
+
 test("public audience projection exactly matches the union of actual guest visibility across valid groups", () => {
   const input = audienceFixture();
   const expected = new Set(

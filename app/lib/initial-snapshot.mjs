@@ -180,6 +180,7 @@ export function projectInitialSnapshot(input) {
   // exact student/guest audience rule from the server, before bytes enter HTML
   // or the external public fallback; client-side filtering would be too late.
   const groupIds = new Set(data.groups.map((group) => group.id));
+  data.tasks = data.tasks.filter((item) => groupIds.has(item.groupId));
   data.announcements = data.announcements.filter(
     (item) =>
       item.roles?.includes("student") &&
