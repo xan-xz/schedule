@@ -1,3 +1,4 @@
+import { validateTeachingSettings } from "./teaching-settings.mjs";
 import { validateAppearancePolicy } from "./appearance-policy.mjs";
 import { isGroupActive } from "./group-state.mjs";
 export { isGroupActive } from "./group-state.mjs";
@@ -215,6 +216,13 @@ export function validate(data) {
       Array.isArray(data.siteSettings)
     )
       fail("Неверный формат настроек сайта");
+    if (Object.hasOwn(data.siteSettings, "teaching")) {
+      try {
+        validateTeachingSettings(data.siteSettings.teaching);
+      } catch (error) {
+        fail(error.message);
+      }
+    }
     if (Object.hasOwn(data.siteSettings, "appearance")) {
       try {
         validateAppearancePolicy(data.siteSettings.appearance);
@@ -776,7 +784,17 @@ export function mutate(input, user, op, payload = {}) {
   )
     fail("Некорректная операция");
   let summary = "Изменение";
-  if (op === "appearance.save") {
+  if (op === "teaching.save") {
+    if (!admin) fail("Типы занятий и звонки меняет только владелец", 403);
+    let settings;
+    try {
+      settings = validateTeachingSettings(payload.settings);
+    } catch (error) {
+      fail(error.message);
+    }
+    data.siteSettings = { ...(data.siteSettings || {}), teaching: settings };
+    summary = "Обновлены шаблоны типов занятий и звонков";
+  } else if (op === "appearance.save") {
     if (!admin) fail("Интерфейс сайта меняет только владелец", 403);
     let policy;
     try {
@@ -1141,6 +1159,15 @@ export function mutate(input, user, op, payload = {}) {
         fail(error.message);
       }
       data.siteSettings = { ...(data.siteSettings || {}), appearance: policy };
+    }
+    if (Object.hasOwn(imported.siteSettings || {}, "teaching")) {
+      let settings;
+      try {
+        settings = validateTeachingSettings(imported.siteSettings.teaching);
+      } catch (error) {
+        fail(error.message);
+      }
+      data.siteSettings = { ...(data.siteSettings || {}), teaching: settings };
     }
     // Only the existing database may grandfather conflicts; an uploaded file
     // cannot grant itself exceptions.
