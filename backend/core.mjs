@@ -1,4 +1,5 @@
 import { validateAppearancePolicy } from "./appearance-policy.mjs";
+import { projectPublicCatalogs, projectPublicData } from "./public-data.mjs";
 export const DAYS = [
   "Понедельник",
   "Вторник",
@@ -865,6 +866,8 @@ export function visible(data, user) {
               (!n.teacherId && ownGroups(data, user).has(n.groupId))
             : n.groupId === user.groupId)),
     );
+    if (user.role === "guest") return projectPublicData(d);
+    Object.assign(d, projectPublicCatalogs(d));
   }
   return d;
 }

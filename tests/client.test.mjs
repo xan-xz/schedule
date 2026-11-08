@@ -14,7 +14,7 @@ import { get, clear } from "../app/lib/storage.mjs";
 delete globalThis.localStorage;
 
 const base = () => ({
-  groups: [{ id: "g", subgroups: ["А", "Б"] }],
+  groups: [{ id: "g", name: "Group", subgroups: ["А", "Б"] }],
   lessons: [],
   teachers: [],
   subjects: [],

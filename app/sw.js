@@ -63,6 +63,8 @@ const FILES = [
   "./backend/appearance-policy.mjs",
   "./group-state.mjs",
   "./backend/group-state.mjs",
+  "./public-data.mjs",
+  "./backend/public-data.mjs",
   "./lib/personalization.mjs",
   "./lib/appearance-tokens.mjs",
   "./lib/layout-loader.mjs",
@@ -284,10 +286,15 @@ self.addEventListener("fetch", (event) => {
     "./backend/group-state.mjs",
     self.registration.scope,
   ).href;
+  const sharedPublicData = new URL(
+    "./backend/public-data.mjs",
+    self.registration.scope,
+  ).href;
   const sharedAsset =
     url.href === sharedModel ||
     url.href === sharedPolicy ||
-    url.href === sharedGroupState;
+    url.href === sharedGroupState ||
+    url.href === sharedPublicData;
   if (
     request.method !== "GET" ||
     url.origin !== self.location.origin ||

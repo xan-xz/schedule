@@ -1,4 +1,4 @@
-import { validateAppearancePolicy } from "../appearance-policy.mjs";
+import { projectPublicData } from "../public-data.mjs";
 import * as storage from "./storage.mjs";
 import { readInitialSnapshot } from "./initial-snapshot.mjs";
 const API = "https://anfwdrcazwbkkayczkxg.supabase.co";
@@ -80,37 +80,15 @@ export function initialSettings() {
 function publicSnapshot(snapshot, settings) {
   // Every public cache read/write rechecks its scope. Never let a previous
   // group's tasks or role-specific payload leak into the current selection.
-  const source = snapshot.data || {};
-  const data = {};
-  for (const key of [
-    "groups",
-    "teachers",
-    "subjects",
-    "rooms",
-    "lessons",
-    "exceptions",
-    "holidays",
-  ])
-    data[key] = source[key] || [];
-  for (const key of ["validFrom", "validUntil"])
-    if (source[key]) data[key] = source[key];
-  if (Object.hasOwn(source.siteSettings || {}, "appearance")) {
-    try {
-      data.siteSettings = {
-        appearance: validateAppearancePolicy(source.siteSettings.appearance),
-      };
-    } catch {
-      /* Ignore malformed public policy; never cache unknown siblings. */
-    }
-  }
-  data.tasks = (source.tasks || []).filter(
+  const data = projectPublicData(snapshot.data || {});
+  data.tasks = data.tasks.filter(
     (task) =>
       task.groupId === settings.groupId &&
       (settings.subgroup === "all" ||
         task.subgroup === "all" ||
         task.subgroup === settings.subgroup),
   );
-  data.announcements = (source.announcements || []).filter(
+  data.announcements = data.announcements.filter(
     (item) =>
       (!item.roles || item.roles.includes("student")) &&
       (item.groupId ? item.groupId === settings.groupId : !item.teacherId),
@@ -120,9 +98,19 @@ function publicSnapshot(snapshot, settings) {
   data.history = [];
   return {
     data,
-    revision: snapshot.revision,
-    source: snapshot.source,
-    updatedAt: snapshot.updatedAt,
+    revision:
+      Number.isSafeInteger(snapshot.revision) && snapshot.revision >= 0
+        ? snapshot.revision
+        : undefined,
+    source: ["live", "release-snapshot"].includes(snapshot.source)
+      ? snapshot.source
+      : undefined,
+    updatedAt:
+      typeof snapshot.updatedAt === "string" &&
+      snapshot.updatedAt.length <= 64 &&
+      Number.isFinite(Date.parse(snapshot.updatedAt))
+        ? snapshot.updatedAt
+        : undefined,
   };
 }
 export async function publicState(groupId, subgroup) {
@@ -167,8 +155,28 @@ export async function publicState(groupId, subgroup) {
 export const snapshotKey = (settings) =>
   "snapshot:" + settings.groupId + ":" + settings.subgroup;
 export async function getSnapshot(settings) {
-  const saved = await storage.get(snapshotKey(settings));
-  return saved ? publicSnapshot(saved, settings) : null;
+  const key = snapshotKey(settings),
+    saved = await storage.get(key);
+  if (!saved) return null;
+  const clean = (value) => {
+    try {
+      return value ? publicSnapshot(value, settings) : null;
+    } catch {
+      return null;
+    }
+  };
+  const projected = clean(saved);
+  let unchanged = false;
+  try {
+    unchanged = JSON.stringify(saved) === JSON.stringify(projected);
+  } catch {
+    /* An invalid old row must not retain private metadata. */
+  }
+  if (unchanged) return projected;
+  // Reproject the latest row atomically, never overwrite a newer tab's revision
+  // with the older value read above. Keep its original updatedAt/source age.
+  const repaired = await storage.update(key, clean, null);
+  return clean(repaired.value);
 }
 export async function saveSnapshot(settings, snapshot) {
   return storage.set(snapshotKey(settings), publicSnapshot(snapshot, settings));
