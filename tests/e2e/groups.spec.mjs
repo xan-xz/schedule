@@ -245,6 +245,46 @@ test("denied persistent stores keep the current visit usable and explain that th
   ).toBeVisible();
 });
 
+test("a catalogue refresh keeps an unconfirmed group after focus leaves the chooser", async ({
+  page,
+}) => {
+  const { setGroups, calls } = await liveGroups(page);
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/functions/v1/uniflow-api", async (route) => {
+    await gate;
+    await route.fallback();
+  });
+  await page.goto(studentPath);
+  await expect(page.locator("[data-group-choice]")).toBeVisible();
+  await groupSelect(page).selectOption("g-main");
+  await page
+    .getByRole("heading", { name: "Выбери свою группу", exact: true })
+    .focus();
+  setGroups(
+    initialGroups.map((g) =>
+      g.id === "g-main" ? { ...g, name: "06-057-25-11 актуально" } : g,
+    ),
+  );
+  release();
+  await expect(
+    groupSelect(page).locator("option").filter({ hasText: "актуально" }),
+  ).toHaveCount(1);
+  await expect(groupSelect(page)).toHaveValue("g-main");
+  await expect(subgroupSelect(page)).toBeVisible();
+  expect(
+    await page.evaluate(() => localStorage.getItem("uf.student.choice.v1")),
+  ).toBeNull();
+  await subgroupSelect(page).selectOption("Б");
+  await saveChoice(page).click();
+  await expect(
+    page.getByRole("heading", { name: "Сегодня", exact: true }),
+  ).toBeVisible();
+  expect(calls.every((x) => x.action === "state")).toBe(true);
+});
+
 test("offline onboarding uses the cached catalogue and saves a new choice without a network write", async ({
   page,
   context,

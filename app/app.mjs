@@ -36,6 +36,7 @@ import { retireCompatibility } from "./lib/compatibility.mjs";
 import {
   guardInitialChoice,
   readInitialChoice,
+  readChoiceForm,
 } from "./lib/initial-snapshot.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -156,7 +157,8 @@ const statusKey = () =>
   `statuses:live:${S.settings.groupId}:${S.settings.subgroup}`;
 const taskDue = (task) =>
   new Date(task.due + "T" + (task.dueTime || "23:59") + ":00+05:00").getTime();
-const taskStatus = (task) => S.statuses[task.id] || "new";
+const taskStatus = (task) =>
+  S.statuses[task.id] || task.restoredStatus || "new";
 
 function toast(text) {
   $("toast").textContent = text;
@@ -861,6 +863,73 @@ async function changeStatus(id, status) {
   if (!result.persisted) toast(t("storageWarning"));
   render();
 }
+async function personalBackup() {
+  const epoch = S.epoch,
+    key = personalKey();
+  const backupStatusesKey = statusKey();
+  const backupScope = {
+    groupId: S.settings.groupId,
+    subgroup: S.settings.subgroup,
+  };
+  const current = () => epoch === S.epoch && key === personalKey();
+  const check = () => {
+    if (!current()) throw Error("backupScope");
+  };
+  try {
+    await retirement;
+    // Keep this optional tool lazy in both the source and inline release entry.
+    const paths = ["./lib/personal-backup-ui.mjs", "./lib/personal-backup.mjs"];
+    const [ui, model] = await Promise.all(
+      paths.map((path) => import(new URL(path, import.meta.url))),
+    );
+    check();
+    ui.openPersonalBackup({
+      dialog: $("modal"),
+      t,
+      scope: backupScope,
+      scopeLabel:
+        name("groups", backupScope.groupId, backupScope.groupId) +
+        " · " +
+        backupScope.subgroup,
+      isCurrent: current,
+      read: async () => {
+        await retirement;
+        check();
+        const [tasks, statuses] = await Promise.all([
+          storage.get(key, []),
+          storage.get(backupStatusesKey, {}),
+        ]);
+        check();
+        return { tasks, statuses };
+      },
+      restore: async (backup) => {
+        await retirement;
+        check();
+        let plan;
+        const result = await storage.update(
+          key,
+          (value) => {
+            check();
+            plan = model.restorePersonalTasks(value, backup, backupScope, () =>
+              crypto.randomUUID(),
+            );
+            return plan.tasks;
+          },
+          [],
+        );
+        check();
+        await loadPersonal();
+        check();
+        render();
+        if (!result.persisted) throw Error("storageWarning");
+        return { added: plan.added, skipped: plan.skipped };
+      },
+      onClose: () => render(),
+    });
+  } catch {
+    toast(t("backupScope"));
+  }
+}
 async function personalForm() {
   await retirement;
   await loadPersonal();
@@ -1039,7 +1108,9 @@ function clearInvite() {
   history.replaceState(null, "", url.pathname + url.search + url.hash);
 }
 function renderGroupChoice() {
-  const initialChoice = readInitialChoice();
+  const initialChoice =
+    readInitialChoice() ||
+    readChoiceForm($("main").querySelector("[data-group-choice]"));
   let groups = availableGroups();
   const current = groups.find((group) => group.id === S.settings.groupId);
   const invited = !S.inviteHandled && invitedGroup();
@@ -1064,7 +1135,7 @@ function renderGroupChoice() {
     [["", t("chooseGroup")], ...groups.map((group) => [group.id, group.name])],
     draftGroup,
     () => updateSubgroups(),
-    { required: true },
+    { required: true, name: "g" },
   );
   const subgroupSelect = select(
     [],
@@ -1072,7 +1143,7 @@ function renderGroupChoice() {
     () => {
       draftSubgroup = subgroupSelect.value;
     },
-    { required: true },
+    { required: true, name: "subgroup" },
   );
   const subgroupField = field(t("subgroup"), subgroupSelect);
   const send = el(
@@ -1098,6 +1169,7 @@ function renderGroupChoice() {
   }
   const search = el("input", {
     type: "search",
+    "data-choice-search": "",
     autocomplete: "off",
     placeholder: t("searchGroup"),
     oninput: () => updateGroups(false),
@@ -1132,13 +1204,23 @@ function renderGroupChoice() {
   }
   const form = el(
     "form",
-    { class: "settings-section", "data-group-choice": "" },
+    {
+      class: "settings-section",
+      "data-group-choice": "",
+      "data-touched": initialChoice?.touched ? "true" : "false",
+    },
     field(t("searchGroup"), search),
     field(t("group"), groupSelect),
     subgroupField,
     send,
     error,
   );
+  form.addEventListener("input", () => {
+    form.dataset.touched = "true";
+  });
+  form.addEventListener("change", () => {
+    form.dataset.touched = "true";
+  });
   form.addEventListener("catalogue-updated", () => updateGroups(true));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1437,6 +1519,11 @@ function renderMore() {
         S.settings.hour12 ? "12" : "24",
         (e) => changeSetting("hour12", e.target.value === "12"),
       ),
+    ),
+    el(
+      "section",
+      { class: "settings-section" },
+      button(t("backupTitle"), personalBackup),
     ),
     calendar,
     reminder,

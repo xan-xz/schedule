@@ -392,6 +392,64 @@ Object.assign(en, {
   onboardingOffline:
     "You are choosing from the saved list. The timetable will update when you reconnect.",
 });
+Object.assign(ru, {
+  backupTitle: "Копия личных заданий",
+  backupHelp:
+    "Файл содержит личные задания и прогресс текущей группы и подгруппы. Храните его у себя. Восстановление добавляет отсутствующие задания и сохраняет существующие. До 1000 заданий, файл до 1 МБ.",
+  backupDownload: "Скачать копию",
+  backupFile: "Выбрать файл копии",
+  backupRestore: "Восстановить задания",
+  backupPreview:
+    "Будет добавлено: {added}. Уже есть: {skipped}. Проверьте список и подтвердите восстановление.",
+  backupSaved:
+    "Сохранено. Добавлено: {added}. Существующих сохранено: {skipped}.",
+  backupInvalid:
+    "Не удалось прочитать или сохранить копию. Проверьте формат файла и повторите попытку.",
+  backupScope:
+    "Копия относится к другой группе или подгруппе либо выбор изменился. Выберите нужную группу и откройте инструмент заново.",
+  backupLimit:
+    "После восстановления будет больше 1000 личных заданий. Освободите место перед повторной попыткой.",
+  backupPrevious: "Предыдущие задания",
+  backupNext: "Следующие задания",
+});
+Object.assign(kk, {
+  backupTitle: "Жеке тапсырмалар көшірмесі",
+  backupHelp:
+    "Файлда ағымдағы топ пен шағын топтың жеке тапсырмалары және орындалу күйі бар. Файлды өзіңізде сақтаңыз. Қалпына келтіру тек жоқ тапсырмаларды қосады. Шегі: 1000 тапсырма, 1 МБ.",
+  backupDownload: "Көшірмені жүктеу",
+  backupFile: "Көшірме файлын таңдау",
+  backupRestore: "Тапсырмаларды қалпына келтіру",
+  backupPreview:
+    "Қосылады: {added}. Бар: {skipped}. Тізімді тексеріп, қалпына келтіруді растаңыз.",
+  backupSaved: "Сақталды. Қосылды: {added}. Бұрынғысы сақталды: {skipped}.",
+  backupInvalid:
+    "Көшірмені оқу немесе сақтау мүмкін болмады. Файл пішімін тексеріп, қайталаңыз.",
+  backupScope:
+    "Көшірменің тобы немесе шағын тобы басқа, не таңдау өзгерді. Қажетті топты таңдап, құралды қайта ашыңыз.",
+  backupLimit:
+    "Қалпына келтіргеннен кейін 1000 тапсырмадан асады. Орын босатып, қайталаңыз.",
+  backupPrevious: "Алдыңғы тапсырмалар",
+  backupNext: "Келесі тапсырмалар",
+});
+Object.assign(en, {
+  backupTitle: "Personal task backup",
+  backupHelp:
+    "The file contains personal tasks and progress for the current group and subgroup. Keep it private. Restore adds missing tasks and preserves existing ones. Up to 1000 tasks and 1 MB per file.",
+  backupDownload: "Download backup",
+  backupFile: "Choose backup file",
+  backupRestore: "Restore tasks",
+  backupPreview:
+    "To add: {added}. Already present: {skipped}. Review the list and confirm restoration.",
+  backupSaved: "Saved. Added: {added}. Existing tasks preserved: {skipped}.",
+  backupInvalid:
+    "Could not read or save the backup. Check its format and try again.",
+  backupScope:
+    "This backup belongs to another group or subgroup, or your selection changed. Choose the matching group and reopen this tool.",
+  backupLimit:
+    "Restoring would exceed 1000 personal tasks. Free some space and try again.",
+  backupPrevious: "Previous tasks",
+  backupNext: "Next tasks",
+});
 export const dictionaries = { ru, kk, en };
 export const localeFor = (lang) =>
   ({ ru: "ru-RU", kk: "kk-KZ", en: "en-GB" })[lang] || "ru-RU";
