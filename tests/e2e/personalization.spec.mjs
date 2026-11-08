@@ -440,9 +440,12 @@ test("saved palette is applied before the main UI module loads", async ({
     .selectOption("dark");
   // Withhold only the main UI module in both source and compiled HTML.
   // The early classic script and its exact original CSP bytes remain intact.
+  let prerendered = false;
   await page.route("**/schedule/", async (route) => {
     const response = await route.fetch();
-    const html = (await response.text()).replace(
+    const original = await response.text();
+    prerendered = /<form\b[^>]*\bdata-initial-choice(?:\s|=|>)/i.test(original);
+    const html = original.replace(
       /<script\b(?=[^>]*\btype=["']module["'])[^>]*>[\s\S]*?<\/script>/gi,
       "",
     );
@@ -455,7 +458,7 @@ test("saved palette is applied before the main UI module loads", async ({
       "forest",
     );
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    if (process.env.PW_SERVER_ROOT === "dist") {
+    if (prerendered) {
       await expect(page.locator("[data-initial-choice]")).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Выбери свою группу", exact: true }),
