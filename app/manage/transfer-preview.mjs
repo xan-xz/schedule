@@ -2,6 +2,7 @@ import { clone, DAYS, isGroupActive } from "../core.mjs";
 import { copyDay, copyWeek } from "./tools.mjs";
 import { applyTemplate } from "./templates.mjs";
 import { assertDraftRecoverable } from "./drafts.mjs";
+import { transferMode } from "./transfer-destination.mjs";
 
 /** A memory-only candidate with new IDs, reused unchanged by explicit apply. */
 export function previewTransfer(
@@ -13,6 +14,7 @@ export function previewTransfer(
   if (user?.role !== "admin") throw Error("Требуется вход владельца.");
   const group = data.groups.find((row) => row.id === options.groupId);
   if (!group || !isGroupActive(group)) throw Error("Выберите активную группу.");
+  const mode = transferMode(options.mode);
   let result;
   if (options.kind === "day") result = copyDay(data, options);
   else if (options.kind === "week") result = copyWeek(data, options);
@@ -27,9 +29,19 @@ export function previewTransfer(
     );
   }
   const oldIds = new Set(data.lessons.map((row) => row.id));
+  const nextIds = new Set(result.lessons.map((row) => row.id));
+  const removed = data.lessons.filter((row) => !nextIds.has(row.id));
   const added = result.lessons.filter((row) => !oldIds.has(row.id));
   if (!added.length) throw Error("Нет занятий для добавления.");
-  return { data: result, added: clone(added), count: added.length };
+  return {
+    data: result,
+    added: clone(added),
+    removed: clone(removed),
+    count: added.length,
+    removedCount: removed.length,
+    totalChanges: added.length + removed.length,
+    mode,
+  };
 }
 
 const clip = (value, limit = 240) =>
@@ -42,8 +54,13 @@ export function transferPage(plan, page = 0) {
   const data = plan.data;
   const name = (kind, id) =>
     clip(data[kind].find((row) => row.id === id)?.name || "Не назначено");
-  return plan.added.slice(page * 40, (page + 1) * 40).map((row) => ({
+  const changes = [
+    ...plan.removed.map((row) => ({ kind: "removed", row })),
+    ...plan.added.map((row) => ({ kind: "added", row })),
+  ];
+  return changes.slice(page * 40, (page + 1) * 40).map(({ kind, row }) => ({
     id: row.id,
+    kind,
     title: clip(
       `${DAYS[row.day]} · ${row.start}–${row.end}${row.endDayOffset ? " (+1 день)" : ""}`,
     ),

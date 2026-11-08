@@ -1,5 +1,6 @@
-import { clone, uid, validate } from "../core.mjs";
+import { uid, validate } from "../core.mjs";
 import { validDate } from "../lib/time.mjs";
+import { prepareTransferDestination } from "./transfer-destination.mjs";
 
 // Local conveniences, not authority: every application goes through the draft
 // validator and publication still uses the existing authenticated server API.
@@ -218,7 +219,11 @@ export function applyTemplate(data, input, options) {
       }
     }
   }
-  const result = clone(data);
+  const result = prepareTransferDestination(
+    data,
+    { groupId: group.id, subgroup, mode: options.mode },
+    template.kind === "day" ? { day: options.toDay } : {},
+  );
   result.lessons.push(
     ...template.lessons.map((lesson) => ({
       ...lesson,

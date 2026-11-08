@@ -1,4 +1,5 @@
 import { clone, uid, validate } from "../core.mjs";
+import { prepareTransferDestination } from "./transfer-destination.mjs";
 
 // These helpers produce local drafts only. They never perform network writes.
 // CSV defaults to append. Destructive scope replacement must be explicitly requested.
@@ -307,7 +308,11 @@ export function copyDay(data, options = {}) {
     (lesson) => visibleInScope(lesson, scope) && lesson.day === fromDay,
   );
   if (!source.length) error("В исходном дне нет пар.");
-  const result = clone(data);
+  const result = prepareTransferDestination(
+    data,
+    { ...scope, mode: options.mode },
+    { day: toDay },
+  );
   result.lessons.push(
     ...source.map((lesson) => ({
       ...clone(lesson),
@@ -336,7 +341,11 @@ export function copyWeek(data, options = {}) {
     error(
       "Нет пар только для выбранного типа недели. Общие пары уже действуют в обеих неделях.",
     );
-  const result = clone(data);
+  const result = prepareTransferDestination(
+    data,
+    { ...scope, mode: options.mode },
+    { week: toWeek },
+  );
   result.lessons.push(
     ...source.map((lesson) => ({
       ...clone(lesson),

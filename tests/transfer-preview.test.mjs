@@ -180,6 +180,7 @@ test("review pages contain forty closed display records and never expose metadat
   assert.equal(transferPage(plan, 1).length, 1);
   assert.deepEqual(Object.keys(transferPage(plan)[0]), [
     "id",
+    "kind",
     "title",
     "text",
     "period",
