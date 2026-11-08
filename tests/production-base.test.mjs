@@ -1,3 +1,5 @@
+import { createRequire, syncBuiltinESMExports } from "node:module";
+import { writeFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -16,14 +18,115 @@ import {
   safeTarEntries,
   extractProductionBase,
   verifyPublishedSource,
+  selectLockedProductionRelease,
+  verifyDownloadedRelease,
+  verifyArchiveIdentity,
+  validateArtifactRelease,
 } from "../scripts/production-base.mjs";
 
 const SOURCE = "a".repeat(40);
 const BASELINE = "941852870a712807c020ec29752b19f1ce03aeee";
+const artifactRelease = (sourceRef = SOURCE, change = {}) =>
+  JSON.stringify({
+    format: "uniflow-scope-v1",
+    channel: "production",
+    sourceRef,
+    ...change,
+  });
 const metadata = (archive) => ({
   format: "uniflow-production-v1",
   sourceRef: SOURCE,
   archiveSha256: createHash("sha256").update(archive).digest("hex"),
+});
+
+test("automatic archive selection requires a published provider lock and a pinned source", () => {
+  const locked = {
+    draft: false,
+    prerelease: false,
+    immutable: true,
+    tag_name: "uniflow-production-123",
+    target_commitish: SOURCE,
+    published_at: "2026-11-08T00:00:00Z",
+  };
+  const later = {
+    ...locked,
+    tag_name: "uniflow-production-124",
+    published_at: "2026-11-08T01:00:00Z",
+  };
+  assert.equal(selectLockedProductionRelease([locked, later]), later);
+  for (const change of [
+    { immutable: false },
+    { immutable: undefined },
+    { draft: true },
+    { prerelease: true },
+    { target_commitish: "main" },
+    { tag_name: "another-tag" },
+    { published_at: "invalid" },
+  ]) {
+    const untrusted = { ...later, ...change };
+    assert.equal(selectLockedProductionRelease([locked, untrusted]), locked);
+    assert.throws(() => selectLockedProductionRelease([untrusted]));
+  }
+  assert.throws(() => selectLockedProductionRelease([]));
+  assert.throws(() => selectLockedProductionRelease(null));
+});
+
+test("downloaded release requires both provider digests and the matching workflow, source and lock", () => {
+  const archive = tar([
+    { name: "index.html", content: "verified archive" },
+    { name: "release.json", content: artifactRelease() },
+  ]);
+  const document = { ...metadata(archive), workflowRun: "123" };
+  const bytes = Buffer.from(JSON.stringify(document));
+  const remote = (manifestBytes = bytes) => ({
+    draft: false,
+    prerelease: false,
+    immutable: true,
+    tag_name: "uniflow-production-123",
+    target_commitish: SOURCE,
+    assets: [
+      ["production-site.tar", archive],
+      ["production.json", manifestBytes],
+    ].map(([name, data]) => ({
+      name,
+      size: data.length,
+      state: "uploaded",
+      digest: "sha256:" + createHash("sha256").update(data).digest("hex"),
+    })),
+  });
+  assert.deepEqual(verifyDownloadedRelease(remote(), archive, bytes), document);
+  assert.throws(() =>
+    verifyDownloadedRelease(remote(), Buffer.from("tampered"), bytes),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease({ ...remote(), immutable: false }, archive, bytes),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease({ ...remote(), draft: true }, archive, bytes),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease(
+      { ...remote(), draft: true, immutable: false },
+      archive,
+      bytes,
+    ),
+  );
+  const otherRun = Buffer.from(
+    JSON.stringify({ ...document, workflowRun: "124" }),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease(remote(otherRun), archive, otherRun),
+  );
+  assert.throws(() =>
+    verifyDownloadedRelease(
+      { ...remote(), target_commitish: "b".repeat(40) },
+      archive,
+      bytes,
+    ),
+  );
+  const wrongDigest = remote();
+  wrongDigest.assets[1].digest = "sha256:" + "0".repeat(64);
+  assert.throws(() => verifyDownloadedRelease(wrongDigest, archive, bytes));
 });
 
 function tar(entries) {
@@ -166,6 +269,7 @@ test("valid production archive replaces only its checked workspace child and wri
     archivePath = resolve(path, "site.tar");
   const bytes = tar([
     { name: "index.html", content: "current production" },
+    { name: "release.json", content: artifactRelease() },
     { name: "lib/", type: "5" },
     { name: "lib/app.mjs", content: "export const version=1" },
   ]);
@@ -236,7 +340,10 @@ test("a junction/symlink in the destination path cannot redirect extraction or d
     link,
     process.platform === "win32" ? "junction" : "dir",
   );
-  const bytes = tar([{ name: "index.html", content: "new" }]),
+  const bytes = tar([
+      { name: "index.html", content: "new" },
+      { name: "release.json", content: artifactRelease() },
+    ]),
     archivePath = resolve(path, "site.tar");
   await writeFile(archivePath, bytes);
   await assert.rejects(
@@ -253,4 +360,110 @@ test("a junction/symlink in the destination path cannot redirect extraction or d
   );
   assert.equal(await readFile(resolve(actual, "sentinel"), "utf8"), "keep");
   assert.equal((await readdir(actual)).includes("nested"), false);
+});
+
+test("artifact identity requires exact format, production channel and pinned source", () => {
+  assert.deepEqual(
+    validateArtifactRelease(JSON.parse(artifactRelease()), SOURCE),
+    JSON.parse(artifactRelease()),
+  );
+  for (const value of [
+    null,
+    {},
+    JSON.parse(artifactRelease("b".repeat(40))),
+    JSON.parse(artifactRelease(SOURCE, { format: "another" })),
+    JSON.parse(artifactRelease(SOURCE, { channel: "staging" })),
+  ])
+    assert.throws(
+      () => validateArtifactRelease(value, SOURCE),
+      /Artifact release.json/,
+    );
+});
+test("a valid outer hash cannot launder missing, corrupt or mismatched inner identity or replace the target", async (t) => {
+  const path = await directory(t),
+    target = resolve(path, "base");
+  await mkdir(target);
+  await writeFile(resolve(target, "sentinel"), "keep");
+  const documents = [
+    null,
+    "broken-json",
+    artifactRelease("b".repeat(40)),
+    artifactRelease(SOURCE, { format: "other" }),
+    artifactRelease(SOURCE, { channel: "staging" }),
+    JSON.stringify({
+      ...JSON.parse(artifactRelease()),
+      padding: "x".repeat(8192),
+    }),
+  ];
+  for (let i = 0; i < documents.length; i++) {
+    const entries = [{ name: "index.html", content: "old code" }];
+    if (documents[i] !== null)
+      entries.push({ name: "release.json", content: documents[i] });
+    const bytes = tar(entries),
+      manifest = metadata(bytes),
+      archivePath = resolve(path, "bad-" + i + ".tar");
+    await writeFile(archivePath, bytes);
+    assert.throws(() => verifyArchiveIdentity(bytes, manifest));
+    await assert.rejects(extractProductionBase(archivePath, manifest, target));
+    assert.equal(await readFile(resolve(target, "sentinel"), "utf8"), "keep");
+    assert.deepEqual(await readdir(target), ["sentinel"]);
+  }
+});
+test("duplicate or case-aliased root release identities are rejected", () => {
+  for (const alias of ["release.json", "././release.json", "RELEASE.JSON"]) {
+    const bytes = tar([
+      { name: "index.html", content: "root" },
+      { name: "release.json", content: artifactRelease() },
+      { name: alias, content: artifactRelease("b".repeat(40)) },
+    ]);
+    assert.throws(
+      () => verifyArchiveIdentity(bytes, metadata(bytes)),
+      /one canonical root/,
+    );
+  }
+  const bytes = tar([
+    { name: "index.html", content: "root" },
+    { name: "./release.json", content: artifactRelease() },
+  ]);
+  assert.equal(verifyArchiveIdentity(bytes, metadata(bytes)).sourceRef, SOURCE);
+});
+
+test("extraction readback refuses a changed inner identity before replacing the old target", async (t) => {
+  const path = await directory(t),
+    target = resolve(path, "base"),
+    archivePath = resolve(path, "site.tar");
+  await mkdir(target);
+  await writeFile(resolve(target, "sentinel"), "keep");
+  const bytes = tar([
+    { name: "index.html", content: "matching archive" },
+    { name: "release.json", content: artifactRelease() },
+  ]);
+  await writeFile(archivePath, bytes);
+  const childProcess = createRequire(import.meta.url)("node:child_process"),
+    native = childProcess.execFileSync;
+  let corruptions = 0;
+  t.mock.method(childProcess, "execFileSync", (command, args, options) => {
+    const result = native(command, args, options);
+    if (command === "tar" && args.includes("-xf")) {
+      corruptions++;
+      const staging = args[args.indexOf("-C") + 1];
+      writeFileSync(
+        resolve(staging, "release.json"),
+        artifactRelease("b".repeat(40)),
+      );
+    }
+    return result;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  await assert.rejects(
+    extractProductionBase(archivePath, metadata(bytes), target),
+    /Artifact release.json/,
+  );
+  assert.equal(corruptions, 1);
+  assert.equal(await readFile(resolve(target, "sentinel"), "utf8"), "keep");
+  assert.deepEqual(await readdir(target), ["sentinel"]);
 });
