@@ -128,3 +128,35 @@ test("ICS escapes standalone CR, LF and CRLF so text cannot create properties", 
   );
   assert.equal(icsEscape("Room, 1;2\\3"), "Room\\, 1\\;2\\\\3");
 });
+
+test("archived and deleted group subscriptions return valid empty feed and restoration revives retained events", async (t) => {
+  const { data } = setup(t);
+  const original = structuredClone(data.lessons);
+  for (const lifecycle of [
+    { archivedAt: "2026-11-01T00:00:00.000Z" },
+    { archived: true },
+    { deleted: true, archivedAt: null },
+  ]) {
+    const base = { id: "g-main", name: "Group", subgroups: ["А", "Б"] };
+    data.groups[0] = { ...base, ...lifecycle };
+    const response = await handle(req("?group=g-main&subgroup=А"));
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, /BEGIN:VCALENDAR/);
+    assert.equal(text.includes("BEGIN:VEVENT"), false);
+    assert.deepEqual(data.lessons, original);
+  }
+  data.groups[0] = {
+    id: "g-main",
+    name: "Group",
+    subgroups: ["А", "Б"],
+    archived: true,
+    archivedAt: null,
+  };
+  const response = await handle(req("?group=g-main&subgroup=А"));
+  assert.equal(response.status, 200);
+  assert.equal(
+    ((await response.text()).match(/BEGIN:VEVENT/g) || []).length,
+    16,
+  );
+});
