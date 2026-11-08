@@ -7,11 +7,11 @@ permissions:
   contents: read
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: "22"
           cache: npm
@@ -39,13 +39,13 @@ jobs:
             sleep 0.2
           done
           LH_OUTPUT=/tmp/uniflow.lighthouse.json npm run perf -- "http://127.0.0.1:4174/schedule/"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: lighthouse-mobile-report
           path: /tmp/uniflow.lighthouse.json
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: browser-test-results
@@ -53,7 +53,7 @@ jobs:
             test-results/
             playwright-report/
           if-no-files-found: ignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: production-site-candidate
           path: dist/
