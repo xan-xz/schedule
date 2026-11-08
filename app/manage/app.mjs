@@ -1801,44 +1801,144 @@ function exportJson() {
     "application/json",
   );
 }
-function importJson() {
-  if (!isAdmin()) throw Error("Нужны права администратора");
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".json,application/json";
-  input.onchange = async () => {
-    try {
-      const file = input.files[0];
-      if (!file) return;
-      if (file.size > 1000000)
-        throw Error("Размер файла не должен превышать 1 МБ");
-      const data = JSON.parse(await file.text());
-      if (data.format !== "uniflow-2")
-        throw Error("Нужен файл экспорта UniFlow 2");
-      // The shared import engine validates a cloned candidate and applies the
-      // same absent/present/null semantics as the server, without publishing.
-      mutate(S.data, S.user, "import", {
+async function importJson() {
+  if (!isAdmin() || ownerEnding) return;
+  if (S.busy) throw Error("Дождись сохранения");
+  const epoch = S.epoch,
+    modalChild = $("modal").firstChild,
+    modalWasOpen = $("modal").open;
+  const [
+    { previewJsonImport, jsonImportFingerprint },
+    { createJsonImportEditor },
+    { loadLessonBatchStyles },
+  ] = await Promise.all([
+    import("./json-import-preview.mjs"),
+    import("./json-import-editor.mjs"),
+    import("./lesson-batch-editor.mjs"),
+  ]);
+  await loadLessonBatchStyles();
+  await draftSaveQueue;
+  if (
+    ownerEnding ||
+    !isAdmin() ||
+    epoch !== S.epoch ||
+    S.busy ||
+    $("modal").firstChild !== modalChild ||
+    $("modal").open !== modalWasOpen
+  )
+    return;
+  const data = clone(draft?.data || S.data),
+    opened = {
+      draft,
+      generation: draft?.localGeneration,
+      revision: S.revision,
+      fingerprint: jsonImportFingerprint([
         data,
-      });
-      showForm(
-        "Подтвердить импорт",
-        [],
-        async (_, rev) => {
-          if (!draft) startDraft();
-          await act("import", { data }, rev);
-        },
-        "Добавить в черновик",
-        data.groups.length +
-          " групп, " +
-          data.lessons.length +
-          " занятий. Текущие назначения будут заменены. Предыдущая версия останется в истории.",
-      );
-    } catch (e) {
-      toast(e.message);
-    }
+        draft?.catalogReplacements || [],
+      ]),
+    };
+  let body,
+    checked = null,
+    appliedDraft = null,
+    appliedFingerprint = null;
+  const authorized = () => {
+    if (ownerEnding || !isAdmin() || S.epoch !== epoch)
+      throw Error("Войдите владельцем заново.");
+    if (!body?.isConnected || !$("modal").open)
+      throw Error("Форма импорта закрыта.");
+    if (S.busy) throw Error("Дождись сохранения");
   };
-  input.click();
+  const unchanged = () => {
+    if (
+      draft !== opened.draft ||
+      draft?.localGeneration !== opened.generation ||
+      S.revision !== opened.revision ||
+      draft?.baseConflict ||
+      jsonImportFingerprint([
+        draft?.data || S.data,
+        draft?.catalogReplacements || [],
+      ]) !== opened.fingerprint
+    )
+      throw Error(
+        "Данные или версия изменились. Откройте импорт заново; этот файл не применён.",
+      );
+  };
+  body = createJsonImportEditor({
+    onClose: closeModal,
+    onDirty: () => {
+      draftFormDirty = true;
+    },
+    onInvalidate: () => {
+      checked = null;
+    },
+    onPreview: async (raw) => {
+      await new Promise((resolve) =>
+        window.requestAnimationFrame(() => setTimeout(resolve, 0)),
+      );
+      await draftSaveQueue;
+      authorized();
+      unchanged();
+      checked = previewJsonImport(raw, data, S.user, {
+        before: draft?.before || data,
+        replacements: draft?.catalogReplacements || [],
+      });
+      return checked;
+    },
+    onApply: async (retry) => {
+      await draftSaveQueue;
+      authorized();
+      if (retry) {
+        if (
+          !appliedDraft ||
+          draft !== appliedDraft ||
+          jsonImportFingerprint([
+            draft.data,
+            draft.catalogReplacements || [],
+          ]) !== appliedFingerprint
+        )
+          throw Error("Черновик изменился. Сохраните его из панели черновика.");
+      } else {
+        unchanged();
+        if (!checked?.totalChanges) throw Error("Повторите предпросмотр JSON.");
+        validate(checked.data);
+        if (!draft) startDraft();
+        draft.data = clone(checked.data);
+        S.data = visible(draft.data, S.user);
+        appliedDraft = draft;
+        appliedFingerprint = jsonImportFingerprint([
+          draft.data,
+          draft.catalogReplacements || [],
+        ]);
+        if (!S.data.groups.some((group) => group.id === S.groupId))
+          S.groupId = S.data.groups[0]?.id || "";
+        if (
+          S.subgroup !== "all" &&
+          !S.data.groups
+            .find((group) => group.id === S.groupId)
+            ?.subgroups.includes(S.subgroup)
+        )
+          S.subgroup =
+            S.data.groups.find((group) => group.id === S.groupId)
+              ?.subgroups[0] || "all";
+        if (
+          S.teacherId &&
+          !S.data.teachers.some((teacher) => teacher.id === S.teacherId)
+        )
+          S.teacherId = "";
+      }
+      const saved = await persistCurrentDraft(retry);
+      if (!ownerEnding) render();
+      if (saved)
+        toast(
+          "JSON сохранён в локальный черновик. Публикация выполняется отдельно.",
+        );
+      return { saved, error: appliedDraft.saveError };
+    },
+  });
+  showTemplateDialog("Импорт JSON — все группы", body);
+  $("modal").dataset.revision = String(opened.revision);
 }
+
 async function exportIcs() {
   const data = S.data,
     epoch = S.epoch;
@@ -2134,7 +2234,7 @@ async function handleAction(action, args, el) {
     return;
   }
   if (action === "import") {
-    importJson();
+    await importJson();
     return;
   }
   if (action === "exportIcs") {

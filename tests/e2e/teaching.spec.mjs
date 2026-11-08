@@ -428,17 +428,23 @@ test("JSON export includes only authored teaching settings and a legacy import w
   expect(JSON.stringify(exported)).not.toContain("NEVER_EXPORT_PRIVATE");
   delete exported.siteSettings;
   exported.rooms[0].name = "204 из старого файла";
-  const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Импорт JSON", exact: true }).click();
-  await (
-    await chooser
-  ).setFiles({
+  const jsonDialog = page.getByRole("dialog");
+  await jsonDialog.getByLabel("Файл JSON", { exact: true }).setInputFiles({
     name: "legacy.json",
     mimeType: "application/json",
     buffer: Buffer.from(JSON.stringify(exported)),
   });
-  await page
-    .getByRole("dialog")
+  await jsonDialog
+    .getByRole("button", { name: "Предпросмотр JSON", exact: true })
+    .click();
+  await jsonDialog
+    .getByLabel(
+      "Подтверждаю замену назначений всех групп в локальном черновике",
+      { exact: true },
+    )
+    .check();
+  await jsonDialog
     .getByRole("button", { name: "Добавить в черновик", exact: true })
     .click();
   await saved(page);
