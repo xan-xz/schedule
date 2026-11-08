@@ -195,6 +195,69 @@ test("XLSX refuses minute-only and literal time formats that conceal the hour", 
     );
   }
 });
+test("XLSX decodes Excel escapes per rich text fragment without joining a new escape sequence", async () => {
+  const result = await read(
+    await workbook([xlsxRow()], (p) =>
+      cell(
+        p,
+        "G2",
+        '<c r="G2" t="inlineStr"><is><r><t>_x00</t></r><r><t>41_</t></r><r><t>_x0042_</t></r></is></c>',
+      ),
+    ),
+  );
+  assert.match(result.text, /_x0041_B/);
+});
+test("XLSX respects row number formats and explicit cell overrides", async () => {
+  const make = (code, cellXml) =>
+    workbook([xlsxRow()], (p) => {
+      style(p, code, 164);
+      p[path] = p[path].replace(
+        '<row r="2">',
+        '<row r="2" s="1" customFormat="1">',
+      );
+      cell(p, code === "000" ? "E2" : "B2", cellXml);
+    });
+  await assert.rejects(
+    read(await make("000", '<c r="E2"><v>1</v></c>')),
+    /как текст/,
+  );
+  const explicit = await read(
+    await make("000", '<c r="E2" s="0"><v>1</v></c>'),
+  );
+  assert.match(explicit.text, /"math","1","teacher"/);
+  const time = await read(await make("hh:mm", '<c r="B2"><v>0.375</v></c>'));
+  assert.match(time.text, /"09:00"/);
+});
+test("XLSX refuses conditional formatting that can override visible numeric meaning", async () => {
+  await assert.rejects(
+    read(
+      await workbook(
+        [xlsxRow()],
+        (p) =>
+          (p[path] = p[path].replace(
+            "</worksheet>",
+            '<conditionalFormatting sqref="E2"><cfRule type="expression" dxfId="1" priority="1"><formula>TRUE</formula></cfRule></conditionalFormatting></worksheet>',
+          )),
+      ),
+    ),
+    /условное форматирование/,
+  );
+});
+test("XLSX rejects escaped controls and unpaired Unicode instead of silently replacing them", async () => {
+  for (const value of ["_x0000_", "_xD800_"])
+    await assert.rejects(
+      read(
+        await workbook([xlsxRow()], (p) =>
+          cell(p, "G2", `<c r="G2" t="inlineStr"><is><t>${value}</t></is></c>`),
+        ),
+      ),
+      /управляющие символы|Unicode/,
+    );
+  assert.throws(
+    () => scheduleWorkbook([[String.fromCharCode(0xd800)]]),
+    /управляющий символ/,
+  );
+});
 test("XLSX caps data rows before common validation and ignores forged dimension allocations", async () => {
   const result = await read(
     await workbook(

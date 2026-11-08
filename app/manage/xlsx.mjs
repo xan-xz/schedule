@@ -89,6 +89,10 @@ function relationships(root, base) {
   }
   return found;
 }
+const excelText = (text) =>
+  text.replace(/_x([0-9a-f]{4})_/gi, (_, hex) =>
+    String.fromCharCode(parseInt(hex, 16)),
+  );
 function richText(node) {
   if (!node) return "";
   return elements(node)
@@ -96,17 +100,14 @@ function richText(node) {
       c.namespaceURI !== NS
         ? ""
         : c.localName === "t"
-          ? c.textContent
+          ? excelText(c.textContent)
           : c.localName === "r"
             ? children(c, "t")
-                .map((t) => t.textContent)
+                .map((t) => excelText(t.textContent))
                 .join("")
             : "",
     )
-    .join("")
-    .replace(/_x([0-9a-f]{4})_/gi, (_, hex) =>
-      String.fromCharCode(parseInt(hex, 16)),
-    );
+    .join("");
 }
 const integer = (value, max) =>
   /^\d+$/.test(value || "") &&
@@ -215,6 +216,10 @@ export async function readScheduleWorkbook(input) {
       const sheet = sheets.find((s) => s.id === id);
       if (!sheet || sheet.state !== "visible") fail("выберите видимый лист.");
       const root = await part(sheet.path, NS, "worksheet");
+      if (root.getElementsByTagNameNS(NS, "conditionalFormatting").length)
+        fail(
+          "условное форматирование может скрывать числовые значения. Удалите его перед импортом и явно задайте текст или HH:MM.",
+        );
       if (root.getElementsByTagNameNS(NS, "mergeCell").length)
         fail(
           "объединённые ячейки не поддерживаются. Используйте табличный экспорт, одна строка — одно занятие.",
@@ -269,11 +274,16 @@ export async function readScheduleWorkbook(input) {
             if (!integer(value, strings.length - 1))
               fail(`ячейка ${ref}: неверный индекс общей строки.`);
             text = strings[Number(value)];
-          } else if (type === "str") text = value;
+          } else if (type === "str") text = excelText(value);
           else if (type === "n" && value !== "") {
             const n = Number(value),
               header = headers?.[column]?.normalize("NFKC").toLowerCase(),
-              style = attr(cell, "s") || "0";
+              style =
+                attr(cell, "s") ||
+                (["1", "true"].includes(attr(row, "customFormat"))
+                  ? attr(row, "s")
+                  : "") ||
+                "0";
             if (
               !integer(style, formats.length - 1) ||
               !Number.isFinite(n) ||
@@ -324,6 +334,16 @@ export async function readScheduleWorkbook(input) {
             );
           if (text.length > 4000)
             fail(`ячейка ${ref}: слишком длинное значение.`);
+          if (
+            !text.isWellFormed() ||
+            [...text].some(
+              (c) =>
+                c.charCodeAt(0) < 32 && ![9, 10, 13].includes(c.charCodeAt(0)),
+            )
+          )
+            fail(
+              `ячейка ${ref}: недопустимые управляющие символы или неполный Unicode.`,
+            );
           cells[column] = text;
         }
         if (!cells.some((c) => c?.trim())) continue;
@@ -355,6 +375,7 @@ export async function readScheduleWorkbook(input) {
 const escape = (value) => {
   const text = String(value ?? "");
   if (
+    !text.isWellFormed() ||
     [...text].some(
       (c) => c.charCodeAt(0) < 32 && ![9, 10, 13].includes(c.charCodeAt(0)),
     )
