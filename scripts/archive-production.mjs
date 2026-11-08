@@ -2,12 +2,21 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import {
+  validateArtifactRelease,
+  verifyArchiveIdentity,
+} from "./production-base.mjs";
 
 const sourceRef =
   process.env.GITHUB_SHA ||
   execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 if (!/^[a-f0-9]{40}$/.test(sourceRef))
   throw Error("Immutable production source is required");
+// A stale dist from another checkout must fail before replacing any archive.
+validateArtifactRelease(
+  JSON.parse(await readFile(resolve("dist/release.json"), "utf8")),
+  sourceRef,
+);
 const output = resolve(".release/upload");
 await mkdir(output, { recursive: true });
 const archive = resolve(output, "production-site.tar");
@@ -22,6 +31,7 @@ const metadata = {
     .digest("hex"),
   workflowRun: process.env.GITHUB_RUN_ID || null,
 };
+verifyArchiveIdentity(await readFile(archive), metadata);
 await writeFile(
   resolve(output, "production.json"),
   JSON.stringify(metadata, null, 2) + "\n",

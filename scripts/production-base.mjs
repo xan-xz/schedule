@@ -48,6 +48,78 @@ export function validateMetadata(metadata, archive) {
   return metadata;
 }
 
+/** Match the actual public artifact identity, not only its outer checksum envelope. */
+export function validateArtifactRelease(document, sourceRef) {
+  if (
+    !/^[a-f0-9]{40}$/.test(sourceRef || "") ||
+    document?.format !== "uniflow-scope-v1" ||
+    document.channel !== "production" ||
+    document.sourceRef !== sourceRef
+  )
+    throw Error(
+      "Artifact release.json does not match the pinned production source.",
+    );
+  return document;
+}
+function parseArtifactRelease(bytes) {
+  if (!bytes.length || bytes.length > 8192)
+    throw Error("Artifact release.json is missing or too large.");
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw Error("Artifact release.json is not valid UTF-8 JSON.");
+  }
+}
+function tarOutput(archive, args, maxBuffer = 4 * 1024 * 1024) {
+  try {
+    return execFileSync("tar", [...args, "-f", "-"], {
+      input: archive,
+      maxBuffer,
+    });
+  } catch {
+    throw Error("Production archive cannot be inspected safely.");
+  }
+}
+/** All tar reads use the exact checksum-verified bytes. Path replacement cannot
+ * swap the inspected artifact; duplicate/case-aliased root identities fail closed. */
+export function verifyArchiveIdentity(archive, metadata) {
+  if (!Buffer.isBuffer(archive) || archive.length > 64 * 1024 * 1024)
+    throw Error("Production archive is too large or invalid.");
+  validateMetadata(metadata, archive);
+  const entries = safeTarEntries(tarOutput(archive, ["-t"]).toString("utf8"));
+  const details = tarOutput(archive, ["-tv"]).toString("utf8");
+  if (details.split(/\r?\n/).some((line) => line && !/^[d-]/.test(line)))
+    throw Error("Production archive links/special files are forbidden");
+  const canonical = (entry) =>
+    entry
+      .split("/")
+      .filter((part) => part && part !== ".")
+      .join("/");
+  const roots = entries.filter(
+    (entry) => canonical(entry).toLowerCase() === "release.json",
+  );
+  if (
+    roots.length !== 1 ||
+    canonical(roots[0]) !== "release.json" ||
+    roots[0].endsWith("/")
+  )
+    throw Error("Production archive requires one canonical root release.json.");
+  // Put options before the member and terminate option parsing for portability.
+  let bytes;
+  try {
+    bytes = execFileSync("tar", ["-xO", "-f", "-", "--", roots[0]], {
+      input: archive,
+      maxBuffer: 8192,
+    });
+  } catch {
+    throw Error("Artifact release.json cannot be read safely.");
+  }
+  return validateArtifactRelease(
+    parseArtifactRelease(bytes),
+    metadata.sourceRef,
+  );
+}
+
 export function verifyDownloadedRelease(release, archiveBytes, manifestBytes) {
   const metadata = JSON.parse(manifestBytes.toString("utf8"));
   validateMetadata(metadata, archiveBytes);
@@ -66,6 +138,7 @@ export function verifyDownloadedRelease(release, archiveBytes, manifestBytes) {
   );
   if (state.kind !== "published")
     throw Error("Downloaded production release is not published and locked");
+  verifyArchiveIdentity(archiveBytes, metadata);
   return metadata;
 }
 export function safeTarEntries(listing) {
@@ -146,17 +219,7 @@ export async function extractProductionBase(archivePath, metadata, target) {
   if (archive.length > 64 * 1024 * 1024)
     throw new Error("Production archive is too large");
   validateMetadata(metadata, archive);
-  const listing = execFileSync("tar", ["-tf", archivePath], {
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  safeTarEntries(listing);
-  const details = execFileSync("tar", ["-tvf", archivePath], {
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  if (details.split(/\r?\n/).some((line) => line && !/^[d-]/.test(line)))
-    throw new Error("Production archive links/special files are forbidden");
+  verifyArchiveIdentity(archive, metadata);
   const output = await safeWorkspaceTarget(target);
   await mkdir(dirname(output), { recursive: true });
   await safeWorkspaceTarget(output);
@@ -165,9 +228,19 @@ export async function extractProductionBase(archivePath, metadata, target) {
   );
   await safeWorkspaceTarget(staging);
   try {
-    execFileSync("tar", ["-xf", resolve(archivePath), "-C", staging], {
-      stdio: "pipe",
-    });
+    try {
+      execFileSync("tar", ["-xf", "-", "-C", staging], {
+        input: archive,
+        stdio: "pipe",
+      });
+    } catch {
+      throw Error("Production archive extraction failed.");
+    }
+    // Verify what the platform actually extracted before touching the old target.
+    validateArtifactRelease(
+      parseArtifactRelease(await readFile(resolve(staging, "release.json"))),
+      metadata.sourceRef,
+    );
     await writeFile(
       resolve(staging, ".uniflow-production-base.json"),
       JSON.stringify(metadata, null, 2),
