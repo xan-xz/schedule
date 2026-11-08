@@ -432,3 +432,130 @@ test("preset rename/change/removal never rewrites524 lessons, source warnings, c
   );
   assert.deepEqual(source, before);
 });
+
+test("disabled presets stay absent from observed suggestions case-insensitively while current remains exact", () => {
+  const input = data();
+  input.siteSettings.teaching = defaultTeachingSettings();
+  input.siteSettings.teaching.lessonTypes[0].enabled = false;
+  input.lessons[0].type = " ЛАБОРАТОРНАЯ ";
+  input.lessons[1].type = "Лабораторная";
+  input.lessons[2].type = "Неизвестный тип";
+  input.exceptions = [
+    { type: "лабораторная" },
+    { type: "Старая разовая встреча" },
+  ];
+  const result = lessonTypeSuggestions(input);
+  assert.equal(
+    result.some(
+      (value) => value.trim().toLocaleLowerCase("ru") === "лабораторная",
+    ),
+    false,
+  );
+  assert.equal(result.includes("Неизвестный тип"), true);
+  assert.equal(result.includes("Старая разовая встреча"), true);
+  assert.equal(
+    lessonTypeSuggestions(input, " Лабораторная ").at(-1),
+    " Лабораторная ",
+  );
+  assert.equal(
+    lessonTypeSuggestions(input, "Свободный ввод").at(-1),
+    "Свободный ввод",
+  );
+  input.siteSettings.teaching.lessonTypes = [];
+  assert.equal(lessonTypeSuggestions(input).includes(" ЛАБОРАТОРНАЯ "), true);
+  assert.equal(input.lessons[0].type, " ЛАБОРАТОРНАЯ ");
+});
+
+test("disabling the historical laboratory preset excludes307 source suggestions without changing any original type", () => {
+  const input = JSON.parse(
+    readFileSync(new URL("../app/seed.json", import.meta.url), "utf8"),
+  );
+  const before = input.lessons.map((row) => row.type);
+  input.siteSettings = { teaching: defaultTeachingSettings() };
+  input.siteSettings.teaching.lessonTypes.find(
+    (item) => item.name === "Лабораторная",
+  ).enabled = false;
+  assert.equal(lessonTypeSuggestions(input).includes("Лабораторная"), false);
+  assert.equal(
+    lessonTypeSuggestions(input, "Лабораторная").includes("Лабораторная"),
+    true,
+  );
+  assert.deepEqual(
+    input.lessons.map((row) => row.type),
+    before,
+  );
+});
+
+test("teaching-only draft publication produces owner history without changing the public DTO or adding notices", () => {
+  const input = data(),
+    uploaded = structuredClone(input);
+  uploaded.siteSettings = {
+    teaching: settings(),
+    unknownInjected: { private: "do not leak" },
+  };
+  const result = mutate(input, owner, "import", { data: uploaded });
+  assert.deepEqual(result.data.announcements, input.announcements);
+  assert.deepEqual(projectPublicData(result.data), projectPublicData(input));
+  assert.equal(result.summary, "Обновлены шаблоны типов занятий и звонков");
+  assert.equal(result.data.history[0].summary, result.summary);
+  assert.equal(
+    JSON.stringify(projectPublicData(result.data)).includes("do not leak"),
+    false,
+  );
+  const source = JSON.parse(
+    readFileSync(new URL("../app/seed.json", import.meta.url), "utf8"),
+  );
+  const onlySettings = {
+    ...structuredClone(source),
+    siteSettings: { teaching: defaultTeachingSettings() },
+  };
+  const originalResult = mutate(source, owner, "import", {
+    data: onlySettings,
+  }).data;
+  assert.equal(
+    originalResult.announcements.length,
+    source.announcements.length,
+  );
+  assert.deepEqual(originalResult.lessons, source.lessons);
+});
+
+test("a public catalog, lesson time, bounds or appearance change alongside presets still produces the normal student notice", () => {
+  for (const change of [
+    (value) => (value.rooms[0].name = "Новое имя аудитории"),
+    (value) => (value.lessons[0].start = "08:10"),
+    (value) => (value.validFrom = "2026-01-01"),
+    (value) => (value.siteSettings.appearance.defaultPalette = "ocean"),
+  ]) {
+    const input = data(),
+      uploaded = structuredClone(input);
+    uploaded.siteSettings.teaching = settings();
+    change(uploaded);
+    const result = mutate(input, owner, "import", { data: uploaded }).data;
+    assert.equal(result.announcements.length, input.announcements.length + 1);
+    assert.equal(
+      result.announcements[0].body,
+      "Администратор обновил расписание из файла",
+    );
+  }
+});
+
+test("ordinary imports including unchanged teaching retain prior notice behaviour", () => {
+  for (const input of [data(), save(data(), settings())]) {
+    const result = mutate(input, owner, "import", {
+      data: structuredClone(input),
+    }).data;
+    assert.equal(result.announcements.length, input.announcements.length + 1);
+  }
+});
+
+test("projection-comparison errors fall back to normal model validation400 instead of a new exception", () => {
+  const input = data(),
+    uploaded = structuredClone(input);
+  uploaded.siteSettings.teaching = settings();
+  uploaded.groups[0].subgroups = [{ unknown: "invalid DTO" }];
+  assert.throws(
+    () => mutate(input, owner, "import", { data: uploaded }),
+    (error) => error.status === 400,
+  );
+  assert.equal(input.siteSettings.teaching, undefined);
+});

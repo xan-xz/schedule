@@ -210,3 +210,39 @@ test("HTTP full draft import applies teaching only when explicitly present and k
   assert.equal(retained.status, 200);
   assert.deepEqual(row.data.siteSettings.teaching, changed);
 });
+
+test("HTTP teaching-only import changes owner history and CAS but creates no student schedule announcement", async (t) => {
+  const { row, calls } = backend(t),
+    before = structuredClone(row.data);
+  const upload = {
+    ...structuredClone(row.data),
+    siteSettings: {
+      teaching: defaultTeachingSettings(),
+      unknownPrivate: "never published",
+    },
+  };
+  const response = await handle(
+    request({
+      action: "mutate",
+      op: "import",
+      payload: { data: upload },
+      revision: 7,
+      token,
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(row.revision, 8);
+  assert.equal(calls.filter((call) => call.path === "rpc/uf_commit").length, 1);
+  assert.deepEqual(row.data.announcements, before.announcements);
+  assert.equal(
+    row.data.history[0].summary,
+    "Обновлены шаблоны типов занятий и звонков",
+  );
+  const guest = await handle(
+    request({ action: "state", groupId: "g-main", subgroup: "А" }),
+  );
+  const result = await guest.json();
+  assert.deepEqual(result.data.announcements, []);
+  assert.equal(JSON.stringify(result).includes("never published"), false);
+  assert.equal(JSON.stringify(result).includes("bellSchedules"), false);
+});

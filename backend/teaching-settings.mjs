@@ -178,11 +178,21 @@ export function teachingSettings(data) {
 }
 /** Exact historical strings stay usable; presets do not become a closed enum. */
 export function lessonTypeSuggestions(data, current = "") {
-  const values = teachingSettings(data)
-    .lessonTypes.filter((item) => item.enabled)
+  const configured = teachingSettings(data).lessonTypes;
+  const comparisonKey = (value) => value.trim().toLocaleLowerCase("ru");
+  const disabled = new Set(
+    configured
+      .filter((item) => !item.enabled)
+      .map((item) => comparisonKey(item.name)),
+  );
+  const values = configured
+    .filter((item) => item.enabled)
     .map((item) => item.name);
   for (const row of [...(data?.lessons || []), ...(data?.exceptions || [])])
-    values.push(row.type);
+    if (typeof row.type === "string" && !disabled.has(comparisonKey(row.type)))
+      values.push(row.type);
+  // Editing an existing/freeform value remains possible even when that preset
+  // has been disabled. Comparison keys never replace the original strings.
   values.push(current);
   return [
     ...new Set(
