@@ -2445,8 +2445,11 @@ function showTemplateDialog(title, body) {
 async function templateManager() {
   if (!isAdmin()) return;
   try {
+    const epoch = S.epoch;
     const tools = await import("./templates.mjs");
-    const templates = tools.loadTemplates();
+    if (ownerEnding || !isAdmin() || epoch !== S.epoch || S.rollbackBusy)
+      return;
+    const templates = tools.loadTemplates(undefined, true);
     const body = dom(
       "div",
       {},
@@ -2458,6 +2461,38 @@ async function templateManager() {
       domButton("Сохранить новый шаблон", () => templateSaveForm(tools), {
         class: "btn primary section-space",
       }),
+      dom(
+        "div",
+        { class: "row section-space" },
+        domButton(
+          "Скачать копию шаблонов",
+          () => {
+            try {
+              if (ownerEnding || !isAdmin() || epoch !== S.epoch)
+                throw Error("Войдите владельцем заново.");
+              fileDownload(
+                "uniflow-templates-" + localDate() + ".json",
+                tools.exportTemplateBackup(),
+                "application/json;charset=utf-8",
+              );
+              toast(
+                "Копия шаблонов скачана. Храните файл отдельно от браузера.",
+              );
+            } catch (problem) {
+              toast(problem.message);
+            }
+          },
+          { class: "btn", disabled: !templates.length },
+        ),
+        domButton(
+          "Импортировать копию шаблонов",
+          () =>
+            openTemplateBackupEditor().catch((problem) =>
+              toast(problem.message),
+            ),
+          { class: "btn" },
+        ),
+      ),
     );
     if (!templates.length)
       body.append(
@@ -2509,6 +2544,54 @@ async function templateManager() {
     toast(error.message);
   }
 }
+async function openTemplateBackupEditor() {
+  if (ownerEnding || !isAdmin() || S.rollbackBusy) return;
+  const epoch = S.epoch;
+  const [tools, { createTemplateBackupEditor }, { loadLessonBatchStyles }] =
+    await Promise.all([
+      import("./templates.mjs"),
+      import("./template-backup-editor.mjs"),
+      import("./lesson-batch-editor.mjs"),
+    ]);
+  await loadLessonBatchStyles();
+  if (ownerEnding || !isAdmin() || S.epoch !== epoch || S.rollbackBusy) return;
+  let body, checkedData;
+  const authorized = () => {
+    if (
+      ownerEnding ||
+      !isAdmin() ||
+      S.epoch !== epoch ||
+      !body?.isConnected ||
+      !$("modal").open ||
+      S.rollbackBusy
+    )
+      throw Error("Форма закрыта или доступ изменился. Шаблоны не записаны.");
+  };
+  body = createTemplateBackupEditor({
+    onDirty: () => {
+      draftFormDirty = true;
+    },
+    onClose: () => {
+      draftFormDirty = false;
+      void templateManager();
+      toast("Шаблоны импортированы. Расписание не изменилось.");
+    },
+    onPreview: (raw) => {
+      authorized();
+      checkedData = S.data;
+      return tools.previewTemplateBackup(raw, checkedData);
+    },
+    onApply: (plan) =>
+      tools.withTemplateLock(() => {
+        authorized();
+        if (S.data !== checkedData)
+          throw Error("Данные изменились. Повторите предпросмотр.");
+        return tools.applyTemplateBackup(plan, S.data);
+      }),
+  });
+  showTemplateDialog("Импорт копии шаблонов", body);
+}
+
 function templateSaveForm(tools) {
   if (!isAdmin()) return;
   const title = dom("input", {
@@ -2524,6 +2607,8 @@ function templateSaveForm(tools) {
     "day",
     () => {},
   );
+  const epoch = S.epoch;
+  let pending = false;
   const error = dom("p", { class: "form-error", role: "alert" });
   const form = dom(
     "form",
@@ -2551,8 +2636,10 @@ function templateSaveForm(tools) {
     ),
     error,
   );
-  form.addEventListener("submit", (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (pending) return;
+    pending = true;
     try {
       const template = tools.createTemplate(draft?.data || S.data, {
         name: title.value,
@@ -2561,11 +2648,26 @@ function templateSaveForm(tools) {
         subgroup: S.subgroup,
         day: dayOf(S.date),
       });
-      tools.saveTemplate(template);
+      await tools.withTemplateLock(() => {
+        if (
+          ownerEnding ||
+          !isAdmin() ||
+          S.epoch !== epoch ||
+          !form.isConnected ||
+          S.rollbackBusy
+        )
+          throw Error(
+            "Форма закрыта или доступ изменился. Шаблоны не записаны.",
+          );
+        tools.saveTemplate(template);
+      });
+      if (!form.isConnected || ownerEnding) return;
       void templateManager();
       toast("Шаблон сохранён на этом устройстве. Расписание не изменилось.");
     } catch (e) {
-      error.textContent = e.message;
+      if (form.isConnected) error.textContent = e.message;
+    } finally {
+      pending = false;
     }
   });
   showTemplateDialog("Новый шаблон", form);
@@ -2638,6 +2740,8 @@ function templateRenameForm(tools, template) {
     maxlength: 80,
     value: template.name,
   });
+  const epoch = S.epoch;
+  let pending = false;
   const error = dom("p", { class: "form-error", role: "alert" });
   const form = dom(
     "form",
@@ -2651,13 +2755,31 @@ function templateRenameForm(tools, template) {
     ),
     error,
   );
-  form.addEventListener("submit", (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (pending) return;
+    pending = true;
+    const nextName = title.value;
     try {
-      tools.renameTemplate(template.id, title.value);
+      await tools.withTemplateLock(() => {
+        if (
+          ownerEnding ||
+          !isAdmin() ||
+          S.epoch !== epoch ||
+          !form.isConnected ||
+          S.rollbackBusy
+        )
+          throw Error(
+            "Форма закрыта или доступ изменился. Шаблоны не записаны.",
+          );
+        tools.renameTemplate(template.id, nextName);
+      });
+      if (!form.isConnected || ownerEnding) return;
       void templateManager();
     } catch (e) {
-      error.textContent = e.message;
+      if (form.isConnected) error.textContent = e.message;
+    } finally {
+      pending = false;
     }
   });
   showTemplateDialog("Переименовать шаблон", form);
@@ -2665,6 +2787,8 @@ function templateRenameForm(tools, template) {
 }
 function templateDeleteForm(tools, template) {
   if (!isAdmin()) return;
+  const epoch = S.epoch;
+  let pending = false;
   const error = dom("p", { class: "form-error", role: "alert" });
   const form = dom(
     "form",
@@ -2684,13 +2808,30 @@ function templateDeleteForm(tools, template) {
     ),
     error,
   );
-  form.addEventListener("submit", (event) => {
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (pending) return;
+    pending = true;
     try {
-      tools.deleteTemplate(template.id);
+      await tools.withTemplateLock(() => {
+        if (
+          ownerEnding ||
+          !isAdmin() ||
+          S.epoch !== epoch ||
+          !form.isConnected ||
+          S.rollbackBusy
+        )
+          throw Error(
+            "Форма закрыта или доступ изменился. Шаблоны не записаны.",
+          );
+        tools.deleteTemplate(template.id);
+      });
+      if (!form.isConnected || ownerEnding) return;
       void templateManager();
     } catch (e) {
-      error.textContent = e.message;
+      if (form.isConnected) error.textContent = e.message;
+    } finally {
+      pending = false;
     }
   });
   showTemplateDialog("Удалить шаблон", form);
