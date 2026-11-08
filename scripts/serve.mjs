@@ -89,6 +89,11 @@ const server = createServer(async (req, res) => {
       ["/public-data.mjs", "/backend/public-data.mjs"].includes(pathname)
     )
       file = resolve(root, "backend/public-data.mjs");
+    else if (
+      source &&
+      ["/lesson-batch.mjs", "/backend/lesson-batch.mjs"].includes(pathname)
+    )
+      file = resolve(root, "backend/lesson-batch.mjs");
     else if (source && pathname === "/model.mjs")
       file = resolve(root, "backend/core.mjs");
     else if (
