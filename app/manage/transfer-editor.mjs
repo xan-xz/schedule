@@ -48,6 +48,26 @@ export function createTransferEditor({
     invalidate,
     { "aria-label": kind === "template" ? "День назначения" : "Куда" },
   );
+  const mode = select(
+    [
+      ["append", "Добавить занятия"],
+      ["replace-destination", "Заменить область назначения"],
+    ],
+    "append",
+    invalidate,
+    { "aria-label": "Режим копирования" },
+  );
+  const acknowledgment = el("input", { type: "checkbox", onchange: controls });
+  const confirmation = el(
+    "label",
+    { class: "batch-lesson", hidden: true },
+    acknowledgment,
+    el(
+      "span",
+      {},
+      "Подтверждаю замену собственных занятий выбранной области назначения",
+    ),
+  );
   const preview = el(
     "button",
     { type: "submit", class: "btn" },
@@ -64,8 +84,20 @@ export function createTransferEditor({
         ? "Копирование дня"
         : "Копирование чётности недели";
   function controls() {
-    from.disabled = to.disabled = preview.disabled = pending || applied;
-    apply.disabled = pending || !plan;
+    from.disabled =
+      to.disabled =
+      mode.disabled =
+      preview.disabled =
+        pending || applied;
+    confirmation.hidden = mode.value !== "replace-destination";
+    acknowledgment.disabled =
+      pending || applied || !plan || plan.mode !== "replace-destination";
+    apply.disabled =
+      pending ||
+      !plan ||
+      (!applied &&
+        plan.mode === "replace-destination" &&
+        !acknowledgment.checked);
     apply.textContent = applied
       ? "Повторить сохранение"
       : "Добавить в черновик";
@@ -73,6 +105,7 @@ export function createTransferEditor({
   function invalidate() {
     generation++;
     plan = null;
+    acknowledgment.checked = false;
     page = 0;
     review.replaceChildren();
     status.textContent = error.textContent = "";
@@ -81,13 +114,34 @@ export function createTransferEditor({
     controls();
   }
   function renderReview() {
-    const pages = Math.ceil(plan.count / 40);
+    const pages = Math.ceil(plan.totalChanges / 40);
+    const destination =
+      kind === "day" || template?.kind === "day"
+        ? DAYS[Number(to.value)]
+        : kind === "week"
+          ? to.value === "odd"
+            ? "Нечётная неделя"
+            : "Чётная неделя"
+          : "Вся регулярная неделя";
     review.replaceChildren(
-      el("h3", { tabindex: "-1" }, "Предпросмотр новых занятий"),
+      el(
+        "h3",
+        { tabindex: "-1" },
+        plan.mode === "replace-destination"
+          ? "Предпросмотр замены назначений"
+          : "Предпросмотр новых занятий",
+      ),
+      el(
+        "p",
+        { class: "notice-info" },
+        `Область назначения: ${groupName} · ${subgroup === "all" ? "Все подгруппы" : "Подгруппа " + subgroup} · ${destination}`,
+      ),
       el(
         "p",
         { class: "batch-count" },
-        `Будет добавлено: ${plan.count}. Существующие занятия сохраняются.`,
+        plan.mode === "replace-destination"
+          ? `Будет добавлено: ${plan.count}. Будет удалено: ${plan.removedCount}. Меняются только собственные занятия области назначения.`
+          : `Будет добавлено: ${plan.count}. Существующие занятия сохраняются.`,
       ),
       el(
         "div",
@@ -95,8 +149,18 @@ export function createTransferEditor({
         ...transferPage(plan, page).map((row) =>
           el(
             "article",
-            { class: "batch-change", "data-transfer-lesson": row.id },
-            el("strong", {}, row.title),
+            {
+              class: "batch-change",
+              "data-transfer-kind": row.kind,
+              ...(row.kind === "added"
+                ? { "data-transfer-lesson": row.id }
+                : { "data-transfer-removed": row.id }),
+            },
+            el(
+              "strong",
+              {},
+              `${row.kind === "added" ? "Добавить" : "Удалить"} · ${row.title}`,
+            ),
             el("p", {}, row.text),
             el("p", {}, row.period),
           ),
@@ -112,7 +176,9 @@ export function createTransferEditor({
                 "Предыдущие занятия",
                 () => {
                   page--;
+                  acknowledgment.checked = false;
                   renderReview();
+                  focusReview();
                 },
                 { class: "btn", disabled: page === 0 },
               ),
@@ -120,7 +186,9 @@ export function createTransferEditor({
                 "Следующие занятия",
                 () => {
                   page++;
+                  acknowledgment.checked = false;
                   renderReview();
+                  focusReview();
                 },
                 { class: "btn", disabled: page + 1 >= pages },
               ),
@@ -128,6 +196,17 @@ export function createTransferEditor({
           ]
         : []),
     );
+    controls();
+  }
+  function focusReview() {
+    review.querySelector("h3").focus({ preventScroll: true });
+    review.scrollIntoView({ block: "start" });
+    // Measure the actual sticky toolbar: confirmation wraps on narrow screens.
+    const overlap =
+      review.getBoundingClientRect().top -
+      root.querySelector(".batch-actions").getBoundingClientRect().bottom -
+      12;
+    if (overlap < 0) root.closest("dialog").scrollTop += overlap;
   }
   root.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -144,13 +223,12 @@ export function createTransferEditor({
           ? { fromWeek: from.value, toWeek: to.value }
           : { toDay: Number(to.value) };
     try {
-      const result = await onPreview(options);
+      const result = await onPreview({ ...options, mode: mode.value });
       if (!root.isConnected || generation !== version) return;
       plan = result;
       status.textContent = "";
       renderReview();
-      review.querySelector("h3").focus();
-      review.scrollIntoView({ block: "start" });
+      focusReview();
     } catch (problem) {
       if (root.isConnected && generation === version) {
         error.textContent = problem.message;
@@ -162,13 +240,13 @@ export function createTransferEditor({
     }
   });
   async function save() {
-    if (pending || !plan) return;
+    if (apply.disabled) return;
     const version = generation;
     pending = true;
     error.textContent = "";
     controls();
     try {
-      const result = await onApply(applied);
+      const result = await onApply(applied, acknowledgment.checked);
       if (!root.isConnected || generation !== version) return;
       if (result.saved) onClose();
       else {
@@ -195,7 +273,7 @@ export function createTransferEditor({
     el(
       "p",
       { class: "notice-info" },
-      "Добавляются новые занятия. Общие занятия выбранной подгруппы копируются только в эту подгруппу. При любом пересечении весь набор отклоняется. Предпросмотр ничего не сохраняет; публикация выполняется отдельно.",
+      "Выберите добавление или замену области назначения. Общие пары одной подгруппы и занятия каждой недели при замене одной чётности сохраняются. Связанные записи не удаляются автоматически; при конфликте или нарушении связи весь набор отклоняется. Предпросмотр ничего не сохраняет; публикация выполняется отдельно.",
     ),
     el(
       "p",
@@ -207,12 +285,14 @@ export function createTransferEditor({
         ? [field("День назначения", to)]
         : []
       : [field("Откуда", from), field("Куда", to)]),
+    field("Режим копирования", mode),
     el(
       "div",
       { class: "batch-actions" },
       preview,
       apply,
       button("Закрыть копирование", onClose, { class: "btn" }),
+      confirmation,
     ),
     ...(onBack ? [button("Назад к шаблонам", onBack, { class: "btn" })] : []),
     error,

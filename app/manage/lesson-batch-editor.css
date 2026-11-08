@@ -32,6 +32,14 @@
   min-width: 0;
   flex: 1 1 120px;
 }
+.transfer-editor .batch-actions > .batch-lesson {
+  flex: 1 1 100%;
+  margin: 0;
+}
+.transfer-editor > p,
+.transfer-editor .batch-preview > p {
+  overflow-wrap: anywhere;
+}
 .batch-filters,
 .batch-patch {
   display: grid;

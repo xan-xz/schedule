@@ -3593,7 +3593,7 @@ async function transferForm(kind, selectedTemplate = null) {
         );
         return checked;
       },
-      onApply: async (retry) => {
+      onApply: async (retry, confirmedReplacement = false) => {
         await draftSaveQueue;
         authorized();
         if (retry) {
@@ -3611,6 +3611,8 @@ async function transferForm(kind, selectedTemplate = null) {
           currentTemplate();
           if (!checked?.count)
             throw Error("Повторите предпросмотр копирования.");
+          if (checked.mode === "replace-destination" && !confirmedReplacement)
+            throw Error("Подтвердите замену выбранной области назначения.");
           validate(checked.data);
           if (!draft) startDraft();
           draft.data = clone(checked.data);
