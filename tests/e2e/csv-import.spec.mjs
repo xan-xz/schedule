@@ -448,7 +448,9 @@ test("closing during file reading cannot populate a newly opened dialog or creat
   await expect
     .poll(() => page.evaluate(() => window.qaCsvReadStarted))
     .toBe(true);
-  await dialog.getByRole("button", { name: "Закрыть", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Закрыть импорт", exact: true })
+    .click();
   dialog = await open(page);
   await page.evaluate(() => window.qaReleaseCsvRead());
   await file(dialog, csv(2));
