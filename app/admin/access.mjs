@@ -90,8 +90,11 @@ export function renderOwnerAccess(
     }, ms);
     timers.add(timer);
   }
-  function errorMessage(error) {
-    const message = MESSAGES[error.code] || MESSAGES.UNAVAILABLE;
+  function errorMessage(error, context = "") {
+    const message =
+      error.code === "INVALID_PROOF" && context === "Подтвердить текущий пароль"
+        ? "Не удалось подтвердить текущий пароль или срок действия шага. Введите уже установленный пароль. Если шаг истёк, начните заново со свежим приглашением."
+        : MESSAGES[error.code] || MESSAGES.UNAVAILABLE;
     feedback.textContent =
       message +
       (error.retryAfterSeconds
@@ -153,7 +156,7 @@ export function renderOwnerAccess(
         if (disposed || view !== ownView) return;
         if (challenge && Date.parse(challenge.expiresAt) <= Date.now())
           clearSecrets();
-        errorMessage(error);
+        errorMessage(error, label);
         if (error.code === "RATE_LIMITED" && error.retryAfterSeconds) {
           rateLimited = true;
           delay(() => {
@@ -340,7 +343,9 @@ export function renderOwnerAccess(
           const response = await call("setup.start", { bootstrapToken: value });
           if (disposed) return;
           keepChallenge(response);
-          showPassword();
+          if (!["password", "existing-password"].includes(response.step))
+            throw new OwnerAccessError();
+          showPassword(response.step === "existing-password");
         },
         token.field,
       ),
@@ -352,11 +357,11 @@ export function renderOwnerAccess(
       requestInvite,
     );
   }
-  function showPassword() {
-    const password = input("Новый пароль", {
+  function showPassword(existing = false) {
+    const password = input(existing ? "Текущий пароль" : "Новый пароль", {
       name: "password",
       type: "password",
-      autocomplete: "new-password",
+      autocomplete: existing ? "current-password" : "new-password",
       minlength: "12",
       maxlength: "72",
     });
@@ -375,12 +380,14 @@ export function renderOwnerAccess(
       ),
     );
     show(
-      "Создайте пароль",
-      "Не менее 12 символов, максимум 72 байта UTF-8 (до 72 латинских или 36 кириллических букв). Сохраните пароль в своём менеджере паролей.",
+      existing ? "Продолжите настройку владельца" : "Создайте пароль",
+      existing
+        ? "Аутентификатор уже подключён, но настройка UniFlow не завершена. Введите уже установленный пароль, затем подтвердите код из сохранённого приложения. Пароль и аутентификатор сохранятся."
+        : "Не менее 12 символов, максимум 72 байта UTF-8 (до 72 латинских или 36 кириллических букв). Сохраните пароль в своём менеджере паролей.",
       form(
-        "Подключить приложение",
+        existing ? "Подтвердить текущий пароль" : "Подключить приложение",
         async () => {
-          if (password.node.value !== confirm.node.value) {
+          if (!existing && password.node.value !== confirm.node.value) {
             confirm.node.setCustomValidity("Пароли должны совпадать.");
             confirm.node.reportValidity();
             return;
@@ -393,16 +400,41 @@ export function renderOwnerAccess(
           });
           if (disposed) return;
           keepChallenge(response);
-          showEnrollment(response.enrollment);
+          if (response.step === "existing-totp") showExistingTotp();
+          else if (response.step === "totp")
+            showEnrollment(response.enrollment);
+          else throw new OwnerAccessError();
         },
         password.field,
-        confirm.field,
+        ...(!existing ? [confirm.field] : []),
       ),
       expiry(),
       back(),
     );
     confirm.node.addEventListener("input", () =>
       confirm.node.setCustomValidity(""),
+    );
+  }
+  function showExistingTotp() {
+    const code = codeInput("Код из сохранённого приложения", "totpCode");
+    show(
+      "Подтвердите сохранённый аутентификатор",
+      "Откройте существующую запись UniFlow в вашем приложении-аутентификаторе и введите текущий шестизначный код. Новый QR-код не нужен. После подтверждения сохраните резервные коды.",
+      form(
+        "Завершить настройку",
+        async () => {
+          const value = code.node.value;
+          code.node.value = "";
+          const response = await call("setup.verify", {
+            challengeId: challengeId(),
+            totpCode: value,
+          });
+          if (!disposed) await authenticated(response, true);
+        },
+        code.field,
+      ),
+      expiry(),
+      back(),
     );
   }
   function showEnrollment(enrollment, recovering = false) {
