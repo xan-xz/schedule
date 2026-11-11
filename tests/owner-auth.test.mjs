@@ -21,7 +21,11 @@ const PASSWORD = "synthetic-local-password";
 const RECOVERY = "uwr1-" + "a".repeat(32);
 const clone = structuredClone;
 
-async function fixture({ configured = true, missingOwner = false } = {}) {
+async function fixture({
+  configured = true,
+  missingOwner = false,
+  existingFactor = false,
+} = {}) {
   let now = START;
   const cfg = {
     owner_uid: missingOwner ? null : UID,
@@ -31,6 +35,10 @@ async function fixture({ configured = true, missingOwner = false } = {}) {
     bootstrap_deadline: new Date(START + 15 * 60000).toISOString(),
   };
   const state = {
+    factors:
+      configured || existingFactor
+        ? [{ id: FACTOR, factor_type: "totp", status: "verified" }]
+        : [],
     cfg,
     calls: [],
     providerCalls: [],
@@ -253,7 +261,7 @@ async function fixture({ configured = true, missingOwner = false } = {}) {
       user: {
         id: UID,
         email: OWNER_EMAIL,
-        factors: [{ id: FACTOR, factor_type: "totp", status: "verified" }],
+        factors: clone(state.factors),
       },
       claims: {
         session_id: nativeId,
@@ -304,6 +312,10 @@ async function fixture({ configured = true, missingOwner = false } = {}) {
         factorId,
       });
       if (code !== "123456") throw ownerError();
+      state.factors = [
+        ...state.factors.filter((f) => f.id !== factorId),
+        { id: factorId, factor_type: "totp", status: "verified" },
+      ];
       return native("verified", session.identity.claims.session_id);
     },
     async deleteFactor(_uid, factorId) {
@@ -457,6 +469,274 @@ test("bootstrap is owner-bound and one use; password and TOTP remain separate fr
   assert.equal(
     (await f.post("setup.verify", { challengeId, totpCode: "123456" })).status,
     401,
+  );
+});
+
+test("unfinished setup resumes the existing verified factor without changing password or enrollment", async () => {
+  const f = await fixture({ configured: false, existingFactor: true });
+  const start = await f.post("setup.start", {
+    bootstrapToken: "synthetic-email-proof",
+    factorId: NEW_FACTOR,
+  });
+  assert.equal(start.status, 200);
+  assert.equal(start.body.step, "existing-password");
+  assert.equal(JSON.stringify(start.body).includes(FACTOR), false);
+  const challengeId = start.body.challengeId;
+  const ready = await f.post("setup.password", {
+    challengeId,
+    password: PASSWORD,
+    factorId: NEW_FACTOR,
+  });
+  assert.equal(ready.status, 200);
+  assert.equal(ready.body.step, "existing-totp");
+  assert.equal(Object.hasOwn(ready.body, "enrollment"), false);
+  assert.equal(f.state.cfg.setup_complete, false);
+  const repeat = await f.post("setup.password", {
+    challengeId,
+    password: "irrelevant-retry-password",
+  });
+  assert.equal(repeat.body.step, "existing-totp");
+  assert.equal(
+    f.state.providerCalls.filter((c) => c.op === "password").length,
+    1,
+  );
+  const done = await f.post("setup.verify", {
+    challengeId,
+    totpCode: "123456",
+    factorId: NEW_FACTOR,
+  });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.recoveryCodes.length, 10);
+  assert.equal(f.state.cfg.setup_complete, true);
+  assert.equal(f.state.cfg.factor_id, FACTOR);
+  assert.equal(
+    f.state.providerCalls.find((c) => c.op === "totp").factorId,
+    FACTOR,
+  );
+  assert.equal(
+    f.state.providerCalls.some((c) =>
+      ["setPassword", "enroll", "deleteFactor"].includes(c.op),
+    ),
+    false,
+  );
+  assert.equal(
+    (await f.post("setup.verify", { challengeId, totpCode: "123456" })).status,
+    401,
+  );
+});
+
+test("resuming setup still requires the current password and the original TOTP proof", async () => {
+  const f = await fixture({ configured: false, existingFactor: true });
+  const start = await f.post("setup.start", {
+    bootstrapToken: "synthetic-email-proof",
+  });
+  const challengeId = start.body.challengeId;
+  assert.equal(
+    (
+      await f.post("setup.password", {
+        challengeId,
+        password: "wrong-password-only",
+      })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (await f.post("setup.verify", { challengeId, totpCode: "123456" })).status,
+    401,
+  );
+  assert.equal(f.state.sessions.size, 0);
+  assert.equal(
+    (await f.post("setup.password", { challengeId, password: PASSWORD }))
+      .status,
+    200,
+  );
+  assert.equal(
+    (await f.post("setup.verify", { challengeId, totpCode: "000000" })).status,
+    401,
+  );
+  assert.equal(f.state.cfg.setup_complete, false);
+  assert.equal(f.state.sessions.size, 0);
+  assert.equal(
+    (await f.post("setup.verify", { challengeId, totpCode: "123456" })).status,
+    200,
+  );
+});
+
+test("factor removal, substitution or owner mismatch cannot downgrade resumed setup", async () => {
+  for (const mutation of ["removed", "replaced", "owner"]) {
+    const f = await fixture({ configured: false, existingFactor: true });
+    const start = await f.post("setup.start", {
+      bootstrapToken: "synthetic-email-proof",
+    });
+    if (mutation === "removed") f.state.factors = [];
+    if (mutation === "replaced") f.state.factors[0].id = NEW_FACTOR;
+    if (mutation === "owner")
+      f.auth.password = async () => {
+        const s = f.native();
+        s.identity.user.id = NEW_SESSION;
+        return s;
+      };
+    const result = await f.post("setup.password", {
+      challengeId: start.body.challengeId,
+      password: PASSWORD,
+    });
+    assert.equal(result.status, mutation === "owner" ? 403 : 409, mutation);
+    assert.equal(f.state.cfg.setup_complete, false);
+    assert.equal(f.state.sessions.size, 0);
+    assert.equal(
+      f.state.providerCalls.some((c) =>
+        ["setPassword", "enroll", "deleteFactor"].includes(c.op),
+      ),
+      false,
+    );
+  }
+});
+
+test("an unverified factor is not proof of an existing setup and ambiguous verified factors fail closed", async () => {
+  const unverified = await fixture({ configured: false, existingFactor: true });
+  unverified.state.factors[0].status = "unverified";
+  const start = await unverified.post("setup.start", {
+    bootstrapToken: "synthetic-email-proof",
+  });
+  assert.equal(start.body.step, "password");
+  const many = await fixture({ configured: false, existingFactor: true });
+  many.state.factors.push({
+    id: NEW_FACTOR,
+    factor_type: "totp",
+    status: "verified",
+  });
+  assert.equal(
+    (
+      await many.post("setup.start", {
+        bootstrapToken: "synthetic-email-proof",
+      })
+    ).status,
+    409,
+  );
+  assert.equal(many.state.challenges.size, 0);
+});
+
+test("expired resumed setup cannot activate or change credentials", async () => {
+  const f = await fixture({ configured: false, existingFactor: true });
+  const start = await f.post("setup.start", {
+    bootstrapToken: "synthetic-email-proof",
+  });
+  f.advance(10 * 60 * 1000 + 1);
+  assert.equal(
+    (
+      await f.post("setup.password", {
+        challengeId: start.body.challengeId,
+        password: PASSWORD,
+      })
+    ).status,
+    401,
+  );
+  assert.equal(f.state.cfg.setup_complete, false);
+  assert.equal(
+    f.state.providerCalls.some((c) =>
+      ["password", "setPassword", "enroll", "deleteFactor"].includes(c.op),
+    ),
+    false,
+  );
+});
+
+test("real Auth REST adapter resumes an orphaned verified TOTP using the password session at AAL2", async () => {
+  const f = await fixture({ configured: false, existingFactor: true });
+  const api = "https://synthetic-project.supabase.co",
+    requests = [];
+  const jwt = (kind) => {
+    const value = {
+      sub: UID,
+      iss: api + "/auth/v1",
+      aud: "authenticated",
+      exp: START / 1000 + 900,
+      session_id: kind === "email" ? EMAIL_SESSION : PASS_SESSION,
+      aal: kind === "verified" ? "aal2" : "aal1",
+      amr:
+        kind === "email"
+          ? [{ method: "otp", timestamp: START / 1000 }]
+          : [
+              { method: "password", timestamp: START / 1000 },
+              ...(kind === "verified"
+                ? [{ method: "totp", timestamp: START / 1000 }]
+                : []),
+            ],
+    };
+    return [
+      "synthetic",
+      Buffer.from(JSON.stringify(value)).toString("base64url"),
+      "signature",
+    ].join(".");
+  };
+  const provider = createAuthProvider(
+    { api, key: "synthetic-key", adminKey: "synthetic-admin-key" },
+    async (url, options) => {
+      const path = url.slice(api.length + "/auth/v1".length);
+      requests.push({ path, method: options.method });
+      const response = (body) =>
+        new Response(JSON.stringify(body), {
+          headers: { "Content-Type": "application/json" },
+        });
+      if (path === "/verify")
+        return response({
+          access_token: jwt("email"),
+          refresh_token: "synthetic-email-refresh",
+        });
+      if (path === "/user" && options.method === "GET")
+        return response({
+          id: UID,
+          email: OWNER_EMAIL,
+          email_confirmed_at: new Date(START - 60000).toISOString(),
+          factors: [{ id: FACTOR, factor_type: "totp", status: "verified" }],
+        });
+      if (path === "/token?grant_type=password") {
+        assert.equal(JSON.parse(options.body).password, PASSWORD);
+        return response({
+          access_token: jwt("password"),
+          refresh_token: "synthetic-password-refresh",
+        });
+      }
+      if (path === `/factors/${FACTOR}/challenge`)
+        return response({ id: NEW_FACTOR });
+      if (path === `/factors/${FACTOR}/verify`) {
+        assert.equal(
+          options.headers.Authorization,
+          "Bearer " + jwt("password"),
+        );
+        assert.equal(JSON.parse(options.body).code, "123456");
+        return response({
+          access_token: jwt("verified"),
+          refresh_token: "synthetic-verified-refresh",
+        });
+      }
+      throw Error(
+        "Credential update, new enrollment or unexpected Auth request: " + path,
+      );
+    },
+    () => START,
+  );
+  for (const method of ["email", "password", "totp", "setPassword", "enroll"])
+    f.auth[method] = provider[method];
+  const start = await f.post("setup.start", { bootstrapToken: "12345678" });
+  assert.equal(start.body.step, "existing-password");
+  const ready = await f.post("setup.password", {
+    challengeId: start.body.challengeId,
+    password: PASSWORD,
+  });
+  assert.equal(ready.body.step, "existing-totp");
+  const verified = await f.post("setup.verify", {
+    challengeId: start.body.challengeId,
+    totpCode: "123456",
+  });
+  assert.equal(verified.status, 200);
+  assert.equal(f.state.cfg.factor_id, FACTOR);
+  assert.equal(f.state.sessions.size, 1);
+  assert.equal(
+    requests.some(
+      (r) =>
+        r.method === "PUT" || r.method === "DELETE" || r.path === "/factors",
+    ),
+    false,
   );
 });
 

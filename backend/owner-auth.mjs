@@ -48,6 +48,22 @@ const providerState = (session) => ({
 });
 const challengePurpose = (hash) => "owner/challenge/" + hash;
 const sessionPurpose = (nativeId) => "owner/session/" + nativeId;
+// Only inspected after Auth has verified the fixed owner's fresh email proof.
+// An existing verified factor must be proved, never silently replaced.
+function existingSetupFactor(user) {
+  const factors = (user.factors || []).filter(
+    (factor) => factor.factor_type === "totp" && factor.status === "verified",
+  );
+  if (!factors.length) return null;
+  if (
+    factors.length !== 1 ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+      factors[0].id || "",
+    )
+  )
+    throw ownerError("FLOW_CONFLICT", 409);
+  return factors[0].id;
+}
 
 /** Dependencies are injectable for isolated HTTP tests; production uses only
  * server environment keys. Nothing logs request bodies or provider responses.
@@ -200,6 +216,7 @@ export function createOwnerHandler({
         });
         if (proof.identity.user.id !== cfg.owner_uid)
           throw ownerError("ACCESS_DENIED", 403);
+        const resumeFactorId = existingSetupFactor(proof.identity.user);
         const id = randomOpaque("ow1c.");
         const hash = await tokenHash(id);
         const created = await command("challenge.create", {
@@ -208,14 +225,18 @@ export function createOwnerHandler({
           owner_uid: cfg.owner_uid,
           native_session_id: proof.identity.claims.session_id,
           encrypted_state: await encryption.seal(
-            { step: "password", provider: providerState(proof) },
+            {
+              step: "password",
+              provider: providerState(proof),
+              ...(resumeFactorId ? { resumeFactorId } : {}),
+            },
             challengePurpose(hash),
           ),
         });
         return reply({
           challengeId: id,
           expiresAt: created.expires_at,
-          step: "password",
+          step: resumeFactorId ? "existing-password" : "password",
         });
       }
       if (body.action === "login.begin") {
@@ -323,13 +344,15 @@ export function createOwnerHandler({
           reply({
             challengeId: body.challengeId,
             expiresAt: challenge.expires_at,
-            step: "totp",
-            enrollment: state.enrollment,
+            step: state.step === "existing-totp" ? "existing-totp" : "totp",
+            ...(state.step === "existing-totp"
+              ? {}
+              : { enrollment: state.enrollment }),
           });
         if (body.action === "setup.password") {
           if (
             challenge.kind === "setup" &&
-            state.step === "totp" &&
+            ["totp", "existing-totp"].includes(state.step) &&
             state.enrollment
           ) {
             const response = enrollmentReply();
@@ -347,18 +370,25 @@ export function createOwnerHandler({
           )
             throw ownerError("INVALID_PROOF", 401);
           assertPassword(body.password);
-          const passwordSession = await provider.setPassword(
-            state.provider.access_token,
-            body.password,
-          );
+          const passwordSession = state.resumeFactorId
+            ? await provider.password(body.password)
+            : await provider.setPassword(
+                state.provider.access_token,
+                body.password,
+              );
           if (passwordSession.identity.user.id !== cfg.owner_uid)
             throw ownerError("ACCESS_DENIED", 403);
-          const enrollment = await provider.enroll(
-            passwordSession.access_token,
+          const currentFactorId = existingSetupFactor(
+            passwordSession.identity.user,
           );
+          if (currentFactorId !== (state.resumeFactorId || null))
+            throw ownerError("FLOW_CONFLICT", 409);
+          const enrollment = state.resumeFactorId
+            ? { factorId: state.resumeFactorId }
+            : await provider.enroll(passwordSession.access_token);
           state.provider = providerState(passwordSession);
           state.enrollment = enrollment;
-          state.step = "totp";
+          state.step = state.resumeFactorId ? "existing-totp" : "totp";
           await save({
             native_session_id: passwordSession.identity.claims.session_id,
           });
@@ -378,7 +408,12 @@ export function createOwnerHandler({
             body.action === "setup.verify" ? "setup" : "recovery";
           if (
             challenge.kind !== expectedKind ||
-            state.step !== "totp" ||
+            !(
+              state.step === "totp" ||
+              (expectedKind === "setup" &&
+                state.step === "existing-totp" &&
+                state.resumeFactorId === state.enrollment?.factorId)
+            ) ||
             !state.enrollment
           )
             throw ownerError("INVALID_PROOF", 401);

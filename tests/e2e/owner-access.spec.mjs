@@ -191,6 +191,149 @@ async function beginEnrollment(page) {
   ).toBeVisible();
 }
 
+test("unfinished setup asks for the current password and existing TOTP without a new QR or secret", async ({
+  page,
+}, info) => {
+  const { calls, errors } = await fixture(page, {
+    setup: true,
+    handler: async (body) =>
+      body.action === "setup.start"
+        ? { status: 200, body: { ...challenge(), step: "existing-password" } }
+        : body.action === "setup.password"
+          ? { status: 200, body: { ...challenge(), step: "existing-totp" } }
+          : undefined,
+  });
+  const qrRequests = [];
+  page.on("request", (r) => {
+    if (/\/admin\/(?:qr\.mjs|vendor\/)/.test(r.url())) qrRequests.push(r.url());
+  });
+  await page.goto(path);
+  await page
+    .getByLabel("Одноразовый код приглашения")
+    .fill("synthetic-invite-only");
+  await page
+    .getByRole("button", { name: "Подтвердить приглашение", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Продолжите настройку владельца" }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Текущий пароль", { exact: true }),
+  ).toHaveAttribute("autocomplete", "current-password");
+  await expect(page.getByLabel("Новый пароль", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByLabel("Повторите пароль", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByLabel("Текущий пароль", { exact: true }).fill(password);
+  await page
+    .getByRole("button", { name: "Подтвердить текущий пароль", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Подтвердите сохранённый аутентификатор",
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".owner-secret,svg,img")).toHaveCount(0);
+  await audit(page);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    ),
+  ).toBe(false);
+  if (process.env.OWNER_QA_DIR)
+    await page.screenshot({
+      path: join(
+        process.env.OWNER_QA_DIR,
+        `existing-totp-${info.project.name}.png`,
+      ),
+      fullPage: true,
+    });
+  await page
+    .getByLabel("Код из сохранённого приложения", { exact: true })
+    .fill("123456");
+  await page
+    .getByRole("button", { name: "Завершить настройку", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Сохраните резервные коды" }),
+  ).toBeVisible();
+  await expect(page.locator(".owner-recovery li")).toHaveCount(10);
+  expect(calls.map((c) => c.action)).toEqual([
+    "status",
+    "setup.start",
+    "setup.password",
+    "setup.verify",
+  ]);
+  expect(calls.find((c) => c.action === "setup.password").password).toBe(
+    password,
+  );
+  expect(qrRequests).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("existing-factor setup keeps access closed on an invalid TOTP and permits retry on the same challenge", async ({
+  page,
+}) => {
+  const { calls, errors } = await fixture(page, {
+    setup: true,
+    handler: async (body) =>
+      body.action === "setup.start"
+        ? { status: 200, body: { ...challenge(), step: "existing-password" } }
+        : body.action === "setup.password" && body.password !== password
+          ? { status: 401, body: { code: "INVALID_PROOF" } }
+          : body.action === "setup.password"
+            ? { status: 200, body: { ...challenge(), step: "existing-totp" } }
+            : body.action === "setup.verify" && body.totpCode !== "123456"
+              ? { status: 401, body: { code: "INVALID_PROOF" } }
+              : undefined,
+  });
+  await page.goto(path);
+  await page
+    .getByLabel("Одноразовый код приглашения")
+    .fill("synthetic-invite-only");
+  await page
+    .getByRole("button", { name: "Подтвердить приглашение", exact: true })
+    .click();
+  await page
+    .getByLabel("Текущий пароль", { exact: true })
+    .fill("wrong-current-password");
+  await page
+    .getByRole("button", { name: "Подтвердить текущий пароль", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).toContainText("текущий пароль");
+  await expect(page.getByLabel("Текущий пароль", { exact: true })).toBeEmpty();
+  await page.getByLabel("Текущий пароль", { exact: true }).fill(password);
+  await page
+    .getByRole("button", { name: "Подтвердить текущий пароль", exact: true })
+    .click();
+  await page
+    .getByLabel("Код из сохранённого приложения", { exact: true })
+    .fill("000000");
+  await page
+    .getByRole("button", { name: "Завершить настройку", exact: true })
+    .click();
+  await expect(page.getByRole("alert")).not.toBeEmpty();
+  await expect(
+    page.getByRole("heading", { name: "Сохраните резервные коды" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByLabel("Код из сохранённого приложения", { exact: true }),
+  ).toBeEmpty();
+  await page
+    .getByLabel("Код из сохранённого приложения", { exact: true })
+    .fill("123456");
+  await page
+    .getByRole("button", { name: "Завершить настройку", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Сохраните резервные коды" }),
+  ).toBeVisible();
+  const attempts = calls.filter((c) => c.action === "setup.verify");
+  expect(attempts).toHaveLength(2);
+  expect(attempts[0].challengeId).toBe(attempts[1].challengeId);
+  expect(errors).toEqual([]);
+});
+
 test("regular owner login never requests the local QR encoder", async ({
   page,
 }) => {
