@@ -457,7 +457,11 @@ export function createOwnerHandler({
             state.enrollment.factorId,
             body.totpCode,
           );
-          return complete(verified, state.enrollment.factorId, makeCodes());
+          return await complete(
+            verified,
+            state.enrollment.factorId,
+            makeCodes(),
+          );
         }
         const recoveryResume =
           body.action === "recovery.verify" &&
@@ -563,7 +567,7 @@ export function createOwnerHandler({
           cfg.factor_id,
           body.totpCode,
         );
-        return complete(
+        return await complete(
           verified,
           cfg.factor_id,
           body.renewRecoveryCodes === true ? makeCodes() : undefined,
