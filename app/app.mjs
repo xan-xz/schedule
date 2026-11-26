@@ -1233,7 +1233,11 @@ function renderGroupChoice() {
       el(
         "option",
         { value: "" },
-        t(matches.length || groupSelect.disabled ? "chooseGroup" : "noGroups"),
+        t(
+          matches.length || groupSelect.disabled || !groups.length
+            ? "chooseGroup"
+            : "noGroups",
+        ),
       ),
       ...matches.map((group) => el("option", { value: group.id }, group.name)),
     );
