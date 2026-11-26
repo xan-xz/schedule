@@ -134,6 +134,67 @@ test("moved occurrence disappears on source day and appears with before/after on
   assert.equal(d.exceptions[0].before.start, "09:00");
   assert.equal(d.exceptions[0].after.start, "10:00");
 });
+test("publishing a draft with one moved occurrence records a scoped transfer, including after draft recovery", () => {
+  const input = fixture();
+  input.groups.push({ id: "other", name: "Other", subgroups: ["А"] });
+  const draft = structuredClone(input);
+  draft.exceptions.push({
+    id: "recovered-move",
+    lessonId: "l1",
+    date: "2026-11-09",
+    targetDate: "2026-11-10",
+    status: "moved",
+    start: "10:00",
+    end: "10:50",
+  });
+  const { data, summary } = mutate(input, admin, "import", {
+    data: draft,
+    fromDraft: true,
+  });
+  assert.equal(summary, "Пара перенесена");
+  assert.equal(data.history[0].action, "exception.save");
+  assert.equal(data.history[0].summary, summary);
+  assert.deepEqual(data.exceptions, draft.exceptions);
+  assert.deepEqual(data.lessons, input.lessons);
+  assert.equal(data.announcements.length, 1);
+  assert.equal(data.announcements[0].title, summary);
+  assert.equal(data.announcements[0].groupId, "g");
+  assert.match(data.announcements[0].body, /2026-11-09 → 2026-11-10 · 10:00/);
+  assert.deepEqual(
+    visible(data, { role: "guest", groupId: "other" }).announcements,
+    [],
+  );
+
+  draft.exceptions[0].start = "11:00";
+  draft.exceptions[0].end = "11:50";
+  const edited = mutate(data, admin, "import", {
+    data: draft,
+    fromDraft: true,
+  });
+  assert.equal(edited.summary, summary);
+  assert.deepEqual(edited.data.exceptions, draft.exceptions);
+});
+test("an explicit import or a draft with additional changes keeps its import history", () => {
+  const input = fixture();
+  const draft = mutate(input, admin, "exception.save", {
+    lessonId: "l1",
+    date: "2026-11-09",
+    targetDate: "2026-11-10",
+    status: "moved",
+  }).data;
+  const imported = mutate(input, admin, "import", { data: draft });
+  assert.equal(imported.summary, "Импортировано расписание");
+  assert.equal(imported.data.history[0].action, "import");
+
+  draft.rooms[0].name = "Updated room";
+  const mixed = mutate(input, admin, "import", {
+    data: draft,
+    fromDraft: true,
+  });
+  assert.equal(mixed.summary, imported.summary);
+  assert.equal(mixed.data.announcements[0].groupId, "");
+  assert.equal(mixed.data.rooms[0].name, "Updated room");
+});
 test("attendance rejects wrong ISO parity and cancelled meetings", () => {
   const d = fixture();
   d.lessons[0].week = "odd";
