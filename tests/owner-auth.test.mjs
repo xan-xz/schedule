@@ -79,9 +79,10 @@ async function fixture({
       return clone(cfg);
     }
     if (op === "challenge.create") {
+      const invite = p.kind === "setup" && !p.password_totp_factor_id;
       if (
         p.owner_uid !== cfg.owner_uid ||
-        (p.kind === "setup" &&
+        (invite &&
           [...state.challenges.values()].some(
             (value) => value.email_session_id === p.native_session_id,
           ))
@@ -89,14 +90,11 @@ async function fixture({
         return fail();
       const created = {
         ...p,
-        email_session_id: p.kind === "setup" ? p.native_session_id : null,
+        email_session_id: invite ? p.native_session_id : null,
         created_at: new Date(now).toISOString(),
-        expires_at: new Date(
-          now + (p.kind === "setup" ? 600000 : 300000),
-        ).toISOString(),
+        expires_at: new Date(now + (invite ? 600000 : 300000)).toISOString(),
         attempts: 0,
-        email_proved_at:
-          p.kind === "setup" ? new Date(now).toISOString() : null,
+        email_proved_at: invite ? new Date(now).toISOString() : null,
       };
       state.challenges.set(p.challenge_hash, created);
       return clone(created);
@@ -157,7 +155,9 @@ async function fixture({
         !ch ||
         ch.consumed_at ||
         ch.lease !== p.lease ||
-        !ch.email_proved_at ||
+        (ch.password_totp_factor_id
+          ? ch.password_totp_factor_id !== p.factor_id
+          : !ch.email_proved_at) ||
         ch.native_session_id !== p.native_session_id ||
         !state.nativeAlive ||
         (ch.kind === "login" && p.factor_id !== cfg.factor_id)
@@ -387,6 +387,59 @@ async function fixture({
     },
   };
 }
+
+test("owner with a saved authenticator can finish setup and later sign in without email", async () => {
+  const f = await fixture({ configured: false, existingFactor: true });
+  f.state.cfg.bootstrap_deadline = null;
+  const begin = () =>
+    f.post("login.begin", { password: PASSWORD, passwordTotp: true });
+  const resumed = await begin();
+  assert.equal(resumed.status, 200);
+  assert.equal(resumed.body.step, "existing-totp");
+  assert.equal(resumed.body.enrollment, undefined);
+  const verify = (action, challengeId, totpCode) =>
+    f.post(action, { challengeId, totpCode });
+  assert.equal(
+    (await verify("setup.verify", resumed.body.challengeId, "000000")).status,
+    401,
+  );
+  assert.equal(f.state.sessions.size, 0);
+  const setup = await verify(
+    "setup.verify",
+    resumed.body.challengeId,
+    "123456",
+  );
+  assert.equal(setup.status, 200);
+  assert.equal(setup.body.recoveryCodes.length, 10);
+  assert.equal(f.state.cfg.factor_id, FACTOR);
+  const login = await begin();
+  assert.equal(login.status, 200);
+  assert.equal(login.body.step, "totp");
+  assert.equal(
+    (await f.post("recovery.verify", { challengeId: login.body.challengeId }))
+      .status,
+    401,
+  );
+  assert.equal(
+    (await verify("login.verify", login.body.challengeId, "123456")).status,
+    200,
+  );
+  assert.deepEqual(
+    f.state.providerCalls.map(({ op }) => op),
+    ["password", "totp", "totp", "password", "totp"],
+  );
+});
+
+test("password alone cannot resume setup without an existing verified authenticator", async () => {
+  const f = await fixture({ configured: false });
+  const result = await f.post("login.begin", {
+    password: PASSWORD,
+    passwordTotp: true,
+  });
+  assert.equal(result.status, 403);
+  assert.equal(f.state.challenges.size, 0);
+  assert.deepEqual(f.state.providerCalls, [{ op: "password" }]);
+});
 
 test("status exposes no owner UID, provider credential, hash or private state", async () => {
   const f = await fixture();

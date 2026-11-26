@@ -48,7 +48,7 @@ const providerState = (session) => ({
 });
 const challengePurpose = (hash) => "owner/challenge/" + hash;
 const sessionPurpose = (nativeId) => "owner/session/" + nativeId;
-// Only inspected after Auth has verified the fixed owner's fresh email proof.
+// Inspect only after Auth has verified the fixed owner's identity.
 // An existing verified factor must be proved, never silently replaced.
 function existingSetupFactor(user) {
   const factors = (user.factors || []).filter(
@@ -145,6 +145,7 @@ export function createOwnerHandler({
           setupRequired: cfg.setup_complete !== true,
           ownerHint: emailHint,
           emailOtp: true,
+          passwordTotp: Boolean(cfg.owner_uid),
           totp: true,
           recovery: true,
         });
@@ -240,29 +241,62 @@ export function createOwnerHandler({
         });
       }
       if (body.action === "login.begin") {
-        if (!cfg.setup_complete || !cfg.owner_uid || !cfg.factor_id)
+        const passwordTotp = body.passwordTotp === true;
+        const resume = passwordTotp && !cfg.setup_complete;
+        if (
+          !cfg.owner_uid ||
+          (!resume && (!cfg.setup_complete || !cfg.factor_id))
+        )
           throw ownerError("ACCESS_DENIED", 403);
         assertPassword(body.password);
         const passwordSession = await provider.password(body.password);
         if (passwordSession.identity.user.id !== cfg.owner_uid)
           throw ownerError("ACCESS_DENIED", 403);
-        await provider.sendEmail();
+        const factorId = resume
+          ? existingSetupFactor(passwordSession.identity.user)
+          : cfg.factor_id;
+        if (
+          !factorId ||
+          (passwordTotp &&
+            !passwordSession.identity.user.factors?.some(
+              (factor) =>
+                factor.id === factorId &&
+                factor.status === "verified" &&
+                factor.factor_type === "totp",
+            ))
+        )
+          throw ownerError("ACCESS_DENIED", 403);
+        if (!passwordTotp) await provider.sendEmail();
         const id = randomOpaque("ow1c.");
         const hash = await tokenHash(id);
         const created = await command("challenge.create", {
           challenge_hash: hash,
-          kind: "login",
+          kind: resume ? "setup" : "login",
           owner_uid: cfg.owner_uid,
           native_session_id: passwordSession.identity.claims.session_id,
+          ...(passwordTotp ? { password_totp_factor_id: factorId } : {}),
           encrypted_state: await encryption.seal(
-            { step: "login", provider: providerState(passwordSession) },
+            {
+              step: resume ? "existing-totp" : "login",
+              provider: providerState(passwordSession),
+              ...(resume
+                ? {
+                    resumeFactorId: factorId,
+                    enrollment: { factorId },
+                  }
+                : {}),
+            },
             challengePurpose(hash),
           ),
         });
         return reply({
           challengeId: id,
           expiresAt: created.expires_at,
-          emailHint,
+          ...(resume
+            ? { step: "existing-totp" }
+            : passwordTotp
+              ? { step: "totp" }
+              : { emailHint }),
         });
       }
       async function complete(nativeSession, factorId, recoveryCodes) {
@@ -443,7 +477,9 @@ export function createOwnerHandler({
           (challenge.kind !== "login" || state.step !== "login")
         )
           throw ownerError("INVALID_PROOF", 401);
-        if (!challenge.email_proved_at) {
+        if (challenge.password_totp_factor_id && body.action !== "login.verify")
+          throw ownerError("INVALID_PROOF", 401);
+        if (!challenge.password_totp_factor_id && !challenge.email_proved_at) {
           const emailProof = await provider.email(body.emailCode, {
             since: Date.parse(challenge.created_at),
           });

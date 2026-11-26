@@ -92,9 +92,13 @@ export function renderOwnerAccess(
   }
   function errorMessage(error, context = "") {
     const message =
-      error.code === "INVALID_PROOF" && context === "Подтвердить текущий пароль"
-        ? "Не удалось подтвердить текущий пароль или срок действия шага. Введите уже установленный пароль. Если шаг истёк, начните заново со свежим приглашением."
-        : MESSAGES[error.code] || MESSAGES.UNAVAILABLE;
+      error.code === "INVALID_PROOF" &&
+      ["Продолжить", "Подтвердить пароль"].includes(context)
+        ? "Не удалось подтвердить пароль владельца. Проверьте текущий пароль и попробуйте снова."
+        : error.code === "INVALID_PROOF" &&
+            context === "Подтвердить текущий пароль"
+          ? "Не удалось подтвердить текущий пароль или срок действия шага. Введите уже установленный пароль. Если шаг истёк, начните заново со свежим приглашением."
+          : MESSAGES[error.code] || MESSAGES.UNAVAILABLE;
     feedback.textContent =
       message +
       (error.retryAfterSeconds
@@ -207,7 +211,9 @@ export function renderOwnerAccess(
       "Шаг ограничен по времени. Если код истёк, начните заново.",
     );
   }
-  function showLogin() {
+  function showLogin(recovery = false) {
+    const passwordTotp = status.passwordTotp === true && !recovery;
+    const resume = passwordTotp && status.configured !== true;
     const password = input("Пароль владельца", {
       name: "password",
       type: "password",
@@ -215,38 +221,61 @@ export function renderOwnerAccess(
       maxlength: "128",
     });
     show(
-      "Вход владельца",
-      "Для входа нужны пароль, код из письма и приложение аутентификации.",
+      resume ? "Продолжите настройку владельца" : "Вход владельца",
+      passwordTotp
+        ? "Введите текущий пароль. На следующем шаге понадобится код из приложения-аутентификатора."
+        : "Для входа нужны пароль, код из письма и приложение аутентификации.",
       form(
-        "Продолжить",
+        resume ? "Подтвердить пароль" : "Продолжить",
         async () => {
           const value = password.node.value;
           password.node.value = "";
-          const response = await call("login.begin", { password: value });
+          const response = await call("login.begin", {
+            password: value,
+            ...(passwordTotp ? { passwordTotp: true } : {}),
+          });
           if (disposed) return;
+          if (
+            passwordTotp &&
+            response.step !== (resume ? "existing-totp" : "totp")
+          )
+            throw new OwnerAccessError("FLOW_CONFLICT");
           keepChallenge(response);
-          showLoginCodes(response.emailHint);
+          if (resume) showExistingTotp();
+          else showLoginCodes(response.emailHint, recovery, !passwordTotp);
         },
         password.field,
       ),
-      el(
-        "p",
-        { class: "owner-note" },
-        status.ownerHint
-          ? `Письма отправляются только владельцу: ${status.ownerHint}.`
-          : "Доступ предоставляется только владельцу, которого проверяет сервер.",
-      ),
+      resume
+        ? button("Настроить по приглашению", showSetup, {
+            class: "owner-secondary",
+          })
+        : recovery
+          ? button("Вернуться ко входу", () => showLogin(), {
+              class: "owner-secondary",
+            })
+          : null,
+      !passwordTotp &&
+        el(
+          "p",
+          { class: "owner-note" },
+          status.ownerHint
+            ? `Письма отправляются только владельцу: ${status.ownerHint}.`
+            : "Доступ предоставляется только владельцу, которого проверяет сервер.",
+        ),
     );
   }
-  function showLoginCodes(emailHint, recovery = false) {
+  function showLoginCodes(emailHint, recovery = false, needsEmail = true) {
     const renew = el("input", { type: "checkbox", name: "renewRecoveryCodes" });
-    const email = input("Код или ссылка из письма", {
-      name: "emailCode",
-      autocomplete: "one-time-code",
-      maxlength: "4096",
-      spellcheck: "false",
-      autocapitalize: "off",
-    });
+    const email = needsEmail
+      ? input("Код или ссылка из письма", {
+          name: "emailCode",
+          autocomplete: "one-time-code",
+          maxlength: "4096",
+          spellcheck: "false",
+          autocapitalize: "off",
+        })
+      : null;
     const factor = recovery
       ? input("Резервный код", {
           name: "recoveryCode",
@@ -266,15 +295,17 @@ export function renderOwnerAccess(
       : null;
     show(
       recovery ? "Восстановление доступа" : "Подтвердите вход",
-      emailHint
-        ? `Проверьте письмо для ${emailHint}.`
-        : "Проверьте почту владельца.",
+      !needsEmail
+        ? "Введите шестизначный код из приложения-аутентификатора."
+        : emailHint
+          ? `Проверьте письмо для ${emailHint}.`
+          : "Проверьте почту владельца.",
       form(
         recovery ? "Подключить новое приложение" : "Войти",
         async () => {
           const fields = {
             challengeId: challengeId(),
-            emailCode: email.node.value,
+            ...(email ? { emailCode: email.node.value } : {}),
             [recovery ? "recoveryCode" : "totpCode"]: factor.node.value,
             ...(!recovery && renew.checked ? { renewRecoveryCodes: true } : {}),
           };
@@ -290,27 +321,31 @@ export function renderOwnerAccess(
             fields,
           );
           if (disposed) return;
-          email.node.value = "";
+          if (email) email.node.value = "";
           if (recovery) {
             keepChallenge(response);
             showEnrollment(response.enrollment, true);
           } else await authenticated(response, renew.checked);
         },
-        email.field,
+        email?.field,
         factor.field,
         password?.field,
         !recovery ? field("Обновить резервные коды", renew) : null,
       ),
       button(
         recovery ? "Использовать приложение" : "Нет доступа к приложению",
-        () => showLoginCodes(emailHint, !recovery),
+        () => {
+          if (status.passwordTotp === true) showLogin(!recovery);
+          else showLoginCodes(emailHint, !recovery);
+        },
         { class: "owner-secondary" },
       ),
-      el(
-        "p",
-        { class: "owner-note" },
-        "Если в письме есть кнопка входа, скопируйте её ссылку в поле выше. Ссылка подтвердит только этот шаг входа.",
-      ),
+      needsEmail &&
+        el(
+          "p",
+          { class: "owner-note" },
+          "Если в письме есть кнопка входа, скопируйте её ссылку в поле выше. Ссылка подтвердит только этот шаг входа.",
+        ),
       expiry(),
       back(),
     );
@@ -355,6 +390,11 @@ export function renderOwnerAccess(
         "Не отправляйте приглашение другим людям. Настройка доступна только по действующему приглашению.",
       ),
       requestInvite,
+      status.passwordTotp === true
+        ? button("Войти с аутентификатором", () => showLogin(), {
+            class: "owner-secondary",
+          })
+        : null,
     );
   }
   function showPassword(existing = false) {
@@ -614,8 +654,11 @@ export function renderOwnerAccess(
       if (status.configured === true) {
         invite = "";
         showLogin();
-      } else if (status.setupRequired === true) showSetup();
-      else throw new OwnerAccessError("UNAVAILABLE");
+      } else if (status.setupRequired === true) {
+        if (status.passwordTotp === true && !invite && !callbackError)
+          showLogin();
+        else showSetup();
+      } else throw new OwnerAccessError("UNAVAILABLE");
       if (callbackError) {
         errorMessage(new OwnerAccessError(callbackError));
         callbackError = null;
