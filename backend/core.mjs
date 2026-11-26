@@ -880,6 +880,59 @@ export function notice(data, title, body, groupId = "", teacherId = "") {
   });
   data.announcements = data.announcements.slice(0, 200);
 }
+function noticeException(data, lesson, change, summary) {
+  notice(
+    data,
+    summary,
+    data.subjects.find((subject) => subject.id === lesson.subjectId).name +
+      " · " +
+      change.date +
+      (change.targetDate && change.targetDate !== change.date
+        ? " → " + change.targetDate
+        : "") +
+      (change.start ? " · " + change.start : ""),
+    lesson.groupId,
+    lesson.teacherId,
+  );
+}
+function jsonByValue(value) {
+  return JSON.stringify(value, (_key, item) =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.keys(item)
+            .sort()
+            .map((key) => [key, item[key]]),
+        )
+      : item,
+  );
+}
+function singleDraftMove(input, data) {
+  const { exceptions: original, ...before } = input;
+  const { exceptions: published, ...after } = data;
+  if (
+    !Array.isArray(published) ||
+    published.length < original.length ||
+    published.length > original.length + 1
+  )
+    return;
+  const key = (row) => JSON.stringify([row.lessonId, row.date]);
+  const previous = new Map(original.map((row) => [key(row), row]));
+  const changed = published.filter(
+    (row) => jsonByValue(row) !== jsonByValue(previous.get(key(row))),
+  );
+  if (changed.length !== 1 || changed[0].status !== "moved") return;
+  const [move] = changed;
+  const other = (row) => key(row) !== key(move);
+  // Older snapshots can omit source metadata that imports default when copying.
+  before.source = before.source || null;
+  before.sourceWarnings = before.sourceWarnings || [];
+  before.sourceConflictPairs = before.sourceConflictPairs || [];
+  if (
+    jsonByValue([before, original.filter(other)]) ===
+    jsonByValue([after, published.filter(other)])
+  )
+    return move;
+}
 export function mutate(input, user, op, payload = {}) {
   const data = clone(input);
   const admin = user.role === "admin",
@@ -893,6 +946,7 @@ export function mutate(input, user, op, payload = {}) {
   )
     fail("Некорректная операция");
   let summary = "Изменение";
+  let historyAction = op;
   if (op === "teaching.save") {
     if (!admin) fail("Типы занятий и звонки меняет только владелец", 403);
     let settings;
@@ -1135,16 +1189,7 @@ export function mutate(input, user, op, payload = {}) {
       : payload.status === "cancelled"
         ? "Пара отменена"
         : "Пара перенесена";
-    notice(
-      data,
-      summary,
-      data.subjects.find((s) => s.id === l.subjectId).name +
-        " · " +
-        payload.date +
-        (payload.start ? " · " + payload.start : ""),
-      l.groupId,
-      l.teacherId,
-    );
+    noticeException(data, l, payload, summary);
   } else if (op === "request.create") {
     const l = data.lessons.find((l) => l.id === payload.lessonId);
     if (!l || (!admin && l.teacherId !== user.teacherId))
@@ -1289,6 +1334,7 @@ export function mutate(input, user, op, payload = {}) {
     data.sourceConflictPairs = clone(input.sourceConflictPairs || []);
     data.sourceWarnings = clone(imported.sourceWarnings || []);
     data.source = clone(imported.source || null);
+    const move = payload.fromDraft === true && singleDraftMove(input, data);
     const teachingChanged =
       JSON.stringify(input.siteSettings?.teaching) !==
       JSON.stringify(data.siteSettings?.teaching);
@@ -1303,15 +1349,23 @@ export function mutate(input, user, op, payload = {}) {
         // projected. This comparison must never create a new server failure.
       }
     }
-    summary = teachingOnly
-      ? "Обновлены шаблоны типов занятий и звонков"
-      : Object.hasOwn(imported.siteSettings || {}, "appearance") &&
-          JSON.stringify(input.siteSettings?.appearance) !==
-            JSON.stringify(data.siteSettings?.appearance)
-        ? "Опубликован черновик с настройками интерфейса"
-        : "Импортировано расписание";
-    if (!teachingOnly)
-      notice(data, summary, "Администратор обновил расписание из файла");
+    if (move) {
+      historyAction = "exception.save";
+      summary = "Пара перенесена";
+      const lesson = data.lessons.find((row) => row.id === move.lessonId);
+      if (!lesson) fail("Проверь исключение по дате");
+      noticeException(data, lesson, move, summary);
+    } else {
+      summary = teachingOnly
+        ? "Обновлены шаблоны типов занятий и звонков"
+        : Object.hasOwn(imported.siteSettings || {}, "appearance") &&
+            JSON.stringify(input.siteSettings?.appearance) !==
+              JSON.stringify(data.siteSettings?.appearance)
+          ? "Опубликован черновик с настройками интерфейса"
+          : "Импортировано расписание";
+      if (!teachingOnly)
+        notice(data, summary, "Администратор обновил расписание из файла");
+    }
   } else fail("Неизвестное действие");
   validateChangedGroupAliases(input, data);
   validate(data);
@@ -1319,7 +1373,7 @@ export function mutate(input, user, op, payload = {}) {
     id: uid(),
     at: new Date().toISOString(),
     actor: user.name,
-    action: op,
+    action: historyAction,
     summary,
   });
   data.history = data.history.slice(0, 100);

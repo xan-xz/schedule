@@ -2955,6 +2955,7 @@ async function publishDraft() {
       payload: {
         data: submittedData,
         catalogReplacements: submittedReplacements,
+        fromDraft: true,
       },
       revision: pending.revision,
     });
