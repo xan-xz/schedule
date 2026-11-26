@@ -146,12 +146,15 @@ export function createOwnerHandler({
           ownerHint: emailHint,
           emailOtp: true,
           passwordTotp: Boolean(cfg.owner_uid),
+          google: Boolean(
+            cfg.owner_uid && (await provider.googleAvailable?.()),
+          ),
           totp: true,
           recovery: true,
         });
       const scope = body.action?.startsWith("setup.")
         ? "setup"
-        : body.action === "login.begin"
+        : ["login.begin", "google.exchange"].includes(body.action)
           ? "login"
           : body.action === "session.refresh"
             ? "refresh"
@@ -299,33 +302,43 @@ export function createOwnerHandler({
               : { emailHint }),
         });
       }
-      async function complete(nativeSession, factorId, recoveryCodes) {
+      async function complete(
+        nativeSession,
+        { factorId, recoveryCodes, googleSubject },
+      ) {
         const token = randomOpaque("ow1a.");
         const refreshToken = randomOpaque("ow1r.");
         const nativeId = nativeSession.identity.claims.session_id;
-        const result = await command("session.create", {
-          challenge_hash: challengeHash,
-          lease,
-          native_session_id: nativeId,
-          factor_id: factorId,
-          access_hash: await tokenHash(token),
-          refresh_hash: await tokenHash(refreshToken),
-          encrypted_state: await encryption.seal(
-            providerState(nativeSession),
-            sessionPurpose(nativeId),
-          ),
-          ip_hash: ipHash,
-          device,
-          ...(recoveryCodes
-            ? {
-                recovery_hashes: await Promise.all(
-                  recoveryCodes.map(tokenHash),
-                ),
-              }
-            : {}),
-          renew_recovery:
-            challenge.kind === "login" && recoveryCodes !== undefined,
-        });
+        const result = await command(
+          googleSubject ? "session.create_google" : "session.create",
+          {
+            ...(googleSubject
+              ? { google_subject: googleSubject, owner_uid: cfg.owner_uid }
+              : {
+                  challenge_hash: challengeHash,
+                  lease,
+                  factor_id: factorId,
+                  renew_recovery:
+                    challenge.kind === "login" && recoveryCodes !== undefined,
+                }),
+            native_session_id: nativeId,
+            access_hash: await tokenHash(token),
+            refresh_hash: await tokenHash(refreshToken),
+            encrypted_state: await encryption.seal(
+              providerState(nativeSession),
+              sessionPurpose(nativeId),
+            ),
+            ip_hash: ipHash,
+            device,
+            ...(recoveryCodes
+              ? {
+                  recovery_hashes: await Promise.all(
+                    recoveryCodes.map(tokenHash),
+                  ),
+                }
+              : {}),
+          },
+        );
         // Success audit and activation are one database transaction. A separate
         // post-commit audit failure must never hide the one-time recovery codes.
         challenge = null;
@@ -336,6 +349,25 @@ export function createOwnerHandler({
           refreshExpiresAt: result.absolute_expires_at,
           owner: { id: result.owner_uid, email: OWNER_EMAIL },
           ...(recoveryCodes ? { recoveryCodes } : {}),
+        });
+      }
+      if (body.action === "google.exchange") {
+        if (!cfg.owner_uid) throw ownerError("ACCESS_DENIED", 403);
+        if (
+          typeof body.code !== "string" ||
+          !/^[A-Za-z0-9_-]{16,512}$/.test(body.code) ||
+          typeof body.verifier !== "string" ||
+          !/^[a-f0-9]{64}$/.test(body.verifier)
+        )
+          throw ownerError("INVALID_REQUEST", 400);
+        const nativeSession = await provider.google(body.code, body.verifier);
+        if (
+          nativeSession.identity.user.id !== cfg.owner_uid ||
+          !/^\d{1,255}$/.test(nativeSession.subject || "")
+        )
+          throw ownerError("ACCESS_DENIED", 403);
+        return await complete(nativeSession, {
+          googleSubject: nativeSession.subject,
         });
       }
       const makeCodes = () =>
@@ -457,11 +489,10 @@ export function createOwnerHandler({
             state.enrollment.factorId,
             body.totpCode,
           );
-          return await complete(
-            verified,
-            state.enrollment.factorId,
-            makeCodes(),
-          );
+          return await complete(verified, {
+            factorId: state.enrollment.factorId,
+            recoveryCodes: makeCodes(),
+          });
         }
         const recoveryResume =
           body.action === "recovery.verify" &&
@@ -567,11 +598,11 @@ export function createOwnerHandler({
           cfg.factor_id,
           body.totpCode,
         );
-        return await complete(
-          verified,
-          cfg.factor_id,
-          body.renewRecoveryCodes === true ? makeCodes() : undefined,
-        );
+        return await complete(verified, {
+          factorId: cfg.factor_id,
+          recoveryCodes:
+            body.renewRecoveryCodes === true ? makeCodes() : undefined,
+        });
       }
       if (body.action === "session.refresh") {
         if (!isRefreshToken(body.refreshToken))
@@ -588,6 +619,7 @@ export function createOwnerHandler({
         const updated = await provider.refresh(
           providerSession.refresh_token,
           refreshSession.native_session_id,
+          Boolean(refreshSession.google_subject),
         );
         if (updated.identity.user.id !== cfg.owner_uid)
           throw ownerError("ACCESS_DENIED", 403);
@@ -653,6 +685,7 @@ export function createOwnerHandler({
           [
             "login.begin",
             "login.verify",
+            "google.exchange",
             "recovery.verify",
             "setup.verify",
             "recovery.finish",

@@ -21,5 +21,12 @@ create table auth.mfa_factors (
   id uuid primary key, user_id uuid not null references auth.users(id),
   factor_type text, status text
 );
+create table auth.identities (
+  provider_id text not null,
+  user_id uuid not null references auth.users(id),
+  provider text not null,
+  email text,
+  primary key(provider_id, provider)
+);
 revoke all on schema auth from public,anon,authenticated,service_role;
 revoke all on all tables in schema auth from public,anon,authenticated,service_role;

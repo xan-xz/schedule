@@ -4,6 +4,7 @@ import {
   createOwnerSession,
   OwnerAccessError,
   validOwnerPassword,
+  startGoogleLogin,
 } from "./api.mjs";
 
 const MESSAGES = {
@@ -34,6 +35,7 @@ export function renderOwnerAccess(
     request = createOwnerApi(),
     bootstrapToken = "",
     bootstrapError = null,
+    googleCallback = null,
     onAuthenticated,
   } = {},
 ) {
@@ -211,6 +213,21 @@ export function renderOwnerAccess(
       "Шаг ограничен по времени. Если код истёк, начните заново.",
     );
   }
+  function showGoogleLogin() {
+    show(
+      "Вход владельца",
+      "Выберите аккаунт Google владельца UniFlow.",
+      form("Войти через Google", startGoogleLogin),
+      button(
+        "Другой способ входа",
+        () =>
+          status.configured === true || status.passwordTotp === true
+            ? showLogin()
+            : showSetup(),
+        { class: "owner-secondary" },
+      ),
+    );
+  }
   function showLogin(recovery = false) {
     const passwordTotp = status.passwordTotp === true && !recovery;
     const resume = passwordTotp && status.configured !== true;
@@ -263,6 +280,11 @@ export function renderOwnerAccess(
             ? `Письма отправляются только владельцу: ${status.ownerHint}.`
             : "Доступ предоставляется только владельцу, которого проверяет сервер.",
         ),
+      status.google === true && !recovery
+        ? button("Вернуться ко входу через Google", showGoogleLogin, {
+            class: "owner-secondary",
+          })
+        : null,
     );
   }
   function showLoginCodes(emailHint, recovery = false, needsEmail = true) {
@@ -647,11 +669,31 @@ export function renderOwnerAccess(
       "Для защищённого входа нужно соединение с сервером.",
     );
     const ownView = view;
+    const google = googleCallback;
+    googleCallback = null;
     try {
       status = await call("status");
       if (disposed || view !== ownView) return;
       if (status.available !== true) throw new OwnerAccessError("UNAVAILABLE");
-      if (status.configured === true) {
+      let googleError = null;
+      if (google?.failed)
+        googleError = "Вход через Google прерван. Начните заново.";
+      else if (google) {
+        try {
+          if (status.google !== true) throw new OwnerAccessError("UNAVAILABLE");
+          await authenticated(await call("google.exchange", google));
+          return;
+        } catch (error) {
+          if (disposed || view !== ownView) return;
+          googleError =
+            error.code === "ACCESS_DENIED"
+              ? "Выберите аккаунт Google владельца UniFlow."
+              : "Не удалось завершить вход через Google. Повторите попытку.";
+        }
+      }
+      if (status.google === true && !invite && !callbackError)
+        showGoogleLogin();
+      else if (status.configured === true) {
         invite = "";
         showLogin();
       } else if (status.setupRequired === true) {
@@ -663,6 +705,7 @@ export function renderOwnerAccess(
         errorMessage(new OwnerAccessError(callbackError));
         callbackError = null;
       }
+      if (googleError) feedback.textContent = googleError;
     } catch (error) {
       if (disposed || view !== ownView) return;
       show(
@@ -686,6 +729,7 @@ export function renderOwnerAccess(
       challenge = status = null;
       invite = "";
       callbackError = null;
+      googleCallback = null;
       if (clearSession) session?.clear();
       session = null;
     },

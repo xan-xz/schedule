@@ -65,6 +65,12 @@ async function fixture({
         : { attempt: 1 };
     if (op === "log")
       return state.failAudit ? { error: "UNAVAILABLE" } : { ok: true };
+    if (op === "session.create_google")
+      return {
+        owner_uid: p.owner_uid,
+        expires_at: new Date(now + 900000).toISOString(),
+        absolute_expires_at: new Date(now + 3600000).toISOString(),
+      };
     if (op === "setup.reserve") {
       if (cfg.setup_complete) return fail("ACCESS_DENIED");
       if (cfg.mail_cooldown_until > now)
@@ -457,6 +463,33 @@ test("failed activation releases the challenge and leaves it available for a ret
   assert.equal(f.state.cfg.setup_complete, false);
   f.state.failCompletion = false;
   assert.equal((await f.post("setup.verify", payload)).status, 200);
+});
+
+test("Google exchange issues a session only for the pinned owner", async () => {
+  const f = await fixture({ configured: false });
+  f.auth.googleAvailable = async () => true;
+  const proof = { code: "synthetic-google-code", verifier: "f".repeat(64) };
+  let selected = UID;
+  f.auth.google = async (code, verifier) => {
+    assert.deepEqual({ code, verifier }, proof);
+    const provider = f.native();
+    provider.identity.user.id = selected;
+    return { ...provider, subject: "3030303030" };
+  };
+  assert.equal((await f.post("status")).body.google, true);
+  selected = NEW_SESSION;
+  assert.equal((await f.post("google.exchange", proof)).status, 403);
+  assert.equal(
+    f.state.calls.some(({ op }) => op === "session.create_google"),
+    false,
+  );
+  selected = UID;
+  const signedIn = await f.post("google.exchange", proof);
+  assert.equal(signedIn.status, 200);
+  assert.match(signedIn.body.token, /^ow1a\./);
+  assert.equal(signedIn.body.owner.id, UID);
+  assert.equal(signedIn.body.recoveryCodes, undefined);
+  assert.equal(f.state.cfg.setup_complete, false);
 });
 
 test("status exposes no owner UID, provider credential, hash or private state", async () => {

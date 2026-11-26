@@ -1,6 +1,7 @@
-import { consumeBootstrapCallback } from "./api.mjs";
+import { consumeBootstrapCallback, consumeGoogleCallback } from "./api.mjs";
 import { setOwnerSession, clearOwnerSession } from "./session-bridge.mjs";
 
+let googleCallback = consumeGoogleCallback();
 let { token: bootstrapToken, errorCode: bootstrapError } =
   consumeBootstrapCallback();
 let access = null;
@@ -9,6 +10,7 @@ window.addEventListener("pagehide", () => {
   disposed = true;
   bootstrapToken = "";
   bootstrapError = null;
+  googleCallback = null;
   access?.dispose();
   clearOwnerSession();
 });
@@ -31,6 +33,7 @@ try {
     access = renderOwnerAccess(document.getElementById("owner-main"), {
       bootstrapToken,
       bootstrapError,
+      googleCallback,
       async onAuthenticated(session) {
         access.dispose({ clearSession: false });
         setOwnerSession(session);
@@ -86,4 +89,5 @@ try {
 } finally {
   bootstrapToken = "";
   bootstrapError = null;
+  googleCallback = null;
 }

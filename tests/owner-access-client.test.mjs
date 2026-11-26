@@ -4,6 +4,7 @@ import {
   createOwnerApi,
   createOwnerSession,
   consumeBootstrapFragment,
+  consumeGoogleCallback,
   OwnerAccessError,
   validOwnerPassword,
 } from "../app/admin/api.mjs";
@@ -35,6 +36,39 @@ const session = (token = "a", expiresAt = Date.now() + 900000) => ({
   expiresAt: new Date(expiresAt).toISOString(),
   refreshExpiresAt: new Date(Date.now() + 3600000).toISOString(),
   owner: { id: "fixed-owner", email: "owner@example.invalid" },
+});
+
+test("Google's callback removes the code and consumes only this tab's valid verifier", () => {
+  const code = "fixture-google-auth-code";
+  const verifier = "1".repeat(64);
+  const run = (search, pending) => {
+    const removed = [];
+    const address = [];
+    const value = consumeGoogleCallback(
+      { search, hash: "", pathname: "/schedule/admin/" },
+      { replaceState: (_state, _title, path) => address.push(path) },
+      { getItem: () => pending, removeItem: (key) => removed.push(key) },
+      () => 100,
+    );
+    return { value, removed, address };
+  };
+  const valid = JSON.stringify({ verifier, expiresAt: 200 });
+  assert.deepEqual(run("?code=" + code, valid), {
+    value: { code, verifier },
+    removed: ["uniflow:owner-google-pkce"],
+    address: ["/schedule/admin/"],
+  });
+  for (const [query, pending] of [
+    ["?code=" + code, null],
+    ["?code=" + code, "corrupt"],
+    ["?code=" + code, JSON.stringify({ verifier, expiresAt: 100 })],
+    ["?code=" + code + "&code=" + code, valid],
+    ["?error=access_denied&code=" + code, valid],
+  ]) {
+    const result = run(query, pending);
+    assert.deepEqual(result.value, { failed: true });
+    assert.deepEqual(result.address, ["/schedule/admin/"]);
+  }
 });
 
 test("owner transport is POST/no-store, does not send cookies, referrer or identity", async () => {
