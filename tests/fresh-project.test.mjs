@@ -213,6 +213,99 @@ test("owner resume requires the bound native session and verified AAL2 factor, w
   }
 });
 
+test("Google admin sessions use the linked owner identity at issuance and on every protected read", async () => {
+  const owner = "01010101-0101-4101-8101-010101010101";
+  const native = "02020202-0202-4202-8202-020202020202";
+  const subject = "303030303030303030303";
+  const access = "a".repeat(64);
+  const refresh = "b".repeat(64);
+  const rpc = async (operation, payload) =>
+    (
+      await db.query("select public.owner_access_command($1, $2) as result", [
+        operation,
+        payload,
+      ])
+    ).rows[0].result;
+  await db.exec("begin");
+  try {
+    await db.query(
+      "insert into auth.users(id,email,email_confirmed_at,invited_at) select $1,owner_email,now(),now() from public.owner_access_config where id=1",
+      [owner],
+    );
+    await db.query(
+      "update public.owner_access_config set owner_uid=$1 where id=1",
+      [owner],
+    );
+    await db.query(
+      "insert into auth.sessions(id,user_id,aal) values($1,$2,'aal1')",
+      [native, owner],
+    );
+    const request = {
+      google_subject: subject,
+      native_session_id: native,
+      owner_uid: owner,
+      access_hash: access,
+      refresh_hash: refresh,
+      ip_hash: "d".repeat(64),
+      encrypted_state: "synthetic-google-session-fixture",
+    };
+    assert.equal(
+      (await rpc("session.create_google", request)).error,
+      "ACCESS_DENIED",
+    );
+    await db.query(
+      "insert into auth.identities(provider,provider_id,user_id,email) select 'google',$1,$2,owner_email from public.owner_access_config where id=1",
+      [subject, owner],
+    );
+    assert.equal(
+      (
+        await rpc("session.create_google", {
+          ...request,
+          google_subject: "20202",
+        })
+      ).error,
+      "ACCESS_DENIED",
+    );
+    const session = await rpc("session.create_google", request);
+    assert.equal(session.owner_uid, owner);
+    assert.equal(session.factor_id, null);
+    assert.equal((await rpc("state", {})).setup_complete, false);
+    assert.equal(
+      (await rpc("session.verify", { access_hash: access })).id,
+      session.id,
+    );
+    assert.equal(
+      (
+        await rpc("session.create_google", {
+          ...request,
+          access_hash: "1".repeat(64),
+          refresh_hash: "2".repeat(64),
+        })
+      ).error,
+      "INVALID_PROOF",
+    );
+    const lease = "05050505-0505-4505-8505-050505050505";
+    assert.equal(
+      (await rpc("session.claim_refresh", { refresh_hash: refresh, lease }))
+        .google_subject,
+      subject,
+    );
+    await db.query("delete from auth.identities where provider_id=$1", [
+      subject,
+    ]);
+    assert.equal(
+      (await rpc("session.verify", { access_hash: access })).error,
+      "INVALID_PROOF",
+    );
+    assert.equal(
+      (await rpc("session.rotate", { id: session.id, lease })).error,
+      "INVALID_PROOF",
+    );
+  } finally {
+    await db.exec("rollback");
+  }
+});
+
 test("fresh guard refuses tables, views, sequences, routine overloads, types and application schemas before DDL", async () => {
   const isolated = new PGlite();
   try {

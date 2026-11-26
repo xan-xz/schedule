@@ -334,6 +334,55 @@ test("the email-only invariant rejects SMS-bound profiles, OAuth and phone MFA a
   assert.equal((await emailOnly.email(otp, fresh)).identity.user.id, UID);
 });
 
+test("Google code exchange verifies the OAuth method and Google's verified owner identity", async () => {
+  const calls = [];
+  const googleToken = "synthetic-google-provider-token";
+  let profile = { email: OWNER_EMAIL, email_verified: true, sub: "91351347" };
+  const accessToken = jwt(
+    claims({ amr: [{ method: "oauth", timestamp: NOW / 1000 }] }),
+  );
+  const provider = createAuthProvider(
+    configuration,
+    async (url, options) => {
+      calls.push(url);
+      if (url.endsWith("/token?grant_type=pkce")) {
+        assert.deepEqual(JSON.parse(options.body), {
+          auth_code: "fixture-auth-code",
+          code_verifier: "a".repeat(64),
+        });
+        return json({
+          access_token: accessToken,
+          refresh_token: "synthetic-refresh",
+          provider_token: googleToken,
+        });
+      }
+      if (url.endsWith("/auth/v1/user")) return json(user());
+      assert.equal(url, "https://openidconnect.googleapis.com/v1/userinfo");
+      assert.equal(options.headers.Authorization, "Bearer " + googleToken);
+      assert.equal(options.redirect, "error");
+      return json(profile);
+    },
+    () => NOW,
+  );
+  const session = await provider.google("fixture-auth-code", "a".repeat(64));
+  assert.equal(session.identity.user.id, UID);
+  assert.equal(session.subject, profile.sub);
+  assert.equal(session.provider_token, undefined);
+  assert.equal(calls.length, 3);
+  profile = { ...profile, email_verified: false };
+  await assert.rejects(provider.google("fixture-auth-code", "a".repeat(64)), {
+    code: "ACCESS_DENIED",
+  });
+  profile = {
+    ...profile,
+    email: "other@example.invalid",
+    email_verified: true,
+  };
+  await assert.rejects(provider.google("fixture-auth-code", "a".repeat(64)), {
+    code: "ACCESS_DENIED",
+  });
+});
+
 test("native password and mail operations always select the fixed owner server-side", async () => {
   const sent = [];
   const token = jwt(claims());

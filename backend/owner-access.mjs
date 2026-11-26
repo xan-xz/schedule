@@ -289,6 +289,7 @@ export function createAuthProvider(
     method = "POST",
     admin = false,
     allowMissing = false,
+    timeout = 15000,
   ) {
     const response = await fetcher(configuration.api + "/auth/v1" + path, {
       method,
@@ -302,7 +303,7 @@ export function createAuthProvider(
             : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(timeout),
     });
     if (allowMissing && response.status === 404) return {};
     if (!response.ok) {
@@ -408,6 +409,62 @@ export function createAuthProvider(
   return {
     verified,
     password,
+    async googleAvailable() {
+      try {
+        const settings = await request(
+          "/settings",
+          undefined,
+          undefined,
+          "GET",
+          false,
+          false,
+          2500,
+        );
+        return settings.external?.google === true;
+      } catch {
+        return false;
+      }
+    },
+    async google(code, verifier) {
+      const session = await request("/token?grant_type=pkce", {
+        auth_code: code,
+        code_verifier: verifier,
+      });
+      const identity = await verified(session.access_token, {
+        method: "oauth",
+        since: now() - 120000,
+      });
+      if (typeof session.provider_token !== "string" || !session.provider_token)
+        throw ownerError("INVALID_PROOF", 401);
+      // Supabase's OAuth AMR is generic. A Google token and Google's verified
+      // subject establish the provider independently of mutable user metadata.
+      const response = await fetcher(
+        "https://openidconnect.googleapis.com/v1/userinfo",
+        {
+          headers: { Authorization: "Bearer " + session.provider_token },
+          redirect: "error",
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+      if (!response.ok)
+        throw ownerError(
+          response.status >= 500 ? "UNAVAILABLE" : "INVALID_PROOF",
+          response.status >= 500 ? 503 : 401,
+        );
+      const person = await response.json();
+      if (
+        person.email_verified !== true ||
+        person.email?.toLowerCase() !== OWNER_EMAIL ||
+        !/^\d{1,255}$/.test(person.sub || "")
+      )
+        throw ownerError("ACCESS_DENIED", 403);
+      return {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+        identity,
+        subject: person.sub,
+      };
+    },
     enroll,
     async invite() {
       try {
@@ -503,11 +560,14 @@ export function createAuthProvider(
         throw ownerError("INVALID_PROOF", 401);
       return { ...verifiedSession, identity };
     },
-    async refresh(refreshToken, expectedSessionId) {
+    async refresh(refreshToken, expectedSessionId, google = false) {
       const session = await request("/token?grant_type=refresh_token", {
         refresh_token: refreshToken,
       });
-      const identity = await verified(session.access_token, { aal: "aal2" });
+      const identity = await verified(
+        session.access_token,
+        google ? { method: "oauth" } : { aal: "aal2" },
+      );
       if (identity.claims.session_id !== expectedSessionId) throw ownerError();
       return { ...session, identity };
     },

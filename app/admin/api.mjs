@@ -1,6 +1,8 @@
 const ENDPOINT =
   "https://anfwdrcazwbkkayczkxg.supabase.co/functions/v1/owner-access";
 const PUBLIC_KEY = "sb_publishable_NkbuSbf1LxiCGvgz48fPjg_aVVwDU_G";
+const GOOGLE_LOGIN_KEY = "uniflow:owner-google-pkce";
+const OWNER_REDIRECT = "https://xan-xz.github.io/schedule/admin/";
 export function validOwnerPassword(value) {
   return (
     typeof value === "string" &&
@@ -16,6 +18,7 @@ const ACTIONS = new Set([
   "setup.verify",
   "login.begin",
   "login.verify",
+  "google.exchange",
   "recovery.verify",
   "recovery.finish",
   "session.refresh",
@@ -184,6 +187,76 @@ const CALLBACK_ERROR_CODES = {
   otp_disabled: "CALLBACK_UNAVAILABLE",
 };
 const callbackErrorFields = ["error", "error_code", "error_description"];
+
+export async function startGoogleLogin() {
+  const verifier = Array.from(
+    crypto.getRandomValues(new Uint8Array(32)),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
+  const target = new URL("/auth/v1/authorize", ENDPOINT);
+  target.search = new URLSearchParams({
+    provider: "google",
+    scopes: "openid",
+    redirect_to: OWNER_REDIRECT,
+    code_challenge: challenge,
+    code_challenge_method: "s256",
+    prompt: "select_account",
+  }).toString();
+  sessionStorage.setItem(
+    GOOGLE_LOGIN_KEY,
+    JSON.stringify({
+      verifier,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+    }),
+  );
+  location.assign(target.href);
+}
+
+/** Only a short-lived OAuth verifier survives the redirect. Application
+ * credentials are never stored in the browser's session storage. */
+export function consumeGoogleCallback(
+  locationObject = location,
+  historyObject = history,
+  storage = sessionStorage,
+  now = Date.now,
+) {
+  const query = new URLSearchParams(locationObject.search);
+  const fragment = new URLSearchParams(locationObject.hash.slice(1));
+  const failed = callbackErrorFields.some(
+    (key) => query.has(key) || fragment.has(key),
+  );
+  if (!query.has("code") && !failed) return null;
+
+  let pending;
+  try {
+    const raw = storage.getItem(GOOGLE_LOGIN_KEY);
+    if (query.has("code") || raw) storage.removeItem(GOOGLE_LOGIN_KEY);
+    pending = JSON.parse(raw);
+  } catch {
+    // A blocked or corrupted store is treated as an expired request.
+  }
+  if (!query.has("code") && !pending) return null;
+  historyObject.replaceState(null, "", locationObject.pathname);
+  const codes = query.getAll("code");
+  if (
+    failed ||
+    codes.length !== 1 ||
+    !/^[A-Za-z0-9_-]{16,512}$/.test(codes[0]) ||
+    !/^[a-f0-9]{64}$/.test(pending?.verifier || "") ||
+    !Number.isFinite(pending?.expiresAt) ||
+    pending.expiresAt <= now()
+  )
+    return { failed: true };
+  return { code: codes[0], verifier: pending.verifier };
+}
 
 /** Consume callback data synchronously. Provider descriptions never reach UI,
  * storage or a retained URL; an error never authenticates an accompanying token. */

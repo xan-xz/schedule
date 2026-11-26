@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -44,7 +45,7 @@ async function fixture(
     await page.route("**/admin/app.mjs", (route) =>
       route.fulfill({
         contentType: "text/javascript",
-        body: `import { consumeBootstrapFragment } from './api.mjs'; import { renderOwnerAccess } from './access.mjs'; let bootstrapToken=consumeBootstrapFragment(); const access=renderOwnerAccess(document.getElementById('owner-main'),{bootstrapToken}); bootstrapToken=''; window.addEventListener('pagehide',()=>access.dispose(),{once:true});`,
+        body: `import { consumeBootstrapFragment, consumeGoogleCallback } from './api.mjs'; import { renderOwnerAccess } from './access.mjs'; const googleCallback=consumeGoogleCallback(); let bootstrapToken=consumeBootstrapFragment(); const access=renderOwnerAccess(document.getElementById('owner-main'),{bootstrapToken,googleCallback}); bootstrapToken=''; window.addEventListener('pagehide',()=>access.dispose(),{once:true});`,
       }),
     );
   await page.route("**/functions/v1/owner-access", async (route) => {
@@ -105,6 +106,72 @@ async function audit(page) {
     ),
   ).toBe(true);
 }
+
+test("Google is the primary owner sign-in and a valid callback exchanges the same tab's PKCE proof", async ({
+  page,
+}) => {
+  const code = "synthetic-google-auth-code";
+  let parameters;
+  const { calls, errors } = await fixture(page, {
+    handler: async (body) => {
+      if (body.action === "status")
+        return {
+          status: 200,
+          body: {
+            available: true,
+            setupRequired: true,
+            google: true,
+            passwordTotp: true,
+          },
+        };
+      if (body.action === "google.exchange")
+        return { status: 200, body: session() };
+    },
+  });
+  await page.route(
+    "https://anfwdrcazwbkkayczkxg.supabase.co/auth/v1/authorize?**",
+    async (route) => {
+      parameters = new URL(route.request().url()).searchParams;
+      const localCallback = new URL(page.url());
+      localCallback.searchParams.set("code", code);
+      await route.fulfill({
+        status: 302,
+        headers: { location: localCallback.href },
+        body: "",
+      });
+    },
+  );
+  await page.goto(path);
+  await expect(
+    page.getByRole("button", { name: "Войти через Google" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Пароль владельца")).toHaveCount(0);
+  await page.getByRole("button", { name: "Другой способ входа" }).click();
+  await expect(page.getByLabel("Пароль владельца")).toBeVisible();
+  await page
+    .getByRole("button", { name: "Вернуться ко входу через Google" })
+    .click();
+  await page.getByRole("button", { name: "Войти через Google" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Вход подтверждён" }),
+  ).toBeVisible();
+  expect(parameters.get("provider")).toBe("google");
+  expect(parameters.get("redirect_to")).toBe(
+    "https://xan-xz.github.io/schedule/admin/",
+  );
+  const exchange = calls.find(({ action }) => action === "google.exchange");
+  expect(exchange.code).toBe(code);
+  expect(parameters.get("code_challenge")).toBe(
+    createHash("sha256").update(exchange.verifier).digest("base64url"),
+  );
+  expect(new URL(page.url()).search).toBe("");
+  expect(
+    await page.evaluate(() =>
+      sessionStorage.getItem("uniflow:owner-google-pkce"),
+    ),
+  ).toBeNull();
+  expect(errors).toEqual([]);
+});
 
 for (const setup of [true, false]) {
   test(`password and authenticator work without email during ${setup ? "setup resume" : "login"}`, async ({

@@ -8,6 +8,7 @@
   if (
     failed ||
     proof.has("access_token") ||
+    query.has("code") ||
     /^#\/?admin(?:[/?]|$)/.test(location.hash)
   ) {
     const target = new URL("./admin/", location.href);
@@ -27,6 +28,9 @@
         error_code: known ? code : "callback_error",
       }).toString();
     } else if (proof.has("access_token")) target.hash = location.hash;
+    else
+      for (const code of query.getAll("code"))
+        target.searchParams.append("code", code);
     location.replace(target.href);
   }
 })();
