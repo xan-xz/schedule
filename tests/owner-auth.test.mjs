@@ -151,6 +151,7 @@ async function fixture({
       return clone(ch);
     }
     if (op === "session.create") {
+      if (state.failCompletion) throw new Error("Isolated database failure");
       if (
         !ch ||
         ch.consumed_at ||
@@ -439,6 +440,23 @@ test("password alone cannot resume setup without an existing verified authentica
   assert.equal(result.status, 403);
   assert.equal(f.state.challenges.size, 0);
   assert.deepEqual(f.state.providerCalls, [{ op: "password" }]);
+});
+
+test("failed activation releases the challenge and leaves it available for a retry", async () => {
+  const f = await fixture({ configured: false, existingFactor: true });
+  const started = await f.post("login.begin", {
+    password: PASSWORD,
+    passwordTotp: true,
+  });
+  const payload = { challengeId: started.body.challengeId, totpCode: "123456" };
+  f.state.failCompletion = true;
+  const failed = await f.post("setup.verify", payload);
+  assert.equal(failed.status, 503);
+  assert.equal(failed.body.code, "UNAVAILABLE");
+  assert.equal(f.state.sessions.size, 0);
+  assert.equal(f.state.cfg.setup_complete, false);
+  f.state.failCompletion = false;
+  assert.equal((await f.post("setup.verify", payload)).status, 200);
 });
 
 test("status exposes no owner UID, provider credential, hash or private state", async () => {

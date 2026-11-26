@@ -183,6 +183,9 @@ test("owner resume requires the bound native session and verified AAL2 factor, w
       factor,
       native,
     ]);
+    await db.exec(`insert into public.schedule_sessions(token_hash, expires_at) values
+      ('legacy-active-fixture', now()+interval '1 hour'),
+      ('legacy-expired-fixture', now()-interval '1 hour')`);
     const confirmed = await rpc("session.create", complete);
     assert.equal(confirmed.owner_uid, owner);
     assert.equal(confirmed.factor_id, factor);
@@ -191,6 +194,20 @@ test("owner resume requires the bound native session and verified AAL2 factor, w
       "INVALID_PROOF",
     );
     assert.equal((await rpc("state", {})).setup_complete, true);
+    assert.deepEqual(
+      (await db.query("select token_hash from public.schedule_sessions")).rows,
+      [{ token_hash: "legacy-expired-fixture" }],
+    );
+    await db.exec(`insert into public.schedule_sessions(token_hash, expires_at)
+      values ('another-active-fixture', now()+interval '1 hour')`);
+    assert.equal(
+      (await rpc("session.revoke", { id: confirmed.id, all: true })).ok,
+      true,
+    );
+    assert.deepEqual(
+      (await db.query("select token_hash from public.schedule_sessions")).rows,
+      [{ token_hash: "legacy-expired-fixture" }],
+    );
   } finally {
     await db.exec("rollback");
   }
