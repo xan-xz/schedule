@@ -11,8 +11,23 @@ export function createXlsxImportEditor(options) {
     workbookReader: readScheduleWorkbook,
     template: () =>
       download(
-        "uniflow-template.xlsx",
-        scheduleWorkbook([], referenceRows(options.data)),
+        options.scope.facultyId
+          ? "uniflow-faculty-template.xlsx"
+          : "uniflow-template.xlsx",
+        scheduleWorkbook(
+          [],
+          [
+            ...(options.scope.facultyId
+              ? options.data.groups
+                  .filter(
+                    (group) => group.facultyId === options.scope.facultyId,
+                  )
+                  .map((group) => ["groups", group.id, group.name])
+              : []),
+            ...referenceRows(options.data),
+          ],
+          { faculty: !!options.scope.facultyId },
+        ),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       ),
   });

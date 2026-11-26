@@ -4,10 +4,11 @@ import { sha } from "./security.mjs";
 
 export const ROLLBACK_PAGE = 40;
 const specs = [
+  ["faculties", "Факультеты", "name"],
   [
     "groups",
     "Группы",
-    "name subgroups specialty language code archivedAt deletedAt",
+    "name subgroups specialty language code facultyId archivedAt deletedAt",
   ],
   ["subjects", "Предметы", "name shortName color"],
   ["teachers", "Преподаватели", "name subjects"],
@@ -49,6 +50,7 @@ const titles = {
   building: "Корпус",
   floor: "Этаж",
   groupId: "Группа",
+  facultyId: "Факультет",
   subgroup: "Подгруппа",
   day: "День",
   week: "Неделя",
@@ -132,7 +134,7 @@ function indexed(section, rows) {
 }
 const catalogs = (data) =>
   Object.fromEntries(
-    ["groups", "subjects", "teachers", "rooms"].map((key) => [
+    ["faculties", "groups", "subjects", "teachers", "rooms"].map((key) => [
       key,
       new Map(collection(data, key).map((row) => [row.id, row.name])),
     ]),
@@ -141,6 +143,7 @@ function describe(names, row, fields) {
   if (!row) return "Запись отсутствует";
   const labels = {
     groupId: "groups",
+    facultyId: "faculties",
     teacherId: "teachers",
     roomId: "rooms",
     subjectId: "subjects",

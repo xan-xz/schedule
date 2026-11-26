@@ -7,6 +7,7 @@ export function createCsvImportEditor(
   { workbookReader, template } = {},
 ) {
   const format = workbookReader ? "XLSX" : "CSV";
+  const facultyImport = !!scope.facultyId;
   let plan = null,
     workbook = null,
     page = 0,
@@ -34,11 +35,13 @@ export function createCsvImportEditor(
   const sheetField = field("Лист XLSX", sheet);
   sheetField.hidden = true;
   const mode = select(
-    [
-      ["append", "Добавить занятия"],
-      ["replace-scope", "Заменить выбранную область"],
-    ],
-    "append",
+    facultyImport
+      ? [["replace-scope", "Заменить расписание групп из файла"]]
+      : [
+          ["append", "Добавить занятия"],
+          ["replace-scope", "Заменить выбранную область"],
+        ],
+    facultyImport ? "replace-scope" : "append",
     invalidate,
   );
   const preview = el(
@@ -53,6 +56,12 @@ export function createCsvImportEditor(
   const name = (collection, id) =>
     data[collection].find((row) => row.id === id)?.name || "Не назначено";
   const subgroup = scope.subgroup === "all" ? "Все подгруппы" : scope.subgroup;
+  const groupLabel = (row) =>
+    facultyImport
+      ? (plan.data.groups.find((group) => group.id === row.groupId)?.name ||
+          name("groups", row.groupId)) + " · "
+      : "";
+  const hasChanges = () => plan?.changes.length || plan?.groupChanges?.length;
   const describe = (row) =>
     `${DAYS[row.day]} · ${row.start}–${row.end}${row.endDayOffset ? " (+1 день)" : ""} · ${name("subjects", row.subjectId)} · ${name("rooms", row.roomId)} · ${name("teachers", row.teacherId)} · ${row.type} · ${row.subgroup === "all" ? "Все подгруппы" : row.subgroup} · ${{ all: "Каждую неделю", odd: "Нечётная", even: "Чётная" }[row.week] || row.week}`;
   function controls() {
@@ -60,7 +69,7 @@ export function createCsvImportEditor(
     sheet.disabled = pending || applied;
     preview.textContent =
       workbookReader && !workbook ? "Прочитать XLSX" : `Предпросмотр ${format}`;
-    apply.disabled = pending || !plan?.changes.length;
+    apply.disabled = pending || !hasChanges();
     apply.textContent = applied
       ? "Повторить сохранение"
       : "Добавить в черновик";
@@ -101,8 +110,22 @@ export function createCsvImportEditor(
               change.kind
             ],
           ),
-          change.before && el("p", {}, "Было: ", describe(change.before)),
-          change.after && el("p", {}, "Будет: ", describe(change.after)),
+          change.before &&
+            el(
+              "p",
+              {},
+              "Было: ",
+              groupLabel(change.before),
+              describe(change.before),
+            ),
+          change.after &&
+            el(
+              "p",
+              {},
+              "Будет: ",
+              groupLabel(change.after),
+              describe(change.after),
+            ),
         ),
       );
     }
@@ -132,10 +155,29 @@ export function createCsvImportEditor(
       el(
         "p",
         {},
-        mode.value === "replace-scope"
-          ? "Заменяются только собственные занятия выбранной группы/подгруппы. При выборе всех подгрупп — вся группа. Разовые изменения и связанные записи не удаляются автоматически."
-          : "Существующие занятия сохраняются. Совпадения и пересечения проверены общей валидацией.",
+        facultyImport
+          ? "Расписание заменяется для всех подгрупп каждой группы из файла. Остальные группы сохраняются."
+          : mode.value === "replace-scope"
+            ? "Заменяются только собственные занятия выбранной группы/подгруппы. При выборе всех подгрупп — вся группа. Разовые изменения и связанные записи не удаляются автоматически."
+            : "Существующие занятия сохраняются. Совпадения и пересечения проверены общей валидацией.",
       ),
+      ...(plan.groupChanges?.length
+        ? [
+            el(
+              "ul",
+              {},
+              ...plan.groupChanges.map(({ name, created }) =>
+                el(
+                  "li",
+                  {},
+                  (created
+                    ? "Создать группу "
+                    : "Назначить факультет группе ") + name,
+                ),
+              ),
+            ),
+          ]
+        : []),
       list,
       ...(plan.changes.length > PAGE
         ? [
@@ -148,7 +190,7 @@ export function createCsvImportEditor(
           ]
         : []),
     );
-    if (!plan.changes.length)
+    if (!hasChanges())
       status.textContent = "Изменений нет. Черновик не изменён.";
   }
   root.addEventListener("submit", async (event) => {
@@ -213,7 +255,7 @@ export function createCsvImportEditor(
     }
   });
   async function save() {
-    if (pending || !plan?.changes.length) return;
+    if (pending || !hasChanges()) return;
     const version = generation;
     pending = true;
     error.textContent = "";
@@ -248,7 +290,22 @@ export function createCsvImportEditor(
       { class: "notice-info" },
       `Файл до 1 МБ, до 1000 загружаемых занятий${workbookReader ? " на выбранном листе" : ", UTF-8"}. Предпросмотр ничего не сохраняет. Применение создаёт локальный черновик; публикация выполняется отдельно.`,
     ),
-    el("p", {}, `${name("groups", scope.groupId)} · ${subgroup}`),
+    el(
+      "p",
+      {},
+      facultyImport
+        ? name("faculties", scope.facultyId)
+        : `${name("groups", scope.groupId)} · ${subgroup}`,
+    ),
+    ...(facultyImport
+      ? [
+          el(
+            "p",
+            {},
+            "Столбец group обязателен. Укажите название, код или ID группы. Новые группы будут созданы. Группы без факультета можно привязать при публикации.",
+          ),
+        ]
+      : []),
     el(
       "p",
       { class: "small" },

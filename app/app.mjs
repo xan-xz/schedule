@@ -8,7 +8,12 @@ import {
   renderPersonalization,
 } from "./lib/personalization.mjs";
 import { loadedLayout, loadLayout } from "./lib/layout-loader.mjs";
-import { isGroupActive } from "./group-state.mjs";
+import {
+  facultyChoices,
+  groupFaculty,
+  isGroupActive,
+  UNASSIGNED_FACULTY,
+} from "./group-state.mjs";
 import { el, button, field, select, download } from "./lib/dom.mjs";
 import { translator, localeFor } from "./lib/i18n.mjs";
 import {
@@ -1121,6 +1126,22 @@ function renderGroupChoice() {
     invited?.id ||
     (S.choiceReason === "subgroupUnavailable" ? current?.id : "") ||
     "";
+  let draftFaculty =
+    initialChoice?.facultyId ||
+    (draftGroup
+      ? groupFaculty(groups.find((group) => group.id === draftGroup))
+      : "");
+  const facultySelect = select(
+    [],
+    "",
+    () => {
+      draftFaculty = facultySelect.value;
+      draftGroup = "";
+      updateGroups(false);
+    },
+    { name: "faculty" },
+  );
+  const facultyField = field(t("faculty"), facultySelect);
   let draftSubgroup =
     initialChoice?.touched &&
     validSubgroup(
@@ -1178,11 +1199,30 @@ function renderGroupChoice() {
   function updateGroups(preserveSelection) {
     groups = availableGroups();
     const selected = groups.find((group) => group.id === draftGroup);
+    const faculties = facultyChoices(data() || {}, t("unassignedFaculty"));
+    const hasFaculties = faculties.some(
+      (faculty) => faculty.id !== UNASSIGNED_FACULTY,
+    );
+    if (preserveSelection && selected) draftFaculty = groupFaculty(selected);
+    if (!faculties.some((faculty) => faculty.id === draftFaculty))
+      draftFaculty = "";
+    facultyField.hidden = !hasFaculties;
+    facultySelect.replaceChildren(
+      el("option", { value: "" }, t("chooseFaculty")),
+      ...faculties.map((faculty) =>
+        el("option", { value: faculty.id }, faculty.name),
+      ),
+    );
+    facultySelect.value = draftFaculty;
+    groupSelect.disabled = hasFaculties && !draftFaculty;
+    search.disabled = groupSelect.disabled;
     const term = search.value.trim().toLocaleLowerCase();
-    const matches = groups.filter((group) =>
-      (group.name + " " + (group.specialty || ""))
-        .toLocaleLowerCase()
-        .includes(term),
+    const matches = groups.filter(
+      (group) =>
+        (!hasFaculties || groupFaculty(group) === draftFaculty) &&
+        (group.name + " " + (group.specialty || ""))
+          .toLocaleLowerCase()
+          .includes(term),
     );
     // A live rename must not erase a deliberate choice or its search/focus.
     if (preserveSelection && selected && !matches.includes(selected))
@@ -1193,7 +1233,7 @@ function renderGroupChoice() {
       el(
         "option",
         { value: "" },
-        t(matches.length ? "chooseGroup" : "noGroups"),
+        t(matches.length || groupSelect.disabled ? "chooseGroup" : "noGroups"),
       ),
       ...matches.map((group) => el("option", { value: group.id }, group.name)),
     );
@@ -1209,6 +1249,7 @@ function renderGroupChoice() {
       "data-group-choice": "",
       "data-touched": initialChoice?.touched ? "true" : "false",
     },
+    facultyField,
     field(t("searchGroup"), search),
     field(t("group"), groupSelect),
     subgroupField,
@@ -1227,7 +1268,12 @@ function renderGroupChoice() {
     const selected = availableGroups().find(
       (group) => group.id === groupSelect.value,
     );
-    if (!selected || !validSubgroup(selected, subgroupSelect.value)) {
+    if (
+      !selected ||
+      (!facultyField.hidden &&
+        groupFaculty(selected) !== facultySelect.value) ||
+      !validSubgroup(selected, subgroupSelect.value)
+    ) {
       error.textContent = t("groupUnavailable");
       return;
     }
@@ -1240,8 +1286,7 @@ function renderGroupChoice() {
     await changeSetting("groupId", selected.id);
     $("main").focus({ preventScroll: true });
   });
-  updateSubgroups();
-  if (initialChoice?.search) updateGroups(true);
+  updateGroups(true);
   if (
     initialChoice?.submitRequested &&
     draftGroup &&
@@ -1258,7 +1303,9 @@ function renderGroupChoice() {
           ? search
           : initialChoice.focus === "group"
             ? groupSelect
-            : subgroupSelect;
+            : initialChoice.focus === "faculty"
+              ? facultySelect
+              : subgroupSelect;
       if (!target.isConnected) return;
       target.focus({ preventScroll: true });
       if (target === search)
@@ -1368,8 +1415,18 @@ async function reminderChange(value) {
   await changeSetting("reminder", Number(value));
 }
 function renderMore() {
+  const group = data().groups.find((g) => g.id === S.settings.groupId);
+  const faculties = facultyChoices(data(), t("unassignedFaculty"));
+  const hasFaculties = faculties.some(
+    (faculty) => faculty.id !== UNASSIGNED_FACULTY,
+  );
+  const facultySelect = select(
+    faculties.map(({ id, name }) => [id, name]),
+    groupFaculty(group),
+    () => updateGroups(),
+  );
   const groupSelect = select(
-    availableGroups().map((g) => [g.id, g.name]),
+    [],
     S.settings.groupId,
     (e) => e.target.value && changeSetting("groupId", e.target.value),
     { id: "group-select" },
@@ -1378,26 +1435,29 @@ function renderMore() {
     type: "search",
     placeholder: t("searchGroup"),
     "aria-label": t("searchGroup"),
-    oninput: (event) => {
-      const matches = availableGroups().filter((g) =>
+    oninput: () => updateGroups(),
+  });
+  function updateGroups() {
+    const matches = availableGroups().filter(
+      (g) =>
+        (!hasFaculties || groupFaculty(g) === facultySelect.value) &&
         (g.name + " " + (g.specialty || ""))
           .toLowerCase()
-          .includes(event.target.value.toLowerCase()),
-      );
-      groupSelect.replaceChildren(
-        el(
-          "option",
-          { value: "", disabled: true },
-          t(matches.length ? "chooseGroup" : "noGroups"),
-        ),
-        ...matches.map((g) => el("option", { value: g.id }, g.name)),
-      );
-      groupSelect.value = matches.some((g) => g.id === S.settings.groupId)
-        ? S.settings.groupId
-        : "";
-    },
-  });
-  const group = data().groups.find((g) => g.id === S.settings.groupId);
+          .includes(search.value.toLowerCase()),
+    );
+    groupSelect.replaceChildren(
+      el(
+        "option",
+        { value: "", disabled: true },
+        t(matches.length ? "chooseGroup" : "noGroups"),
+      ),
+      ...matches.map((g) => el("option", { value: g.id }, g.name)),
+    );
+    groupSelect.value = matches.some((g) => g.id === S.settings.groupId)
+      ? S.settings.groupId
+      : "";
+  }
+  updateGroups();
   const calendar = el(
     "section",
     { class: "settings-section" },
@@ -1479,6 +1539,7 @@ function renderMore() {
     ),
   );
   return [
+    ...(hasFaculties ? [field(t("faculty"), facultySelect)] : []),
     field(t("searchGroup"), search),
     field(t("group"), groupSelect),
     field(

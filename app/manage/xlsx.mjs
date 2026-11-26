@@ -318,7 +318,7 @@ export async function readScheduleWorkbook(input) {
               text = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
             } else {
               if (
-                header === "id" ||
+                ["id", "group"].includes(header) ||
                 ![0, 1].includes(format) ||
                 !Number.isSafeInteger(n)
               )
@@ -394,12 +394,19 @@ export function referenceRows(data) {
     data[kind].map((r) => [kind, r.id, r.name]),
   );
 }
-export function scheduleWorkbook(rows, references = []) {
+export function scheduleWorkbook(
+  rows,
+  references = [],
+  { faculty = false } = {},
+) {
+  const headers = faculty ? ["group", ...XLSX_COLUMNS] : XLSX_COLUMNS;
+  const widths = [6, 12, 12, 24, 18, 24, 24, 12, 12, 16, 40];
+  if (faculty) widths.unshift(22);
   if (
     rows.length > 1000 ||
     rows.some(
       (r) =>
-        r.length > XLSX_COLUMNS.length ||
+        r.length > headers.length ||
         r.some((v) => String(v ?? "").length > 4000),
     )
   )
@@ -418,7 +425,7 @@ export function scheduleWorkbook(rows, references = []) {
     "_rels/.rels": `<Relationships xmlns="${REL}"><Relationship Id="book" Type="${DOC}/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
     "xl/workbook.xml": `<workbook xmlns="${NS}" xmlns:r="${DOC}"><bookViews><workbookView/></bookViews><sheets><sheet name="Расписание" sheetId="1" r:id="sheet"/>${references.length ? '<sheet name="Справочники" sheetId="2" r:id="references"/>' : ""}</sheets></workbook>`,
     "xl/_rels/workbook.xml.rels": `<Relationships xmlns="${REL}"><Relationship Id="sheet" Type="${DOC}/worksheet" Target="worksheets/sheet1.xml"/>${references.length ? `<Relationship Id="references" Type="${DOC}/worksheet" Target="worksheets/sheet2.xml"/>` : ""}</Relationships>`,
-    "xl/worksheets/sheet1.xml": `<worksheet xmlns="${NS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${[6, 12, 12, 24, 18, 24, 24, 12, 12, 16, 40].map((width, i) => `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${renderRows([XLSX_COLUMNS, ...rows])}</sheetData></worksheet>`,
+    "xl/worksheets/sheet1.xml": `<worksheet xmlns="${NS}"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${widths.map((width, i) => `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`).join("")}</cols><sheetData>${renderRows([headers, ...rows])}</sheetData></worksheet>`,
     ...(references.length
       ? {
           "xl/worksheets/sheet2.xml": `<worksheet xmlns="${NS}"><cols><col min="1" max="2" width="26" customWidth="1"/><col min="3" max="3" width="48" customWidth="1"/></cols><sheetData>${renderRows([["kind", "id", "name"], ...references])}</sheetData></worksheet>`,

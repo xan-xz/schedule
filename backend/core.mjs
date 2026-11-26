@@ -210,6 +210,25 @@ function timeValid(t) {
   return typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
 }
 export function validate(data) {
+  const faculties = Object.hasOwn(data, "faculties") ? data.faculties : [];
+  if (!Array.isArray(faculties) || faculties.length > 300)
+    fail("Неверный список факультетов");
+  const facultyIds = new Set(),
+    facultyNames = new Set();
+  for (const faculty of faculties) {
+    if (
+      !faculty ||
+      typeof faculty.id !== "string" ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,59}$/.test(faculty.id)
+    )
+      fail("Неверный идентификатор факультета");
+    text(faculty.name, "Название факультета", 120);
+    const key = faculty.name.normalize("NFKC").trim().toLocaleLowerCase("ru");
+    if (facultyIds.has(faculty.id) || facultyNames.has(key))
+      fail("Факультет с таким ID или названием уже существует");
+    facultyIds.add(faculty.id);
+    facultyNames.add(key);
+  }
   if (Object.hasOwn(data, "siteSettings")) {
     if (
       !data.siteSettings ||
@@ -270,6 +289,9 @@ export function validate(data) {
   const has = (k, id) => data[k].some((e) => e.id === id);
   for (const entity of CATALOG_ENTITIES)
     for (const item of data[entity]) validateCatalogItem(entity, item);
+  for (const group of data.groups)
+    if (group.facultyId && !facultyIds.has(group.facultyId))
+      fail("Факультет группы не найден");
   for (const t of data.teachers)
     if (t.subjects.some((s) => !has("subjects", s)))
       fail("Предмет преподавателя не найден");
@@ -488,7 +510,7 @@ export function validate(data) {
 }
 const CATALOG_ENTITIES = ["groups", "teachers", "subjects", "rooms"];
 const CATALOG_FIELDS = {
-  groups: ["name", "code", "specialty", "language", "subgroups"],
+  groups: ["name", "code", "specialty", "language", "subgroups", "facultyId"],
   teachers: ["name", "subjects"],
   subjects: ["name", "shortName", "color"],
   rooms: ["name", "capacity", "capacityEstimated", "building", "floor", "note"],
@@ -535,6 +557,7 @@ function validateCatalogItem(entity, item, { authored = false } = {}) {
   if (entity === "groups") {
     optionalText(item, "code", 80);
     optionalText(item, "specialty", 160);
+    optionalText(item, "facultyId", 60);
     if (
       item.language !== undefined &&
       !["", "ru", "kk", "en"].includes(item.language)
@@ -947,7 +970,16 @@ export function mutate(input, user, op, payload = {}) {
     fail("Некорректная операция");
   let summary = "Изменение";
   let historyAction = op;
-  if (op === "teaching.save") {
+  if (op === "faculty.save") {
+    if (!admin) fail("Факультеты меняет только владелец", 403);
+    data.faculties ??= [];
+    const index = data.faculties.findIndex((row) => row.id === payload.id);
+    if (payload.id && index < 0) fail("Факультет не найден");
+    const name = typeof payload.name === "string" ? payload.name.trim() : "";
+    if (index < 0) data.faculties.push({ id: uid(), name });
+    else data.faculties[index].name = name;
+    summary = index < 0 ? "Добавлен факультет" : "Изменён факультет";
+  } else if (op === "teaching.save") {
     if (!admin) fail("Типы занятий и звонки меняет только владелец", 403);
     let settings;
     try {
@@ -1303,6 +1335,16 @@ export function mutate(input, user, op, payload = {}) {
       "exceptions",
     ])
       data[k] = clone(imported[k] || []);
+    if (Object.hasOwn(imported, "faculties"))
+      data.faculties = clone(imported.faculties);
+    else if (input.faculties?.length) {
+      const assignments = new Map(
+        input.groups.map((row) => [row.id, row.facultyId]),
+      );
+      for (const group of data.groups)
+        if (!Object.hasOwn(group, "facultyId") && assignments.get(group.id))
+          group.facultyId = assignments.get(group.id);
+    }
     // Older exports omit these fields. Preserve them unless the administrator
     // explicitly supplies a replacement; null deliberately clears a term bound.
     for (const k of ["holidays", "validFrom", "validUntil"]) {

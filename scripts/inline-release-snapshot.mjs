@@ -3,7 +3,12 @@ import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { transform } from "esbuild";
-import { isGroupActive } from "../backend/group-state.mjs";
+import {
+  facultyChoices,
+  groupFaculty,
+  isGroupActive,
+  UNASSIGNED_FACULTY,
+} from "../backend/group-state.mjs";
 import {
   INITIAL_SNAPSHOT_ID,
   INITIAL_SNAPSHOT_FORMAT,
@@ -75,7 +80,11 @@ export function renderInitialChoice(snapshot) {
     ...new Set(groups.flatMap((group) => group.subgroups || [])),
     "all",
   ];
-  return `<h1 tabindex="-1">Выбери свою группу</h1><p class="notice">Выбор сохранится на этом устройстве. Потом группу можно изменить в «Ещё».</p><form class="settings-section" data-initial-choice method="get" action="./"><label class="field"><span>Найти группу</span><input type="search" autocomplete="off" placeholder="Найти группу" data-choice-search></label><label class="field"><span>Группа</span><select name="g" required><option value="">Выбери группу</option>${groups.map((group) => `<option value="${escapeHtml(group.id)}" data-search="${escapeHtml(group.name + " " + (group.specialty || ""))}" data-subgroups="${escapeHtml(JSON.stringify(group.subgroups || []))}">${escapeHtml(group.name)}</option>`).join("")}</select></label><label class="field initial-choice-subgroup"><span>Подгруппа</span><select name="subgroup" required>${subgroups.map((value) => `<option value="${escapeHtml(value)}">${value === "all" ? "Обе" : escapeHtml(value)}</option>`).join("")}</select></label><button type="submit" class="primary wide">Сохранить и открыть расписание</button><p role="alert" class="form-error"></p></form>`;
+  const faculties = facultyChoices(snapshot.data, "Без факультета");
+  const facultyPicker = faculties.some(({ id }) => id !== UNASSIGNED_FACULTY)
+    ? `<label class="field"><span>Факультет</span><select name="faculty" required><option value="">Выбери факультет</option>${faculties.map(({ id, name }) => `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`).join("")}</select></label>`
+    : "";
+  return `<h1 tabindex="-1">Выбери свою группу</h1><p class="notice">Выбор сохранится на этом устройстве. Потом группу можно изменить в «Ещё».</p><form class="settings-section" data-initial-choice method="get" action="./">${facultyPicker}<label class="field"><span>Найти группу</span><input type="search" autocomplete="off" placeholder="Найти группу" data-choice-search></label><label class="field"><span>Группа</span><select name="g" required><option value="">Выбери группу</option>${groups.map((group) => `<option value="${escapeHtml(group.id)}" data-faculty="${escapeHtml(groupFaculty(group))}" data-search="${escapeHtml(group.name + " " + (group.specialty || ""))}" data-subgroups="${escapeHtml(JSON.stringify(group.subgroups || []))}">${escapeHtml(group.name)}</option>`).join("")}</select></label><label class="field initial-choice-subgroup"><span>Подгруппа</span><select name="subgroup" required>${subgroups.map((value) => `<option value="${escapeHtml(value)}">${value === "all" ? "Обе" : escapeHtml(value)}</option>`).join("")}</select></label><button type="submit" class="primary wide">Сохранить и открыть расписание</button><p role="alert" class="form-error"></p></form>`;
 }
 export function serializeInertSnapshot(snapshot) {
   return JSON.stringify({

@@ -3,10 +3,11 @@ import { assertDraftRecoverable, draftFingerprint } from "./drafts.mjs";
 
 export const JSON_IMPORT_BYTES = 1_000_000;
 const specs = [
+  ["faculties", "Факультеты", "name"],
   [
     "groups",
     "Группы",
-    "name subgroups specialty language code archivedAt deletedAt",
+    "name subgroups specialty language code facultyId archivedAt deletedAt",
   ],
   ["subjects", "Предметы", "name shortName color"],
   ["teachers", "Преподаватели", "name subjects"],
@@ -53,6 +54,7 @@ const labels = {
   building: "Корпус",
   floor: "Этаж",
   groupId: "Группа",
+  facultyId: "Факультет",
   subgroup: "Подгруппа",
   day: "День",
   week: "Неделя",
@@ -72,15 +74,16 @@ const labels = {
 };
 const catalogFields = {
   groupId: "groups",
+  facultyId: "faculties",
   subjectId: "subjects",
   teacherId: "teachers",
   roomId: "rooms",
 };
 function names(data) {
   return Object.fromEntries(
-    ["groups", "subjects", "teachers", "rooms"].map((key) => [
+    ["faculties", "groups", "subjects", "teachers", "rooms"].map((key) => [
       key,
-      new Map(data[key].map((row) => [row.id, row.name])),
+      new Map((data[key] || []).map((row) => [row.id, row.name])),
     ]),
   );
 }
@@ -163,9 +166,11 @@ export function previewJsonImport(
   const changes = [],
     summary = [];
   for (const [section, label, keys] of specs) {
+    if (section === "faculties" && !data.faculties && !result.faculties)
+      continue;
     const fields = keys.split(" "),
-      old = new Map(data[section].map((row) => [row.id, row])),
-      next = new Map(result[section].map((row) => [row.id, row]));
+      old = new Map((data[section] || []).map((row) => [row.id, row])),
+      next = new Map((result[section] || []).map((row) => [row.id, row]));
     const counts = {
       section,
       label,

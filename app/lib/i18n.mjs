@@ -322,6 +322,9 @@ const en = {
 };
 Object.assign(ru, {
   chooseGroup: "Выбери группу",
+  chooseFaculty: "Выбери факультет",
+  faculty: "Факультет",
+  unassignedFaculty: "Без факультета",
   subscriptionHelp:
     "Подписка обновляется из общего расписания. Частоту обновления выбирает приложение календаря; скачанный .ics остаётся снимком.",
   subscription: "Ссылка для подписки",
@@ -330,6 +333,9 @@ Object.assign(ru, {
 });
 Object.assign(kk, {
   chooseGroup: "Топты таңда",
+  chooseFaculty: "Факультетті таңда",
+  faculty: "Факультет",
+  unassignedFaculty: "Факультет тағайындалмаған",
   subscriptionHelp:
     "Жазылым жалпы кестеден жаңартылады. Жаңарту жиілігін күнтізбе қолданбасы таңдайды; жүктелген .ics өзгермейтін көшірме болып қалады.",
   subscription: "Жазылым сілтемесі",
@@ -338,6 +344,9 @@ Object.assign(kk, {
 });
 Object.assign(en, {
   chooseGroup: "Choose a group",
+  chooseFaculty: "Choose a faculty",
+  faculty: "Faculty",
+  unassignedFaculty: "No faculty assigned",
   subscriptionHelp:
     "The subscription updates from the shared timetable. Your calendar app controls refresh frequency; a downloaded .ics remains a snapshot.",
   subscription: "Subscription link",
