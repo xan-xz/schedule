@@ -87,6 +87,115 @@ test("bootstrap contains a valid empty platform and no preset identity, credenti
   );
 });
 
+test("owner resume requires the bound native session and verified AAL2 factor, without a fresh email", async () => {
+  const owner = "01010101-0101-4101-8101-010101010101";
+  const native = "02020202-0202-4202-8202-020202020202";
+  const factor = "03030303-0303-4303-8303-030303030303";
+  const otherFactor = "04040404-0404-4404-8404-040404040404";
+  const lease = "05050505-0505-4505-8505-050505050505";
+  const challenge = {
+    challenge_hash: "a".repeat(64),
+    lease,
+  };
+  const rpc = async (operation, payload) =>
+    (
+      await db.query("select public.owner_access_command($1, $2) as result", [
+        operation,
+        payload,
+      ])
+    ).rows[0].result;
+  await db.exec("begin");
+  try {
+    await db.query(
+      "insert into auth.users(id, email, email_confirmed_at, invited_at) select $1, owner_email, now(), now() from public.owner_access_config where id=1",
+      [owner],
+    );
+    await db.query(
+      "update public.owner_access_config set owner_uid=$1 where id=1",
+      [owner],
+    );
+    await db.query(
+      "insert into auth.sessions(id, user_id, aal) values ($1, $2, 'aal1')",
+      [native, owner],
+    );
+    await db.query(
+      "insert into auth.mfa_factors(id,user_id,factor_type,status) values ($1,$2,'totp','verified'),($3,$2,'totp','verified')",
+      [factor, owner, otherFactor],
+    );
+
+    const create = {
+      challenge_hash: challenge.challenge_hash,
+      kind: "setup",
+      owner_uid: owner,
+      native_session_id: native,
+      encrypted_state: "isolated-password-session-fixture",
+    };
+    assert.equal(
+      (await rpc("challenge.create", create)).error,
+      "ACCESS_DENIED",
+    );
+    const resumed = await rpc("challenge.create", {
+      ...create,
+      password_totp_factor_id: factor,
+    });
+    assert.equal(resumed.password_totp_factor_id, factor);
+    assert.equal(resumed.email_proved_at, null);
+    assert.equal(
+      (await rpc("challenge.claim", challenge)).processing_lease,
+      lease,
+    );
+    assert.equal(
+      (
+        await rpc("challenge.save", {
+          ...challenge,
+          native_session_id: otherFactor,
+        })
+      ).error,
+      "INVALID_PROOF",
+    );
+
+    const complete = {
+      ...challenge,
+      native_session_id: native,
+      factor_id: factor,
+      access_hash: "b".repeat(64),
+      refresh_hash: "c".repeat(64),
+      recovery_hashes: Array.from({ length: 10 }, (_, i) =>
+        i.toString(16).padStart(64, "0"),
+      ),
+      encrypted_state: "isolated-aal2-fixture",
+      ip_hash: "d".repeat(64),
+    };
+    assert.equal(
+      (await rpc("session.create", complete)).error,
+      "INVALID_PROOF",
+    );
+    await db.query(
+      "update auth.sessions set aal='aal2',factor_id=$1 where id=$2",
+      [otherFactor, native],
+    );
+    assert.equal(
+      (await rpc("session.create", { ...complete, factor_id: otherFactor }))
+        .error,
+      "INVALID_PROOF",
+    );
+    await db.query("update auth.sessions set factor_id=$1 where id=$2", [
+      factor,
+      native,
+    ]);
+    const confirmed = await rpc("session.create", complete);
+    assert.equal(confirmed.owner_uid, owner);
+    assert.equal(confirmed.factor_id, factor);
+    assert.equal(
+      (await rpc("session.create", complete)).error,
+      "INVALID_PROOF",
+    );
+    assert.equal((await rpc("state", {})).setup_complete, true);
+  } finally {
+    await db.exec("rollback");
+  }
+});
+
 test("fresh guard refuses tables, views, sequences, routine overloads, types and application schemas before DDL", async () => {
   const isolated = new PGlite();
   try {

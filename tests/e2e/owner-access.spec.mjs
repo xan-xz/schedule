@@ -106,6 +106,68 @@ async function audit(page) {
   ).toBe(true);
 }
 
+for (const setup of [true, false]) {
+  test(`password and authenticator work without email during ${setup ? "setup resume" : "login"}`, async ({
+    page,
+  }) => {
+    const { calls, errors } = await fixture(page, {
+      setup,
+      handler: async (body) => {
+        if (body.action === "status")
+          return {
+            status: 200,
+            body: {
+              available: true,
+              configured: !setup,
+              setupRequired: setup,
+              passwordTotp: true,
+            },
+          };
+        if (body.action === "login.begin")
+          return {
+            status: 200,
+            body: { ...challenge(), step: setup ? "existing-totp" : "totp" },
+          };
+      },
+    });
+    await page.goto(path);
+    await page.getByLabel("Пароль владельца", { exact: true }).fill(password);
+    await page
+      .getByRole("button", {
+        name: setup ? "Подтвердить пароль" : "Продолжить",
+        exact: true,
+      })
+      .click();
+    await page
+      .getByLabel(
+        setup ? "Код из сохранённого приложения" : "Код из приложения",
+        { exact: true },
+      )
+      .fill("123456");
+    await expect(page.getByLabel("Код или ссылка из письма")).toHaveCount(0);
+    await audit(page);
+    await page
+      .getByRole("button", {
+        name: setup ? "Завершить настройку" : "Войти",
+        exact: true,
+      })
+      .click();
+    await expect(
+      page.getByRole("heading", {
+        name: setup ? "Сохраните резервные коды" : "Вход подтверждён",
+      }),
+    ).toBeVisible();
+    expect(calls.map(({ action }) => action)).toEqual([
+      "status",
+      "login.begin",
+      setup ? "setup.verify" : "login.verify",
+    ]);
+    expect(calls[1].passwordTotp).toBe(true);
+    expect(calls[2].emailCode).toBeUndefined();
+    expect(errors).toEqual([]);
+  });
+}
+
 test("a complete fresh login can replace lost recovery codes after an interrupted setup response", async ({
   page,
 }) => {
