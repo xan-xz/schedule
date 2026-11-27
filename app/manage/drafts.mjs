@@ -4,7 +4,9 @@ const FORMAT = "uniflow-owner-draft-v1";
 const DB = "uniflow-owner-drafts-v1";
 const STORE = "drafts";
 const fields = {
-  groups: "id name subgroups specialty language code archivedAt deletedAt",
+  faculties: "id name",
+  groups:
+    "id name subgroups specialty language code facultyId archivedAt deletedAt",
   subjects: "id name shortName color",
   teachers: "id name subjects",
   rooms: "id name capacity capacityEstimated building floor note",
@@ -25,6 +27,8 @@ const properties = [
 ];
 const clone = (value) => structuredClone(value);
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const collection = (data, key) =>
+  key === "faculties" ? (data[key] ?? []) : data[key];
 // Memory-only comparison, including unknown fields and array order. Never store
 // this string: the journal below remains a closed projection of editor changes.
 export function draftFingerprint(value) {
@@ -44,7 +48,7 @@ export function assertDraftRecoverable(before, after, replacements = []) {
   const changes = draftChanges(before, after, replacements);
   const recovered = recoverChanges(before, changes);
   const editable = (data) => [
-    ...Object.keys(fields).map((key) => data[key]),
+    ...Object.keys(fields).map((key) => collection(data, key)),
     ...properties.map((path) =>
       path.split(".").reduce((value, key) => value?.[key], data),
     ),
@@ -280,14 +284,13 @@ export function catalogReplacementIntents(input = []) {
 export function draftChanges(before, after, replacements = []) {
   const changes = [];
   for (const kind of Object.keys(fields)) {
-    if (!Array.isArray(before[kind]) || !Array.isArray(after[kind]))
+    const oldRows = collection(before, kind),
+      newRows = collection(after, kind);
+    if (!Array.isArray(oldRows) || !Array.isArray(newRows))
       throw Error("Неверный раздел расписания.");
-    const previous = new Map(before[kind].map((row) => [row.id, row]));
-    const next = new Map(after[kind].map((row) => [row.id, row]));
-    if (
-      previous.size !== before[kind].length ||
-      next.size !== after[kind].length
-    )
+    const previous = new Map(oldRows.map((row) => [row.id, row]));
+    const next = new Map(newRows.map((row) => [row.id, row]));
+    if (previous.size !== oldRows.length || next.size !== newRows.length)
       throw Error("Повторяются ID черновика.");
     for (const id of new Set([...previous.keys(), ...next.keys()])) {
       const a = previous.get(id),
@@ -443,6 +446,7 @@ export function recoverChanges(server, input, { force = false } = {}) {
         applyProperty(data, change.path, change.after);
       continue;
     }
+    if (change.kind === "faculties") data.faculties ??= [];
     const rows = data[change.kind];
     if (!Array.isArray(rows))
       throw Error("Раздел расписания больше недоступен.");

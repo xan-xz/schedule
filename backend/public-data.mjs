@@ -5,6 +5,7 @@ import { validateAppearancePolicy } from "./appearance-policy.mjs";
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const schemas = {
+  faculties: ["id", "name"],
   groups: [
     "id",
     "name",
@@ -12,6 +13,7 @@ const schemas = {
     "specialty",
     "language",
     "subgroups",
+    "facultyId",
     "status",
     "archived",
     "archivedAt",
@@ -134,7 +136,7 @@ function row(input, fields, collection) {
   return output;
 }
 
-const catalogs = ["groups", "subjects", "teachers", "rooms"];
+const catalogs = ["faculties", "groups", "subjects", "teachers", "rooms"];
 function collection(input, collection) {
   const values = input[collection] ?? [];
   if (!Array.isArray(values) || values.length > 10000)
@@ -143,20 +145,12 @@ function collection(input, collection) {
     row(value, schemas[collection], collection),
   );
   if (
-    [
-      "groups",
-      "subjects",
-      "teachers",
-      "rooms",
-      "lessons",
-      "tasks",
-      "announcements",
-    ].includes(collection) &&
+    [...catalogs, "lessons", "tasks", "announcements"].includes(collection) &&
     result.some((value) => typeof value.id !== "string" || !value.id)
   )
     throw Error("Invalid public record identity");
   if (
-    ["groups", "subjects", "teachers", "rooms"].includes(collection) &&
+    catalogs.includes(collection) &&
     result.some((value) => typeof value.name !== "string" || !value.name)
   )
     throw Error("Invalid public catalogue label");
@@ -166,7 +160,9 @@ function collection(input, collection) {
 export function projectPublicCatalogs(input) {
   if (!object(input)) throw Error("Invalid public data");
   return Object.fromEntries(
-    catalogs.map((name) => [name, collection(input, name)]),
+    catalogs
+      .filter((name) => name !== "faculties" || Object.hasOwn(input, name))
+      .map((name) => [name, collection(input, name)]),
   );
 }
 function publicAppearance(value) {
@@ -180,7 +176,9 @@ function publicAppearance(value) {
 export function projectPublicData(input) {
   if (!object(input)) throw Error("Invalid public data");
   const data = Object.fromEntries(
-    Object.keys(schemas).map((name) => [name, collection(input, name)]),
+    Object.keys(schemas)
+      .filter((name) => name !== "faculties" || Object.hasOwn(input, name))
+      .map((name) => [name, collection(input, name)]),
   );
   // A released snapshot is the union of schedules guests can choose. Keep the
   // exact student/guest audience rule from the server, before bytes enter HTML

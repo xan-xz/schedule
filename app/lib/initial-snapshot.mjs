@@ -60,10 +60,21 @@ export function guardInitialChoice(
   if (form.dataset.choiceBound === "true") return;
   form.dataset.choiceBound = "true";
   const group = form.querySelector('[name="g"]');
+  const faculty = form.querySelector('[name="faculty"]');
   const subgroup = form.querySelector('[name="subgroup"]');
   const search = form.querySelector("[data-choice-search]");
   const send = form.querySelector('[type="submit"]');
   const options = [...group.options].slice(1);
+  function filterOptions() {
+    const term = search.value.trim().toLocaleLowerCase();
+    group.disabled = search.disabled = !!faculty && !faculty.value;
+    for (const option of options)
+      option.hidden =
+        (!!faculty && option.dataset.faculty !== faculty.value) ||
+        !option.dataset.search.toLocaleLowerCase().includes(term);
+    if (group.selectedOptions[0]?.hidden) group.value = "";
+    update();
+  }
   function update() {
     if (!group.value) {
       send.disabled = true;
@@ -96,11 +107,12 @@ export function guardInitialChoice(
   });
   search.addEventListener("input", () => {
     form.dataset.touched = "true";
-    const term = search.value.trim().toLocaleLowerCase();
-    for (const option of options)
-      option.hidden = !option.dataset.search.toLocaleLowerCase().includes(term);
-    if (group.selectedOptions[0]?.hidden) group.value = "";
-    update();
+    filterOptions();
+  });
+  faculty?.addEventListener("change", () => {
+    form.dataset.touched = "true";
+    group.value = "";
+    filterOptions();
   });
   form.addEventListener("submit", (event) => {
     form.dataset.touched = "true";
@@ -109,7 +121,7 @@ export function guardInitialChoice(
     form.dataset.submitRequested = "true";
     send.disabled = true;
   });
-  update();
+  filterOptions();
 }
 
 export function readInitialChoice(document = globalThis.document) {
@@ -127,10 +139,12 @@ export function readChoiceForm(
   if (!form) return null;
   const search = form.querySelector("[data-choice-search]");
   const group = form.querySelector('[name="g"]');
+  const faculty = form.querySelector('[name="faculty"]');
   const subgroup = form.querySelector('[name="subgroup"]');
   if (!search || !group || !subgroup) return null;
   return {
     groupId: group.value,
+    facultyId: faculty?.value || "",
     subgroup: subgroup.value,
     search: search.value,
     touched: form.dataset.touched === "true",
@@ -140,9 +154,11 @@ export function readChoiceForm(
         ? "search"
         : document?.activeElement === group
           ? "group"
-          : document?.activeElement === subgroup
-            ? "subgroup"
-            : "",
+          : document?.activeElement === faculty
+            ? "faculty"
+            : document?.activeElement === subgroup
+              ? "subgroup"
+              : "",
     selectionStart: search.selectionStart,
     selectionEnd: search.selectionEnd,
   };

@@ -18,3 +18,18 @@ export function isGroupActive(group) {
     group.status === "archived"
   );
 }
+
+export const UNASSIGNED_FACULTY = "__unassigned__";
+export const groupFaculty = (group) => group?.facultyId || UNASSIGNED_FACULTY;
+
+export function facultyChoices(data, unassignedLabel) {
+  const populated = new Set(
+    (data.groups || []).filter(isGroupActive).map(groupFaculty),
+  );
+  return [
+    ...(data.faculties || []).filter((faculty) => populated.has(faculty.id)),
+    ...(populated.has(UNASSIGNED_FACULTY)
+      ? [{ id: UNASSIGNED_FACULTY, name: unassignedLabel }]
+      : []),
+  ];
+}

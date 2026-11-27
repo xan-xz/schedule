@@ -385,7 +385,9 @@ async function act(op, payload, expected = S.revision) {
   if (S.busy) throw Error("Дождись сохранения");
   const catalogOperation =
     op.startsWith("catalog.") ||
-    ["group.archive", "teaching.save", "lesson.batch"].includes(op);
+    ["group.archive", "faculty.save", "teaching.save", "lesson.batch"].includes(
+      op,
+    );
   if (catalogOperation && !draft) startDraft();
   let replacements = draft?.catalogReplacements || [];
   if (
@@ -415,6 +417,7 @@ async function act(op, payload, expected = S.revision) {
       "catalog.replace",
       "catalog.duplicate",
       "group.archive",
+      "faculty.save",
       "teaching.save",
       "lesson.batch",
       "import",
@@ -814,14 +817,23 @@ function notifications() {
 }
 const catalogLabels = {
   groups: "Группы",
+  faculties: "Факультеты",
   teachers: "Преподаватели",
   subjects: "Предметы",
   rooms: "Аудитории",
 };
 function catalogDetails(kind, x) {
+  if (kind === "faculties")
+    return (
+      "Активных групп: " +
+      S.data.groups.filter(
+        (group) => group.facultyId === x.id && isGroupActive(group),
+      ).length
+    );
   if (kind === "groups")
     return [
       x.code,
+      x.facultyId && name("faculties", x.facultyId),
       x.specialty || "Специальность не указана",
       { ru: "Русский", kk: "Казахский", en: "Английский" }[x.language] ||
         "Язык не указан",
@@ -849,10 +861,38 @@ function catalogDetails(kind, x) {
     .filter(Boolean)
     .join(" · ");
 }
+function catalogRowActions(kind, record) {
+  const id = record.id;
+  if (kind === "faculties")
+    return button("Импорт XLSX факультета", "facultyImport", { id }, "tiny");
+  const args = { entity: kind, id };
+  const active = isGroupActive(record);
+  const groupActions =
+    kind === "groups"
+      ? button("Ссылка / QR", "groupShare", { id }, "tiny", "share") +
+        (!record.deletedAt &&
+        !record.deleted_at &&
+        record.deleted !== true &&
+        record.status !== "deleted"
+          ? button(
+              active ? "В архив" : "Восстановить",
+              "archiveGroup",
+              { id, archived: active },
+              "tiny",
+            )
+          : "")
+      : "";
+  return (
+    button("Дублировать без расписания", "duplicateCatalog", args, "tiny") +
+    groupActions +
+    button("Удалить", "deleteCatalog", args, "tiny danger", "trash")
+  );
+}
 function catalogs() {
   const kind = S.catalog,
     query = S.catalogQuery.trim().toLocaleLowerCase("ru"),
-    rows = S.data[kind].filter(
+    items = S.data[kind] || [],
+    rows = items.filter(
       (x) =>
         (kind !== "groups" ||
           S.catalogFilter === "all" ||
@@ -883,9 +923,9 @@ function catalogs() {
           )
           .join("")}</select></label>`
       : ""
-  }<span class="small muted">Найдено: ${rows.length} из ${S.data[kind].length}</span></div>
+  }<span class="small muted">Найдено: ${rows.length} из ${items.length}</span></div>
   <p class="small muted">Правки справочников сохраняются в локальном черновике. Студенты увидят их после отдельной публикации.</p>
-  <section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>НАЗВАНИЕ</th><th>ПОДРОБНОСТИ</th>${isAdmin() ? "<th>ДЕЙСТВИЯ</th>" : ""}</tr></thead><tbody>${rows.map((x) => `<tr><td><strong>${h(x.name)}</strong></td><td>${h(catalogDetails(kind, x))}</td>${isAdmin() ? `<td><div class="actions">${button("Изменить", "catalog", { entity: kind, id: x.id }, "tiny", "edit")}${button("Дублировать без расписания", "duplicateCatalog", { entity: kind, id: x.id }, "tiny")}${kind === "groups" ? button("Ссылка / QR", "groupShare", { id: x.id }, "tiny", "share") : ""}${kind === "groups" && !x.deletedAt && !x.deleted_at && x.deleted !== true && x.status !== "deleted" ? button(isGroupActive(x) ? "В архив" : "Восстановить", "archiveGroup", { id: x.id, archived: isGroupActive(x) }, "tiny") : ""}${button("Удалить", "deleteCatalog", { entity: kind, id: x.id }, "tiny danger", "trash")}</div></td>` : ""}</tr>`).join("")}</tbody></table></div>${!rows.length ? empty("По этому фильтру записей нет", "layers") : ""}</section>`;
+  <section class="panel"><div class="table-scroll"><table class="table"><thead><tr><th>НАЗВАНИЕ</th><th>ПОДРОБНОСТИ</th>${isAdmin() ? "<th>ДЕЙСТВИЯ</th>" : ""}</tr></thead><tbody>${rows.map((x) => `<tr><td><strong>${h(x.name)}</strong></td><td>${h(catalogDetails(kind, x))}</td>${isAdmin() ? `<td><div class="actions">${button("Изменить", "catalog", { entity: kind, id: x.id }, "tiny", "edit")}${catalogRowActions(kind, x)}</div></td>` : ""}</tr>`).join("")}</tbody></table></div>${!rows.length ? empty("По этому фильтру записей нет", "layers") : ""}</section>`;
 }
 function historyPage() {
   return `<div class="notice-info">Сохраняются последние 30 версий. Откат восстанавливает расписание, задания, объявления и журнал. Настройки входа владельца не откатываются.</div><section class="panel section-space"><div class="panel-head"><h2>Версии пространства</h2></div>${S.versions.length ? `<div class="list">${S.versions.map((v) => `<div class="list-item">${icon("history")}<div><h3>Версия ${v.revision} · ${h(v.reason)}</h3><p>${h(v.actor)} · ${h(new Date(v.created_at).toLocaleString("ru-RU"))}</p></div><div class="end">${button("Восстановить", "rollback", { revision: v.revision }, "tiny")}</div></div>`).join("")}</div>` : empty("После первого изменения здесь появится версия для восстановления", "history")}</section><section class="panel section-space"><div class="panel-head"><h2>Журнал действий</h2></div><div class="list">${S.data.history.map((e) => `<div class="list-item"><div><h3>${h(e.summary)}</h3><p>${h(e.actor)} · ${h(new Date(e.at).toLocaleString("ru-RU"))}</p></div></div>`).join("")}</div></section>`;
@@ -1390,7 +1430,25 @@ function announcementForm() {
 }
 function catalogForm(entity, id) {
   if (!isAdmin()) throw Error("Нужны права администратора");
-  const old = S.data[entity].find((x) => x.id === id);
+  const old = (S.data[entity] || []).find((x) => x.id === id);
+  if (entity === "faculties") {
+    showForm(
+      old ? "Изменить факультет" : "Добавить факультет",
+      [
+        {
+          name: "name",
+          label: "Название факультета",
+          value: old?.name,
+          required: true,
+          maxLength: 120,
+          full: true,
+        },
+      ],
+      ({ name }, rev) => act("faculty.save", { id: old?.id, name }, rev),
+      "Сохранить",
+    );
+    return;
+  }
   const fields = [
     {
       name: "name",
@@ -1402,6 +1460,19 @@ function catalogForm(entity, id) {
   ];
   if (entity === "groups")
     fields.push(
+      {
+        name: "facultyId",
+        label: "Факультет",
+        type: "select",
+        value: old?.facultyId || "",
+        options: [
+          { value: "", label: "Без факультета" },
+          ...(S.data.faculties || []).map((faculty) => ({
+            value: faculty.id,
+            label: faculty.name,
+          })),
+        ],
+      },
       {
         name: "code",
         label: "Публичный код группы",
@@ -1775,6 +1846,7 @@ function exportJson() {
   const data = clone(S.data);
   const allowed = Object.fromEntries(
     [
+      "faculties",
       "groups",
       "teachers",
       "subjects",
@@ -2178,6 +2250,10 @@ async function handleAction(action, args, el) {
   }
   if (action === "catalog") {
     catalogForm(args.entity, args.id);
+    return;
+  }
+  if (action === "facultyImport") {
+    await scheduleImport("XLSX", args.id);
     return;
   }
   if (action === "freeRooms") {
@@ -3137,6 +3213,7 @@ async function showLocalDrafts() {
 }
 function localChangeLabel(change, reference) {
   const labels = {
+    faculties: "Факультет",
     groups: "Группа",
     subjects: "Предмет",
     teachers: "Преподаватель",
@@ -3186,6 +3263,7 @@ function localReviewValues(value, reference) {
     name: "Название",
     roomId: "Аудитория",
     groupId: "Группа",
+    facultyId: "Факультет",
     subjectId: "Предмет",
     teacherId: "Преподаватель",
     subgroup: "Подгруппа",
@@ -3685,13 +3763,18 @@ async function xlsxExport() {
 async function xlsxImport() {
   return scheduleImport("XLSX");
 }
-async function scheduleImport(format) {
+async function scheduleImport(format, facultyId = "") {
   if (!isAdmin() || ownerEnding) return;
   if (S.busy) return toast("Дождись сохранения");
   const epoch = S.epoch,
     modalChild = $("modal").firstChild,
     modalWasOpen = $("modal").open,
-    scope = { groupId: S.groupId, subgroup: S.subgroup };
+    scope = facultyId
+      ? { facultyId }
+      : { groupId: S.groupId, subgroup: S.subgroup };
+  const groupScopeChanged = () =>
+    !facultyId &&
+    (S.groupId !== scope.groupId || S.subgroup !== scope.subgroup);
   try {
     const [editor, { previewScheduleCsv }, { loadLessonBatchStyles }] =
       await Promise.all([
@@ -3710,15 +3793,19 @@ async function scheduleImport(format) {
       S.busy ||
       $("modal").firstChild !== modalChild ||
       $("modal").open !== modalWasOpen ||
-      S.groupId !== scope.groupId ||
-      S.subgroup !== scope.subgroup
+      groupScopeChanged()
     )
       return;
     const data = clone(draft?.data || S.data);
     const selectedGroup = data.groups.find(
       (group) => group.id === scope.groupId,
     );
-    if (!selectedGroup || !isGroupActive(selectedGroup))
+    if (
+      facultyId &&
+      !data.faculties?.some((faculty) => faculty.id === facultyId)
+    )
+      throw Error("Выберите факультет для импорта.");
+    if (!facultyId && (!selectedGroup || !isGroupActive(selectedGroup)))
       throw Error("Выберите активную группу для импорта.");
     const opened = {
       draft,
@@ -3736,7 +3823,7 @@ async function scheduleImport(format) {
       if (!body?.isConnected || !$("modal").open)
         throw Error("Форма импорта закрыта.");
       if (S.busy) throw Error("Дождись сохранения");
-      if (S.groupId !== scope.groupId || S.subgroup !== scope.subgroup)
+      if (groupScopeChanged())
         throw Error("Группа или подгруппа изменились. Откройте импорт заново.");
     };
     const unchanged = () => {
@@ -3815,7 +3902,7 @@ async function scheduleImport(format) {
             );
         } else {
           unchanged();
-          if (!checked?.changes.length)
+          if (!checked?.changes.length && !checked?.groupChanges?.length)
             throw Error(`Повторите предпросмотр ${format}.`);
           validate(checked.data);
           if (!draft) startDraft();
