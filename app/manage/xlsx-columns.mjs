@@ -78,18 +78,32 @@ export async function suggestWithBionic(headers, allowed) {
       : location.origin === "https://xan-xz.github.io"
         ? new URL("http://127.0.0.1:4173/schedule/local-ai/columns")
         : null;
-  if (!endpoint) return null;
+  if (!endpoint) throw Error("Локальная модель недоступна на этом адресе.");
+  const connectError =
+    "Нет связи с локальным помощником. Запустите UniFlow с параметром --local-ai и проверьте разрешение на доступ к локальной сети в настройках браузера.";
+  const modelError =
+    "Локальная модель не ответила. Проверьте, что модель загружена и локальный API в Bionic или LM Studio включён.";
+  let response;
   try {
-    const response = await fetch(endpoint, {
+    response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ headers, allowed }),
       credentials: "omit",
+      redirect: "error",
+      targetAddressSpace: "loopback",
       signal: AbortSignal.timeout(18000),
     });
-    if (!response.ok) return null;
-    return (await response.json()).columns;
   } catch {
-    return null;
+    throw Error(connectError);
   }
+  if (response.status === 503) throw Error(modelError);
+  if (!response.ok) throw Error(connectError);
+  const result = await response.json().catch(() => null);
+  if (
+    !Array.isArray(result?.columns) ||
+    result.columns.length !== headers.length
+  )
+    throw Error(modelError);
+  return result.columns;
 }

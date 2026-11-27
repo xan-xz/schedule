@@ -128,6 +128,66 @@ test("assisted Excel import previews header matches and saves only a local draft
   expect(manager.writes()).toEqual([]);
 });
 
+test("owner Excel preview distinguishes an unavailable local model and retries", async ({
+  page,
+}) => {
+  const manager = await mockManager(page);
+  await manager.login();
+  await expect(page).toHaveURL(/\/schedule\/admin\/$/);
+  await expect(
+    page.locator('meta[http-equiv="Content-Security-Policy"]'),
+  ).toHaveAttribute(
+    "content",
+    /connect-src[^;]* http:\/\/127\.0\.0\.1:4173\/schedule\/local-ai\/columns;/,
+  );
+  const dialog = await open(page);
+  const header = "Наименование учебной дисциплины";
+  await load(
+    dialog,
+    await workbook([xlsxRow(1, "Семинар")], (parts) =>
+      patchCell(
+        parts,
+        "D1",
+        '<c r="D1" t="inlineStr"><is><t>' + header + "</t></is></c>",
+      ),
+    ),
+  );
+  await dialog
+    .getByRole("checkbox", { name: "Подсказать соответствия столбцов" })
+    .check();
+  await dialog
+    .getByRole("checkbox", { name: "Использовать локальную модель Bionic" })
+    .check();
+  await dialog
+    .getByRole("combobox", { name: "Лист XLSX" })
+    .selectOption("sheet");
+  const previewButton = dialog.getByRole("button", {
+    name: "Предпросмотр XLSX",
+  });
+  const error = dialog.locator("#form-error");
+  const replies = [null, [null], ["subject"]];
+  const requests = [];
+  await page.route("**/local-ai/columns", async (route) => {
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({ json: { columns: replies.shift() } });
+  });
+  await previewButton.click();
+  await expect(error).toContainText("Локальная модель не ответила.");
+  await previewButton.click();
+  await expect(error).toContainText("Не удалось сопоставить столбцы");
+  await preview(dialog);
+  await expect(
+    dialog.getByText("«" + header + "» соответствует полю subject"),
+  ).toBeVisible();
+  expect(requests).toHaveLength(3);
+  for (const request of requests)
+    expect(request).toEqual({
+      headers: [header],
+      allowed: expect.arrayContaining(["subject"]),
+    });
+  expect(manager.writes()).toEqual([]);
+});
+
 async function audit(page) {
   const require = createRequire(import.meta.url);
   await page.evaluate(
