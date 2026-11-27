@@ -99,6 +99,10 @@ test("first visit requires an explicit searched group and subgroup; a return vis
   await expect(
     page.getByRole("heading", { name: "Выбери свою группу", exact: true }),
   ).toBeFocused();
+  const facultyName = page.getByRole("paragraph").filter({
+    hasText: "Факультет бизнеса и цифровых технологий",
+  });
+  await expect(facultyName).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Основные разделы" }),
   ).toBeHidden();
@@ -143,6 +147,7 @@ test("first visit requires an explicit searched group and subgroup; a return vis
   ).toHaveCount(0);
   await expect(page.locator("#identity")).toContainText("06-057-25-18 · Б");
   await more(page);
+  await expect(facultyName).toBeVisible();
   await subgroupSelect(page).selectOption("all");
   await page.reload();
   await expect(

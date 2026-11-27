@@ -1,4 +1,6 @@
 // Keys, not translated labels, are used in state and business logic.
+import { PUBLIC_DEFAULT_FACULTY_LABELS } from "../group-state.mjs";
+
 const ru = {
   today: "Сегодня",
   week: "Неделя",
@@ -327,7 +329,7 @@ Object.assign(ru, {
   chooseGroup: "Выбери группу",
   chooseFaculty: "Выбери факультет",
   faculty: "Факультет",
-  unassignedFaculty: "Без факультета",
+  unassignedFaculty: PUBLIC_DEFAULT_FACULTY_LABELS.ru,
   subscriptionHelp:
     "Подписка обновляется из общего расписания. Частоту обновления выбирает приложение календаря; скачанный .ics остаётся снимком.",
   subscription: "Ссылка для подписки",
@@ -338,7 +340,7 @@ Object.assign(kk, {
   chooseGroup: "Топты таңда",
   chooseFaculty: "Факультетті таңда",
   faculty: "Факультет",
-  unassignedFaculty: "Факультет тағайындалмаған",
+  unassignedFaculty: PUBLIC_DEFAULT_FACULTY_LABELS.kk,
   subscriptionHelp:
     "Жазылым жалпы кестеден жаңартылады. Жаңарту жиілігін күнтізбе қолданбасы таңдайды; жүктелген .ics өзгермейтін көшірме болып қалады.",
   subscription: "Жазылым сілтемесі",
@@ -349,7 +351,7 @@ Object.assign(en, {
   chooseGroup: "Choose a group",
   chooseFaculty: "Choose a faculty",
   faculty: "Faculty",
-  unassignedFaculty: "No faculty assigned",
+  unassignedFaculty: PUBLIC_DEFAULT_FACULTY_LABELS.en,
   subscriptionHelp:
     "The subscription updates from the shared timetable. Your calendar app controls refresh frequency; a downloaded .ics remains a snapshot.",
   subscription: "Subscription link",

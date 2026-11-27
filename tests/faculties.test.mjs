@@ -222,7 +222,11 @@ test("Telegram webhook handles only verified private updates and reads the publi
     calls[1].body.entities[0].length,
     "📅 Расписание UniFlow".length,
   );
-  assert.ok(callback(calls[1].body, "Без факультета"));
+  assert.ok(callback(calls[1].body, "Факультет бизнеса и цифровых технологий"));
+  assert.equal(
+    callback(calls[1].body, "Связаться с администратором"),
+    "contact",
+  );
   assert.equal(
     (await handler(request(secret, "private", "/HELP"))).status,
     204,
@@ -231,4 +235,91 @@ test("Telegram webhook handles only verified private updates and reads the publi
   assert.equal(calls[2].path, "sendMessage");
   assert.match(calls[2].body.text, /^Как посмотреть расписание/);
   assert.equal(callback(calls[2].body, "Выбрать группу"), "faculties:0");
+  assert.match(calls[2].body.text, /«Факультет бизнеса и цифровых технологий»/);
+  assert.equal(
+    callback(calls[2].body, "Связаться с администратором"),
+    "contact",
+  );
+});
+
+test("Telegram contact works without schedule access and links only a configured public username", async () => {
+  const secret = "v".repeat(40);
+  const env = new Map([
+    ["TELEGRAM_WEBHOOK_SECRET", secret],
+    ["TELEGRAM_BOT_TOKEN", "456789:" + "x".repeat(34)],
+  ]);
+  const calls = [];
+  const handleUpdate = createTelegramWebhook({
+    env,
+    fetcher: async (url, init) => {
+      const endpoint = new URL(url);
+      assert.equal(endpoint.origin, "https://api.telegram.org");
+      calls.push({
+        method: endpoint.pathname.split("/").at(-1),
+        payload: JSON.parse(init.body),
+      });
+      return Response.json({ ok: true });
+    },
+  });
+  const chat = { id: 123, type: "private" };
+  const request = (update) =>
+    new Request("https://fixture.invalid/telegram-webhook", {
+      method: "POST",
+      headers: { "X-Telegram-Bot-Api-Secret-Token": secret },
+      body: JSON.stringify({ update_id: 1, ...update }),
+    });
+  const command = (text) =>
+    request({ message: { chat, from: { id: 123 }, text } });
+  assert.equal((await handleUpdate(command("/contact"))).status, 204);
+  const { method, payload } = calls[0];
+  assert.equal(method, "sendMessage");
+  assert.equal(payload.chat_id, chat.id);
+  const email = payload.entities.find((entity) => entity.type === "email");
+  assert.ok(email);
+  const address = payload.text.slice(email.offset, email.offset + email.length);
+  assert.match(address, /^[a-z]+@gmail\.com$/);
+  const options = payload.reply_markup.inline_keyboard.flat();
+  assert.deepEqual(options[0].copy_text, { text: address });
+  assert.equal(options[1].callback_data, "faculties:0");
+  assert.ok(options.every((option) => !option.url));
+
+  env.set("UNIFLOW_TELEGRAM_ADMIN_USERNAME", "https://example.invalid/path");
+  assert.equal((await handleUpdate(command("/support"))).status, 204);
+  assert.ok(
+    calls[1].payload.reply_markup.inline_keyboard
+      .flat()
+      .every((option) => !option.url),
+  );
+
+  env.set("UNIFLOW_TELEGRAM_ADMIN_USERNAME", "@FixtureScheduleAdmin");
+  const contact = {
+    id: "button-id",
+    data: "contact:kk",
+    from: { id: chat.id },
+    message: { chat, message_id: 42 },
+  };
+  assert.equal(
+    (
+      await handleUpdate(
+        request({ callback_query: { ...contact, from: { id: 124 } } }),
+      )
+    ).status,
+    204,
+  );
+  assert.equal(calls.length, 2);
+  assert.equal(
+    (await handleUpdate(request({ callback_query: contact }))).status,
+    204,
+  );
+  assert.deepEqual(calls[2], {
+    method: "answerCallbackQuery",
+    payload: { callback_query_id: "button-id" },
+  });
+  assert.equal(calls[3].method, "editMessageText");
+  assert.equal(calls[3].payload.chat_id, chat.id);
+  assert.equal(calls[3].payload.message_id, 42);
+  assert.match(calls[3].payload.text, /^Әкімшімен байланысу/);
+  assert.deepEqual(calls[3].payload.reply_markup.inline_keyboard[0], [
+    { text: "Telegram арқылы жазу", url: "https://t.me/FixtureScheduleAdmin" },
+  ]);
 });

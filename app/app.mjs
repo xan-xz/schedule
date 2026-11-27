@@ -1142,6 +1142,7 @@ function renderGroupChoice() {
     { name: "faculty" },
   );
   const facultyField = field(t("faculty"), facultySelect);
+  const facultyNotice = el("p", { class: "notice" }, t("unassignedFaculty"));
   let draftSubgroup =
     initialChoice?.touched &&
     validSubgroup(
@@ -1207,6 +1208,7 @@ function renderGroupChoice() {
     if (!faculties.some((faculty) => faculty.id === draftFaculty))
       draftFaculty = "";
     facultyField.hidden = !hasFaculties;
+    facultyNotice.hidden = hasFaculties || !faculties.length;
     facultySelect.replaceChildren(
       el("option", { value: "" }, t("chooseFaculty")),
       ...faculties.map((faculty) =>
@@ -1254,6 +1256,7 @@ function renderGroupChoice() {
       "data-touched": initialChoice?.touched ? "true" : "false",
     },
     facultyField,
+    facultyNotice,
     field(t("searchGroup"), search),
     field(t("group"), groupSelect),
     subgroupField,
@@ -1549,7 +1552,11 @@ function renderMore() {
     ),
   );
   return [
-    ...(hasFaculties ? [field(t("faculty"), facultySelect)] : []),
+    ...(hasFaculties
+      ? [field(t("faculty"), facultySelect)]
+      : faculties.length
+        ? [el("p", { class: "notice" }, t("unassignedFaculty"))]
+        : []),
     field(t("searchGroup"), search),
     field(t("group"), groupSelect),
     field(

@@ -94,6 +94,8 @@ const FILES = [
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
+  "./icons/apple-touch-icon.png",
+  "./icons/icon-maskable-512.png",
 ];
 // Frozen published shell contract: new optional assets cannot invalidate an old complete cache.
 const PREVIOUS_FILES = [

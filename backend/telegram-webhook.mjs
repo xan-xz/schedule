@@ -1,4 +1,9 @@
-import { facultyChoices, groupFaculty, isGroupActive } from "./group-state.mjs";
+import {
+  facultyChoices,
+  groupFaculty,
+  isGroupActive,
+  PUBLIC_DEFAULT_FACULTY_LABELS,
+} from "./group-state.mjs";
 import { equal, sha } from "./security.mjs";
 import {
   answerScheduleQuestion,
@@ -14,6 +19,7 @@ import {
 const maxUpdateBytes = 65_536;
 const pageSize = 10;
 const site = "https://xan-xz.github.io/schedule/";
+const supportEmail = "arappayevv@gmail.com";
 const key = async (value) => (await sha(value)).slice(0, 20);
 const clip = (value, length = 90) =>
   Array.from(String(value)).slice(0, length).join("");
@@ -22,6 +28,28 @@ const bold = (text) => ({ text });
 const periodLabels = { today: "Сегодня", next: "Завтра", week: "Неделя" };
 const facultyButton = () => [button("‹ К факультетам", "faculties:0")];
 const siteButton = (url = site) => ({ text: "Открыть на сайте", url });
+const contacts = {
+  ru: {
+    title: "Связаться с администратором",
+    hint: "Укажи группу, дату занятия и что нужно уточнить.",
+    telegram: "Написать в Telegram",
+    copy: "Скопировать почту",
+    schedule: "‹ К расписанию",
+  },
+  kk: {
+    title: "Әкімшімен байланысу",
+    hint: "Тобыңды, сабақ күнін және сұрағыңды жаз.",
+    telegram: "Telegram арқылы жазу",
+    copy: "Электрондық поштаны көшіру",
+    schedule: "‹ Сабақ кестесіне",
+  },
+};
+const contactRow = (language = "ru") => [
+  button(
+    contacts[language].title,
+    language === "kk" ? "contact:kk" : "contact",
+  ),
+];
 const dateLabel = new Intl.DateTimeFormat("ru", {
   timeZone: "UTC",
   weekday: "long",
@@ -40,7 +68,11 @@ function menu(lines, rows, more = "Остальные занятия — на с
       break;
     }
     if (typeof line !== "string")
-      entities.push({ type: "bold", offset, length: value.length });
+      entities.push({
+        type: line.type || "bold",
+        offset,
+        length: value.length,
+      });
     text += (offset ? "\n" : "") + value;
   }
   return { text, entities, reply_markup: { inline_keyboard: rows } };
@@ -51,13 +83,37 @@ function helpMenu() {
     [
       bold("Как посмотреть расписание"),
       "",
-      "Выбери факультет, группу и подгруппу. Если твоей группы нет в списках факультетов, загляни в «Без факультета».",
+      "Выбери факультет, группу и подгруппу. Группы из прежнего расписания доступны в разделе «" +
+        PUBLIC_DEFAULT_FACULTY_LABELS.ru +
+        "».",
       "",
       "Кнопки «Сегодня», «Завтра» и «Неделя» переключают расписание. Чтобы выбрать другую группу, нажми «Сменить группу».",
       "",
       "Можно написать «Какие пары завтра у группы ИТ-21?» или ответить на сообщение с расписанием вопросом «Какая следующая пара?». Бот понимает вопросы на русском и казахском.",
     ],
-    [[button("Выбрать группу", "faculties:0")], [siteButton()]],
+    [[button("Выбрать группу", "faculties:0")], [siteButton()], contactRow()],
+  );
+}
+
+function contactMenu(username, language) {
+  const copy = contacts[language];
+  const handle = username?.trim().replace(/^@/, "");
+  const direct = /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(handle || "");
+  return menu(
+    [
+      bold(copy.title),
+      "",
+      copy.hint,
+      "",
+      { text: supportEmail, type: "email" },
+    ],
+    [
+      ...(direct
+        ? [[{ text: copy.telegram, url: "https://t.me/" + handle }]]
+        : []),
+      [{ text: copy.copy, copy_text: { text: supportEmail } }],
+      [button(copy.schedule, "faculties:0")],
+    ],
   );
 }
 
@@ -149,7 +205,7 @@ export async function telegramScheduleMenu(
   callback = "",
   now = new Date(),
 ) {
-  const faculties = facultyChoices(data, "Без факультета");
+  const faculties = facultyChoices(data, PUBLIC_DEFAULT_FACULTY_LABELS.ru);
   const groups = data.groups.filter(isGroupActive);
   const [action, first, second, third] = callback.split(":");
   const page = (value) => (/^\d{1,4}$/.test(value || "") ? Number(value) : 0);
@@ -226,6 +282,7 @@ export async function telegramScheduleMenu(
               : []),
           ],
           [siteButton(url.href)],
+          contactRow(),
         ]);
       }
     }
@@ -251,7 +308,7 @@ export async function telegramScheduleMenu(
           ]
         : []),
     ],
-    rows.length ? rows : [[siteButton()]],
+    [...(rows.length ? rows : [[siteButton()]]), contactRow()],
   );
 }
 
@@ -289,15 +346,19 @@ function scheduleQuestionMenu(data, message, now) {
       ),
     ],
   ];
-  if (!answer.groupId) return menu(answer.lines, rows);
+  if (!answer.groupId)
+    return menu(answer.lines, [...rows, contactRow(answer.language)]);
   const url = new URL(site);
   url.searchParams.set("g", answer.groupId);
   url.searchParams.set("subgroup", answer.subgroup);
-  rows.push([
-    answer.language === "kk"
-      ? { text: "Сайттан ашу", url: url.href }
-      : siteButton(url.href),
-  ]);
+  rows.push(
+    [
+      answer.language === "kk"
+        ? { text: "Сайттан ашу", url: url.href }
+        : siteButton(url.href),
+    ],
+    contactRow(answer.language),
+  );
   return menu(
     [bold(answer.lines[0]), ...answer.lines.slice(1)],
     rows,
@@ -388,7 +449,7 @@ export function createTelegramWebhook({
         !/^[a-z0-9:]{1,64}$/.test(callback.data || ""))
     )
       return new Response(null, { status: 204 });
-    const command = /^\/(start|help|schedule)(?:@\w+)?(?:\s|$)/i
+    const command = /^\/(start|help|schedule|contact|support)(?:@\w+)?(?:\s|$)/i
       .exec(message.text || "")?.[1]
       .toLowerCase();
     const at = now();
@@ -398,15 +459,7 @@ export function createTelegramWebhook({
       return new Response(null, { status: 204 });
     try {
       const token = env.get("TELEGRAM_BOT_TOKEN");
-      const project = new URL(env.get("SUPABASE_URL"));
-      const publishable =
-        env.get("UNIFLOW_TELEGRAM_PUBLISHABLE_KEY") ||
-        env.get("SUPABASE_ANON_KEY");
-      if (
-        !/^\d+:[A-Za-z0-9_-]{20,}$/.test(token || "") ||
-        !/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(project.origin) ||
-        !publishable
-      )
+      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(token || ""))
         throw Error("Telegram integration is unconfigured");
       const telegram = (method, body) =>
         post("https://api.telegram.org/bot" + token + "/" + method, body);
@@ -415,9 +468,26 @@ export function createTelegramWebhook({
           callback_query_id: callback.id,
         }).catch(() => {});
       let settings;
-      if (!callback && command === "help") {
+      if (
+        ["contact", "contact:kk"].includes(callback?.data) ||
+        (!callback && ["contact", "support"].includes(command))
+      ) {
+        settings = contactMenu(
+          env.get("UNIFLOW_TELEGRAM_ADMIN_USERNAME"),
+          callback?.data === "contact:kk" ? "kk" : "ru",
+        );
+      } else if (!callback && command === "help") {
         settings = helpMenu();
       } else {
+        const project = new URL(env.get("SUPABASE_URL"));
+        const publishable =
+          env.get("UNIFLOW_TELEGRAM_PUBLISHABLE_KEY") ||
+          env.get("SUPABASE_ANON_KEY");
+        if (
+          !/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(project.origin) ||
+          !publishable
+        )
+          throw Error("Telegram integration is unconfigured");
         const state = await post(
           project.origin + "/functions/v1/uniflow-api",
           { action: "state", subgroup: "all" },

@@ -80,6 +80,10 @@ test("the early chooser searches and preserves selection while the application b
     await page.goto("/schedule/", { waitUntil: "commit" });
     const form = page.locator("[data-initial-choice]");
     await expect(form).toHaveAttribute("data-choice-guard", "native");
+    const facultyName = page.getByRole("paragraph").filter({
+      hasText: "Факультет бизнеса и цифровых технологий",
+    });
+    await expect(facultyName).toBeVisible();
     await bundleRequested;
     expect(
       await page.evaluate(
@@ -105,6 +109,7 @@ test("the early chooser searches and preserves selection while the application b
     ).toBeNull();
     unblock();
     await expect(page.locator("form[data-group-choice]")).toBeVisible();
+    await expect(facultyName).toBeVisible();
     await expect(search).toHaveValue("06-057-25-11");
     await expect(group).toHaveValue("g-main");
     await expect(
