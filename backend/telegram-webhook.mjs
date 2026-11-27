@@ -1,6 +1,10 @@
 import { facultyChoices, groupFaculty, isGroupActive } from "./group-state.mjs";
 import { equal, sha } from "./security.mjs";
 import {
+  answerScheduleQuestion,
+  parseScheduleQuestion,
+} from "./ai-queries.mjs";
+import {
   addDays,
   lessonsForDate,
   localDate,
@@ -25,14 +29,14 @@ const dateLabel = new Intl.DateTimeFormat("ru", {
   month: "long",
 });
 
-function menu(lines, rows) {
+function menu(lines, rows, more = "Остальные занятия — на сайте.") {
   let text = "";
   const entities = [];
   for (const line of lines) {
     const value = typeof line === "string" ? line : line.text;
     const offset = text.length ? text.length + 1 : 0;
     if (offset + value.length > 3800) {
-      text = text.replace(/\n+$/, "") + "\n\nОстальные занятия — на сайте.";
+      text = text.replace(/\n+$/, "") + "\n\n" + more;
       break;
     }
     if (typeof line !== "string")
@@ -50,6 +54,8 @@ function helpMenu() {
       "Выбери факультет, группу и подгруппу. Если твоей группы нет в списках факультетов, загляни в «Без факультета».",
       "",
       "Кнопки «Сегодня», «Завтра» и «Неделя» переключают расписание. Чтобы выбрать другую группу, нажми «Сменить группу».",
+      "",
+      "Можно написать «Какие пары завтра у группы ИТ-21?» или ответить на сообщение с расписанием вопросом «Какая следующая пара?». Бот понимает вопросы на русском и казахском.",
     ],
     [[button("Выбрать группу", "faculties:0")], [siteButton()]],
   );
@@ -130,6 +136,11 @@ function timetable(data, group, subgroup, period, now) {
       if (details.length) lines.push(details.join(" · "));
     }
   }
+  if (period !== "week")
+    lines.push(
+      "",
+      "Ответь на это сообщение, чтобы задать вопрос о расписании.",
+    );
   return lines;
 }
 
@@ -233,8 +244,64 @@ export async function telegramScheduleMenu(
       rows.length
         ? "Привет! Выбери факультет, чтобы найти расписание своей группы."
         : "Расписание пока не опубликовано. Загляни чуть позже.",
+      ...(rows.length
+        ? [
+            "",
+            "Можно написать вопрос о расписании и указать номер своей группы.",
+          ]
+        : []),
     ],
     rows.length ? rows : [[siteButton()]],
+  );
+}
+
+function scheduleQuestionMenu(data, message, now) {
+  const reply = message.reply_to_message;
+  let context;
+  if (
+    reply?.from?.is_bot === true &&
+    reply.chat?.id === message.chat.id &&
+    !reply.forward_origin &&
+    typeof reply.text === "string"
+  ) {
+    const [title, scope] = reply.text.split("\n", 2);
+    const divider = title.indexOf(" · ");
+    const name = divider >= 0 ? title.slice(divider + 3) : "";
+    const group = data.groups.find(
+      (item) => isGroupActive(item) && name === clip(item.name),
+    );
+    if (group) {
+      const subgroup = group.subgroups?.find((item) =>
+        ["Подгруппа ", "Кіші топ "].some(
+          (prefix) => scope === prefix + clip(item, 24),
+        ),
+      );
+      context = { groupId: group.id, subgroup };
+    }
+  }
+  const answer = answerScheduleQuestion(data, message.text, { now, context });
+  if (!answer) return null;
+  const rows = [
+    [
+      button(
+        answer.language === "kk" ? "Топты таңдау" : "Выбрать группу",
+        "faculties:0",
+      ),
+    ],
+  ];
+  if (!answer.groupId) return menu(answer.lines, rows);
+  const url = new URL(site);
+  url.searchParams.set("g", answer.groupId);
+  url.searchParams.set("subgroup", answer.subgroup);
+  rows.push([
+    answer.language === "kk"
+      ? { text: "Сайттан ашу", url: url.href }
+      : siteButton(url.href),
+  ]);
+  return menu(
+    [bold(answer.lines[0]), ...answer.lines.slice(1)],
+    rows,
+    answer.language === "kk" ? "Қалған сабақтар сайтта." : undefined,
   );
 }
 
@@ -324,7 +391,11 @@ export function createTelegramWebhook({
     const command = /^\/(start|help|schedule)(?:@\w+)?(?:\s|$)/i
       .exec(message.text || "")?.[1]
       .toLowerCase();
-    if (!callback && !command) return new Response(null, { status: 204 });
+    const at = now();
+    const question =
+      !callback && !command && parseScheduleQuestion(message.text, at);
+    if (!callback && !command && !question)
+      return new Response(null, { status: 204 });
     try {
       const token = env.get("TELEGRAM_BOT_TOKEN");
       const project = new URL(env.get("SUPABASE_URL"));
@@ -354,11 +425,10 @@ export function createTelegramWebhook({
         );
         if (state.user?.role !== "guest" || !Array.isArray(state.data?.groups))
           throw Error("Published schedule is unavailable");
-        settings = await telegramScheduleMenu(
-          state.data,
-          callback?.data,
-          now(),
-        );
+        settings = question
+          ? scheduleQuestionMenu(state.data, message, at)
+          : await telegramScheduleMenu(state.data, callback?.data, at);
+        if (!settings) return new Response(null, { status: 204 });
       }
       await telegram(callback ? "editMessageText" : "sendMessage", {
         chat_id: chat.id,

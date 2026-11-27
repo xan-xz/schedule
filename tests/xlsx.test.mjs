@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { readScheduleWorkbook, scheduleWorkbook } from "../app/manage/xlsx.mjs";
 import { previewScheduleCsv } from "../app/manage/tools.mjs";
+import {
+  normalizeXlsxDay,
+  suggestXlsxColumns,
+} from "../app/manage/xlsx-columns.mjs";
+import { bionicColumns } from "../scripts/bionic.mjs";
 import { workbook, xlsxRow } from "./xlsx-fixtures.mjs";
 import { fixture } from "./e2e/fixtures.mjs";
 
@@ -13,6 +18,78 @@ const read = async (bytes) => {
   const book = await readScheduleWorkbook(bytes);
   return book.readSheet(book.sheets[0].id);
 };
+test("assisted XLSX recognizes Russian and Kazakh columns and parses Excel time before preview", async () => {
+  const first = xlsxRow("сейсенбі");
+  const bytes = await workbook([first], (parts) => {
+    for (const [ref, label] of [
+      ["A1", "Апта күні"],
+      ["B1", "Время начала"],
+      ["C1", "Аяқталуы"],
+      ["D1", "Пән"],
+    ])
+      cell(
+        parts,
+        ref,
+        `<c r="${ref}" t="inlineStr"><is><t>${label}</t></is></c>`,
+      );
+    cell(parts, "B2", '<c r="B2"><v>0.375</v></c>');
+  });
+  const book = await readScheduleWorkbook(bytes);
+  const parsed = await book.readSheet(book.sheets[0].id, {
+    mapHeaders: suggestXlsxColumns,
+    normalizeDay: normalizeXlsxDay,
+  });
+  assert.equal(parsed.mapping.length, 4);
+  const result = previewScheduleCsv(parsed.text, fixture, {
+    groupId: "g-main",
+    subgroup: "А",
+    literalReferences: true,
+  });
+  assert.equal(result.changes[0].after.start, "09:00");
+  assert.equal(result.changes[0].after.day, 1);
+  await assert.rejects(
+    suggestXlsxColumns(["начало", "басталуы"]),
+    /сопоставлены одному полю/,
+  );
+});
+
+test("local Bionic fallback sends only labels and accepts only the proposed schema", async () => {
+  const calls = [];
+  const modelResponse = (columns) =>
+    Response.json({
+      choices: [{ message: { content: JSON.stringify({ columns }) } }],
+    });
+  const headers = ["Код учебного помещения"];
+  const mapped = await suggestXlsxColumns(headers, {
+    suggest: (names, allowed) =>
+      bionicColumns(
+        { headers: names, allowed },
+        {
+          model: "fixture-model",
+          fetcher: async (url, init) => {
+            calls.push({ url, input: JSON.parse(init.body) });
+            return modelResponse(["room"]);
+          },
+        },
+      ),
+  });
+  assert.deepEqual(mapped, ["room"]);
+  assert.equal(calls[0].url, "http://127.0.0.1:1234/v1/chat/completions");
+  assert.deepEqual(
+    JSON.parse(calls[0].input.messages[1].content).headers,
+    headers,
+  );
+  assert.equal(
+    await bionicColumns(
+      { headers, allowed: ["room"] },
+      {
+        model: "fixture-model",
+        fetcher: async () => modelResponse(["private_account"]),
+      },
+    ),
+    null,
+  );
+});
 test("XLSX round trip is literal, handles Excel escape sequences and keeps leading zero IDs", async () => {
   const rows = [xlsxRow(1, "'=literal_x000D_\r\n<text>&", "00123")];
   const parsed = await read(scheduleWorkbook(rows));

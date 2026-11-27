@@ -1,0 +1,88 @@
+.teacher-view .top,
+.teacher-view main {
+  max-width: 860px;
+}
+
+.teacher-view .top {
+  align-items: center;
+  flex-flow: row wrap;
+  justify-content: space-between;
+  gap: 8px 20px;
+}
+
+.teacher-view main {
+  padding-bottom: 24px;
+  min-height: auto;
+}
+
+.teacher-student-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.teacher-picker {
+  max-width: 530px;
+}
+
+.teacher-controls:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 22px 0;
+}
+
+.teacher-modes,
+.teacher-period {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.teacher-modes [aria-pressed="true"] {
+  font-weight: 700;
+  border-color: var(--accent);
+  background: var(--tint);
+}
+
+.teacher-period {
+  flex-wrap: wrap;
+}
+
+#period-label {
+  color: var(--muted);
+  text-align: center;
+}
+
+.teacher-day {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.teacher-day h2 {
+  margin: 0;
+}
+
+.teacher-day .lesson-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.teacher-day > .empty {
+  padding: 10px 0 0;
+}
+
+.teacher-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.teacher-refresh p {
+  font-size: 0.875rem;
+}

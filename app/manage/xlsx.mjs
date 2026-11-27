@@ -212,7 +212,7 @@ export async function readScheduleWorkbook(input) {
   }
   return {
     sheets: sheets.map(({ id, name, state }) => ({ id, name, state })),
-    async readSheet(id) {
+    async readSheet(id, { mapHeaders, normalizeDay } = {}) {
       const sheet = sheets.find((s) => s.id === id);
       if (!sheet || sheet.state !== "visible") fail("выберите видимый лист.");
       const root = await part(sheet.path, NS, "worksheet");
@@ -244,7 +244,8 @@ export async function readScheduleWorkbook(input) {
         used = new Set();
       let lastRow = 0,
         cellCount = 0,
-        headers;
+        headers,
+        mapping = [];
       for (const row of children(sheetData, "row")) {
         const number = attr(row, "r");
         if (!integer(number, 10000) || Number(number) <= lastRow)
@@ -352,8 +353,20 @@ export async function readScheduleWorkbook(input) {
           headers = Array.from({ length: cells.length }, (_, i) =>
             (cells[i] || "").trim(),
           );
+          if (mapHeaders) {
+            const original = headers;
+            headers = await mapHeaders(original);
+            mapping = headers.flatMap((to, index) =>
+              to === original[index] ? [] : [{ from: original[index], to }],
+            );
+            cells.splice(0, cells.length, ...headers);
+          }
         } else if (cells.length > headers.length)
           fail(`строка ${lastRow}: значения выходят за столбцы заголовков.`);
+        else if (normalizeDay && headers.includes("day")) {
+          const day = headers.indexOf("day");
+          if (cells[day] !== undefined) cells[day] = normalizeDay(cells[day]);
+        }
         rows.push(
           Array.from({ length: headers.length }, (_, i) => cells[i] || ""),
         );
@@ -367,6 +380,7 @@ export async function readScheduleWorkbook(input) {
           .join("\r\n"),
         lineNumbers,
         sheet: sheet.name,
+        ...(mapping.length ? { mapping } : {}),
       };
     },
   };

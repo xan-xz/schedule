@@ -48,6 +48,7 @@ const ru = {
   bug: "Сообщить об ошибке",
   staff: "Вход для преподавателя и администратора",
   ownerAccess: "Управление сайтом",
+  teacherSchedule: "Расписание преподавателя",
 
   student: "Студент",
   teacher: "Преподаватель",
@@ -155,6 +156,7 @@ const kk = {
   bug: "Қате туралы хабарлау",
   staff: "Оқытушы мен әкімшіге кіру",
   ownerAccess: "Сайтты басқару",
+  teacherSchedule: "Оқытушы кестесі",
 
   student: "Студент",
   teacher: "Оқытушы",
@@ -262,6 +264,7 @@ const en = {
   bug: "Report an issue",
   staff: "Teacher and administrator sign in",
   ownerAccess: "Site management",
+  teacherSchedule: "Teacher schedule",
 
   student: "Student",
   teacher: "Teacher",

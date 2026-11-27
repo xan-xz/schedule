@@ -5,10 +5,24 @@ import {
   referenceRows,
 } from "./xlsx.mjs";
 import { download } from "../lib/dom.mjs";
+import {
+  normalizeXlsxDay,
+  suggestWithBionic,
+  suggestXlsxColumns,
+} from "./xlsx-columns.mjs";
 
 export function createXlsxImportEditor(options) {
   return createCsvImportEditor(options, {
     workbookReader: readScheduleWorkbook,
+    assistedRead: (workbook, id) =>
+      workbook.readSheet(id, {
+        normalizeDay: normalizeXlsxDay,
+        mapHeaders: (headers) =>
+          suggestXlsxColumns(headers, {
+            faculty: !!options.scope.facultyId,
+            suggest: suggestWithBionic,
+          }),
+      }),
     template: () =>
       download(
         options.scope.facultyId

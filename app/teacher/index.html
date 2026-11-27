@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://anfwdrcazwbkkayczkxg.supabase.co; img-src 'self' data:; object-src 'none'; base-uri 'self'"
+    />
+    <meta name="theme-color" content="#7957d5" />
+    <title>Расписание преподавателя — UniFlow</title>
+    <link rel="icon" href="../icons/icon-192.png" type="image/png" />
+    <script src="../appearance-init.js"></script>
+    <link rel="stylesheet" href="../styles.css" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.mjs"></script>
+  </head>
+  <body class="teacher-view">
+    <a class="skip" href="#main">К содержимому</a>
+    <header class="top">
+      <a class="brand" href="../">UniFlow</a>
+      <a class="teacher-student-link" href="../">Расписание групп</a>
+    </header>
+    <main id="main" tabindex="-1">
+      <h1>Расписание преподавателя</h1>
+      <p class="date-line">Опубликованные занятия по преподавателю и дате</p>
+      <div class="teacher-picker">
+        <label class="field">
+          <span>Преподаватель</span>
+          <select id="teacher" disabled>
+            <option value="">Выберите преподавателя</option>
+          </select>
+        </label>
+      </div>
+      <section
+        id="teacher-controls"
+        class="teacher-controls"
+        hidden
+        aria-label="Период расписания"
+      >
+        <div class="teacher-modes" role="group" aria-label="Вид расписания">
+          <button type="button" id="day-mode" aria-pressed="true">День</button>
+          <button type="button" id="week-mode" aria-pressed="false">
+            Неделя
+          </button>
+        </div>
+        <div class="teacher-period">
+          <button type="button" id="previous" aria-label="Предыдущий день">
+            ‹
+          </button>
+          <p id="period-label" aria-live="polite"></p>
+          <button type="button" id="next" aria-label="Следующий день">›</button>
+          <button type="button" id="today">К сегодня</button>
+        </div>
+        <button type="button" id="calendar" class="quiet">
+          Скачать календарь (.ics)
+        </button>
+      </section>
+      <div id="teacher-schedule" aria-busy="true">
+        <p class="empty">Загружаем расписание…</p>
+      </div>
+      <div class="teacher-refresh">
+        <p id="teacher-status" class="muted" role="status"></p>
+        <button type="button" id="refresh" class="quiet" disabled>
+          Обновить
+        </button>
+      </div>
+      <noscript>
+        <p>Для выбора преподавателя и даты включите JavaScript.</p>
+      </noscript>
+    </main>
+  </body>
+</html>

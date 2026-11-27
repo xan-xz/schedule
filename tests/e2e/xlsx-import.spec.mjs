@@ -94,6 +94,40 @@ async function parse(page, bytes) {
     [...bytes],
   );
 }
+test("assisted Excel import previews header matches and saves only a local draft", async ({
+  page,
+}) => {
+  const manager = await mockManager(page);
+  await manager.login();
+  const dialog = await open(page);
+  const bytes = await workbook([xlsxRow("сейсенбі", "Семинар")], (parts) => {
+    for (const [ref, label] of [
+      ["A1", "День недели"],
+      ["B1", "Время начала"],
+      ["C1", "Время окончания"],
+      ["D1", "Пән"],
+    ]) {
+      patchCell(
+        parts,
+        ref,
+        `<c r="${ref}" t="inlineStr"><is><t>${label}</t></is></c>`,
+      );
+    }
+  });
+  await load(dialog, bytes);
+  await dialog
+    .getByRole("checkbox", { name: "Подсказать соответствия столбцов" })
+    .check();
+  await preview(dialog);
+  await expect(
+    dialog.getByText("«Пән» соответствует полю subject"),
+  ).toBeVisible();
+  await expect(dialog.locator("[data-xlsx-change]")).toContainText("Семинар");
+  expect(manager.writes()).toEqual([]);
+  await apply(page, dialog);
+  expect(manager.writes()).toEqual([]);
+});
+
 async function audit(page) {
   const require = createRequire(import.meta.url);
   await page.evaluate(

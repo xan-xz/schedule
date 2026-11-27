@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { resolve, extname, sep, posix } from "node:path";
 import { gzipSync } from "node:zlib";
 import { validateCompatibility } from "../app/lib/compatibility-policy.mjs";
+import { serveBionicColumns } from "./bionic.mjs";
 
 const args = process.argv.slice(2);
 const value = (flag, fallback) =>
@@ -20,6 +21,10 @@ if (!validateCompatibility(config))
   throw Error("Invalid compatibility manifest");
 const port = Number(value("--port", "4173")),
   host = value("--host", "127.0.0.1");
+const localAI =
+  host === "127.0.0.1" &&
+  args.includes("--local-ai") &&
+  process.env.UNIFLOW_BIONIC_MODEL;
 const mime = {
   ".html": "text/html; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
@@ -33,6 +38,8 @@ const mime = {
 };
 const server = createServer(async (req, res) => {
   try {
+    if (localAI && req.url === "/schedule/local-ai/columns")
+      return await serveBionicColumns(req, res, { port, model: localAI });
     if (!["GET", "HEAD"].includes(req.method)) {
       res.writeHead(405).end();
       return;

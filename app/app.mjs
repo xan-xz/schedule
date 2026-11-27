@@ -1349,6 +1349,11 @@ function renderGroupChoice() {
       : []),
     form,
     keep,
+    el(
+      "p",
+      { class: "notice" },
+      el("a", { href: "./teacher/" }, t("teacherSchedule")),
+    ),
   ];
 }
 async function changeSetting(key, value) {
@@ -1531,6 +1536,7 @@ function renderMore() {
     }),
     el("h2", {}, t("about")),
     el("p", { class: "notice" }, t("aboutText")),
+    el("a", { href: "./teacher/" }, t("teacherSchedule")),
     el("a", { href: "#admin" }, t("ownerAccess")),
     el(
       "a",

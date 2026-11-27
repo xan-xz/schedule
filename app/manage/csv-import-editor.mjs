@@ -4,7 +4,7 @@ import { DAYS } from "../core.mjs";
 const PAGE = 40;
 export function createCsvImportEditor(
   { data, scope, onPreview, onApply, onInvalidate, onDirty, onClose },
-  { workbookReader, template } = {},
+  { workbookReader, template, assistedRead } = {},
 ) {
   const format = workbookReader ? "XLSX" : "CSV";
   const facultyImport = !!scope.facultyId;
@@ -34,6 +34,10 @@ export function createCsvImportEditor(
   const sheet = select([], "", invalidate);
   const sheetField = field("Лист XLSX", sheet);
   sheetField.hidden = true;
+  const assist = el("input", { type: "checkbox" });
+  const assistField = field("Подсказать соответствия столбцов", assist);
+  assistField.hidden = true;
+  assist.addEventListener("change", invalidate);
   const mode = select(
     facultyImport
       ? [["replace-scope", "Заменить расписание групп из файла"]]
@@ -67,6 +71,7 @@ export function createCsvImportEditor(
   function controls() {
     file.disabled = mode.disabled = preview.disabled = pending || applied;
     sheet.disabled = pending || applied;
+    assist.disabled = pending || applied;
     preview.textContent =
       workbookReader && !workbook ? "Прочитать XLSX" : `Предпросмотр ${format}`;
     apply.disabled = pending || !hasChanges();
@@ -87,6 +92,7 @@ export function createCsvImportEditor(
     workbook = null;
     sheet.replaceChildren();
     sheetField.hidden = true;
+    assistField.hidden = true;
     invalidate();
   });
   function renderReview() {
@@ -147,6 +153,18 @@ export function createCsvImportEditor(
     );
     review.replaceChildren(
       el("h3", { tabindex: "-1" }, "Предпросмотр изменений"),
+      ...(plan.columnMapping?.length
+        ? [
+            el("h4", {}, "Сопоставление столбцов"),
+            el(
+              "ul",
+              {},
+              ...plan.columnMapping.map(({ from, to }) =>
+                el("li", {}, `«${from}» соответствует полю ${to}`),
+              ),
+            ),
+          ]
+        : []),
       el(
         "p",
         { class: "batch-count" },
@@ -226,13 +244,17 @@ export function createCsvImportEditor(
         );
         sheet.value = "";
         sheetField.hidden = false;
+        assistField.hidden = !assistedRead;
         status.textContent = `Листов: ${loaded.sheets.length}. Выбери видимый лист и выполни предпросмотр. Черновик не изменён.`;
         sheet.disabled = false;
         sheet.focus();
         return;
       }
       let text;
-      if (workbook) text = await workbook.readSheet(sheet.value);
+      if (workbook)
+        text = assist.checked
+          ? await assistedRead(workbook, sheet.value)
+          : await workbook.readSheet(sheet.value);
       else
         try {
           text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -242,6 +264,8 @@ export function createCsvImportEditor(
       const result = await onPreview(text, selectedMode);
       if (!root.isConnected || version !== generation) return;
       plan = result;
+      if (text.mapping?.length)
+        plan = { ...result, columnMapping: text.mapping };
       page = 0;
       renderReview();
       review.querySelector("h3").focus();
@@ -323,6 +347,7 @@ export function createCsvImportEditor(
       : []),
     field(`Файл ${format}`, file),
     sheetField,
+    ...(assistedRead ? [assistField] : []),
     field("Режим импорта", mode),
     el(
       "div",

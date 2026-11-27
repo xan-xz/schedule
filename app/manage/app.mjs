@@ -646,7 +646,7 @@ function weekGrid() {
 function schedule() {
   return (
     filters() +
-    `<div class="toolbar">${button("Календарь .ics", "exportIcs", {}, "", "download")}${button("Печать", "print", {}, "", "print")}${button("Поделиться", "share", {}, "", "share")}${isAdmin() ? button("Массовая правка", "lessonBatch", {}, "") + button("Экспорт JSON", "exportJson", {}, "", "download") + button("Импорт JSON", "import", {}, "") : ""}</div>` +
+    `<div class="toolbar">${button("Календарь .ics", "exportIcs", {}, "", "download")}${button("Печать", "print", {}, "", "print")}${button("Поделиться", "share", {}, "", "share")}${isAdmin() ? button("Помощник расписания", "aiPlanner", {}, "", "calendar") + button("Массовая правка", "lessonBatch", {}, "") + button("Экспорт JSON", "exportJson", {}, "", "download") + button("Импорт JSON", "import", {}, "") : ""}</div>` +
     (S.weekView
       ? weekGrid()
       : `<section class="panel"><div class="panel-head"><h2>${icon("calendar")}Расписание на неделю</h2>${dayButtons()}</div><div class="day-caption"><span>${h(niceDate(S.date, true))}</span><span>${scopedLessons().length} занятий</span></div>${lessonTable(scopedLessons(), S.date)}</section>`)
@@ -2199,6 +2199,10 @@ async function handleAction(action, args, el) {
     await openLessonBatchEditor();
     return;
   }
+  if (action === "aiPlanner") {
+    await openAiPlanner();
+    return;
+  }
   if (action === "teachingSettings") {
     await openTeachingEditor();
     return;
@@ -2621,6 +2625,102 @@ function showTemplateDialog(title, body) {
     body,
   );
   if (!dialog.open) dialog.showModal();
+}
+async function openAiPlanner() {
+  if (!isAdmin() || ownerEnding || S.busy || S.rollbackBusy) return;
+  const epoch = S.epoch,
+    previousModal = $("modal").firstChild;
+  try {
+    const [{ createAiPlannerEditor }, { loadLessonBatchStyles }] =
+      await Promise.all([
+        import("./ai-planner-editor.mjs"),
+        import("./lesson-batch-editor.mjs"),
+      ]);
+    await loadLessonBatchStyles();
+    await draftSaveQueue;
+    if (
+      !isAdmin() ||
+      ownerEnding ||
+      S.epoch !== epoch ||
+      S.busy ||
+      S.rollbackBusy ||
+      $("modal").firstChild !== previousModal
+    )
+      return;
+    const data = clone(draft?.data || S.data);
+    const revision = S.revision;
+    const openedDraft = draft;
+    const fingerprint = draftFingerprint([
+      data,
+      draft?.catalogReplacements || [],
+    ]);
+    const body = createAiPlannerEditor({
+      data,
+      date: S.date,
+      groupId: S.groupId,
+      onClose: closeModal,
+      onApply: async ({ move, changes }) => {
+        await draftSaveQueue;
+        if (
+          !body.isConnected ||
+          !$("modal").open ||
+          ownerEnding ||
+          !isAdmin() ||
+          S.epoch !== epoch ||
+          S.busy ||
+          S.rollbackBusy ||
+          draft !== openedDraft ||
+          S.revision !== revision ||
+          draft?.baseConflict ||
+          draftFingerprint([
+            draft?.data || S.data,
+            draft?.catalogReplacements || [],
+          ]) !== fingerprint
+        )
+          throw Error("Данные изменились. Откройте помощник заново.");
+        // Store the authored change. Publication creates the history and notice.
+        const after = move
+          ? recoverChanges(
+              data,
+              draftChanges(
+                data,
+                mutate(data, S.user, "exception.save", move).data,
+              ),
+            ).data
+          : clone(data);
+        if (!move) {
+          const updated = new Map(
+            changes.map(({ before, after }) => [before.id, after]),
+          );
+          after.lessons = after.lessons.map(
+            (lesson) => updated.get(lesson.id) || lesson,
+          );
+        }
+        validate(after);
+        assertDraftRecoverable(
+          draft?.before || data,
+          after,
+          draft?.catalogReplacements || [],
+        );
+        if (!draft) startDraft();
+        draft.data = after;
+        S.data = visible(draft.data, S.user);
+        const saved = await persistCurrentDraft();
+        if (ownerEnding) return;
+        closeModal();
+        render();
+        toast(
+          saved
+            ? "Предложение сохранено в черновике."
+            : "Правки в черновике. Повторите локальное сохранение из панели черновика.",
+        );
+      },
+    });
+    showTemplateDialog("Помощник расписания", body);
+    $("modal").dataset.revision = String(revision);
+  } catch (error) {
+    if (!ownerEnding) toast(error.message);
+  }
 }
 async function templateManager() {
   if (!isAdmin()) return;
