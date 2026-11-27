@@ -5,6 +5,7 @@ import {
   PUBLIC_DEFAULT_FACULTY_LABELS,
 } from "./group-state.mjs";
 import { equal, sha } from "./security.mjs";
+import { handleTelegramSupport } from "./telegram-support.mjs";
 import {
   answerScheduleQuestion,
   parseScheduleQuestion,
@@ -19,7 +20,6 @@ import {
 const maxUpdateBytes = 65_536;
 const pageSize = 10;
 const site = "https://xan-xz.github.io/schedule/";
-const supportEmail = "arappayevv@gmail.com";
 const key = async (value) => (await sha(value)).slice(0, 20);
 const clip = (value, length = 90) =>
   Array.from(String(value)).slice(0, length).join("");
@@ -32,26 +32,11 @@ const notificationRow = (action = "notifications") => [
   button("🔔 Уведомления", action),
 ];
 const contacts = {
-  ru: {
-    title: "Связаться с администратором",
-    hint: "Укажи группу, дату занятия и что нужно уточнить.",
-    telegram: "Написать в Telegram",
-    copy: "Скопировать почту",
-    schedule: "‹ К расписанию",
-  },
-  kk: {
-    title: "Әкімшімен байланысу",
-    hint: "Тобыңды, сабақ күнін және сұрағыңды жаз.",
-    telegram: "Telegram арқылы жазу",
-    copy: "Электрондық поштаны көшіру",
-    schedule: "‹ Сабақ кестесіне",
-  },
+  ru: "Связаться с администратором",
+  kk: "Әкімшімен байланысу",
 };
 const contactRow = (language = "ru") => [
-  button(
-    contacts[language].title,
-    language === "kk" ? "contact:kk" : "contact",
-  ),
+  button(contacts[language], language === "kk" ? "contact:kk" : "contact"),
 ];
 const dateLabel = new Intl.DateTimeFormat("ru", {
   timeZone: "UTC",
@@ -105,28 +90,6 @@ function helpMenu(showNotifications) {
       ...(showNotifications ? [notificationRow()] : []),
       [siteButton()],
       contactRow(),
-    ],
-  );
-}
-
-function contactMenu(username, language) {
-  const copy = contacts[language];
-  const handle = username?.trim().replace(/^@/, "");
-  const direct = /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(handle || "");
-  return menu(
-    [
-      bold(copy.title),
-      "",
-      copy.hint,
-      "",
-      { text: supportEmail, type: "email" },
-    ],
-    [
-      ...(direct
-        ? [[{ text: copy.telegram, url: "https://t.me/" + handle }]]
-        : []),
-      [{ text: copy.copy, copy_text: { text: supportEmail } }],
-      [button(copy.schedule, "faculties:0")],
     ],
   );
 }
@@ -535,6 +498,7 @@ export function createTelegramWebhook({
   fetcher = fetch,
   now = () => new Date(),
   notifications,
+  support,
 }) {
   async function post(url, body, headers = {}) {
     const response = await fetcher(url, {
@@ -553,7 +517,9 @@ export function createTelegramWebhook({
         result.description.includes("message is not modified")
       )
         return { ok: true };
-      throw Error("Telegram integration upstream unavailable");
+      throw Object.assign(Error("Telegram integration upstream unavailable"), {
+        status: response.status,
+      });
     }
     return result;
   }
@@ -607,7 +573,7 @@ export function createTelegramWebhook({
     )
       return new Response(null, { status: 204 });
     const command =
-      /^\/(start|help|schedule|contact|support|notifications|subscribe|unsubscribe)(?:@\w+)?(?:\s|$)/i
+      /^\/(start|help|schedule|contact|support|report|cancel|notifications|subscribe|unsubscribe)(?:@\w+)?(?:\s|$)/i
         .exec(message.text || "")?.[1]
         .toLowerCase();
     const target = notificationTarget.exec(callback?.data || "");
@@ -620,7 +586,7 @@ export function createTelegramWebhook({
     const at = now();
     const question =
       !callback && !command && parseScheduleQuestion(message.text, at);
-    if (!callback && !command && !question)
+    if (!support && !callback && !command && !question)
       return new Response(null, { status: 204 });
     try {
       const token = env.get("TELEGRAM_BOT_TOKEN");
@@ -632,16 +598,24 @@ export function createTelegramWebhook({
         await telegram("answerCallbackQuery", {
           callback_query_id: callback.id,
         }).catch(() => {});
-      let settings;
+      let settings = await handleTelegramSupport({
+        store: support,
+        command,
+        callback,
+        message,
+        updateId: update.update_id,
+        telegram,
+        lookupGroup: async (id) =>
+          (await publishedData()).groups.find(
+            (group) => group.id === id && isGroupActive(group),
+          ),
+      });
       if (
-        ["contact", "contact:kk"].includes(callback?.data) ||
-        (!callback && ["contact", "support"].includes(command))
-      ) {
-        settings = contactMenu(
-          env.get("UNIFLOW_TELEGRAM_ADMIN_USERNAME"),
-          callback?.data === "contact:kk" ? "kk" : "ru",
-        );
-      } else if (notificationAction) {
+        settings === null ||
+        (!settings && !callback && !command && !question)
+      )
+        return new Response(null, { status: 204 });
+      if (!settings && notificationAction) {
         settings = await studentNotifications({
           notifications,
           publishedData,
@@ -650,9 +624,9 @@ export function createTelegramWebhook({
           action: notificationAction,
           target,
         });
-      } else if (!callback && command === "help") {
+      } else if (!settings && !callback && command === "help") {
         settings = helpMenu(Boolean(notifications));
-      } else {
+      } else if (!settings) {
         const data = await publishedData();
         settings = question
           ? scheduleQuestionMenu(data, message, at)

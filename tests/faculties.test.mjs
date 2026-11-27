@@ -242,15 +242,20 @@ test("Telegram webhook handles only verified private updates and reads the publi
   );
 });
 
-test("Telegram contact works without schedule access and links only a configured public username", async () => {
+test("Telegram contact opens a private report without exposing the configured profile", async () => {
   const secret = "v".repeat(40);
   const env = new Map([
     ["TELEGRAM_WEBHOOK_SECRET", secret],
     ["TELEGRAM_BOT_TOKEN", "456789:" + "x".repeat(34)],
   ]);
   const calls = [];
+  const drafts = [];
   const handleUpdate = createTelegramWebhook({
     env,
+    support: {
+      status: async () => ({ ownerChatId: "999", pending: null }),
+      begin: async (chatId, draft) => drafts.push({ chatId, ...draft }),
+    },
     fetcher: async (url, init) => {
       const endpoint = new URL(url);
       assert.equal(endpoint.origin, "https://api.telegram.org");
@@ -274,13 +279,9 @@ test("Telegram contact works without schedule access and links only a configured
   const { method, payload } = calls[0];
   assert.equal(method, "sendMessage");
   assert.equal(payload.chat_id, chat.id);
-  const email = payload.entities.find((entity) => entity.type === "email");
-  assert.ok(email);
-  const address = payload.text.slice(email.offset, email.offset + email.length);
-  assert.match(address, /^[a-z]+@gmail\.com$/);
+  assert.match(payload.text, /Бот передаст текст администратору/);
   const options = payload.reply_markup.inline_keyboard.flat();
-  assert.deepEqual(options[0].copy_text, { text: address });
-  assert.equal(options[1].callback_data, "faculties:0");
+  assert.equal(options[0].callback_data, "supportcancel");
   assert.ok(options.every((option) => !option.url));
 
   env.set("UNIFLOW_TELEGRAM_ADMIN_USERNAME", "https://example.invalid/path");
@@ -320,6 +321,11 @@ test("Telegram contact works without schedule access and links only a configured
   assert.equal(calls[3].payload.message_id, 42);
   assert.match(calls[3].payload.text, /^Әкімшімен байланысу/);
   assert.deepEqual(calls[3].payload.reply_markup.inline_keyboard[0], [
-    { text: "Telegram арқылы жазу", url: "https://t.me/FixtureScheduleAdmin" },
+    { text: "Бас тарту", callback_data: "supportcancel:kk" },
+  ]);
+  assert.deepEqual(drafts, [
+    { chatId: 123, groupId: null, language: "ru" },
+    { chatId: 123, groupId: null, language: "ru" },
+    { chatId: 123, groupId: null, language: "kk" },
   ]);
 });
