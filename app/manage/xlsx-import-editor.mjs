@@ -6,6 +6,7 @@ import {
 } from "./xlsx.mjs";
 import { download } from "../lib/dom.mjs";
 import {
+  launchLocalModel,
   normalizeXlsxDay,
   suggestWithBionic,
   suggestXlsxColumns,
@@ -14,13 +15,19 @@ import {
 export function createXlsxImportEditor(options) {
   return createCsvImportEditor(options, {
     workbookReader: readScheduleWorkbook,
-    assistedRead: (workbook, id, useLocalModel) =>
+    prepareLocalModel: launchLocalModel,
+    assistedRead: (workbook, id, useLocalModel, onLocalStart) =>
       workbook.readSheet(id, {
         normalizeDay: normalizeXlsxDay,
         mapHeaders: (headers) =>
           suggestXlsxColumns(headers, {
             faculty: !!options.scope.facultyId,
-            suggest: useLocalModel ? suggestWithBionic : undefined,
+            suggest: useLocalModel
+              ? (unknown, fields) => {
+                  onLocalStart();
+                  return suggestWithBionic(unknown, fields);
+                }
+              : undefined,
           }),
       }),
     template: () =>

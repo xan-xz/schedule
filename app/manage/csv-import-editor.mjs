@@ -4,7 +4,7 @@ import { DAYS } from "../core.mjs";
 const PAGE = 40;
 export function createCsvImportEditor(
   { data, scope, onPreview, onApply, onInvalidate, onDirty, onClose },
-  { workbookReader, template, assistedRead } = {},
+  { workbookReader, template, assistedRead, prepareLocalModel } = {},
 ) {
   const format = workbookReader ? "XLSX" : "CSV";
   const facultyImport = !!scope.facultyId;
@@ -233,6 +233,8 @@ export function createCsvImportEditor(
       if (!selected) throw Error(`Выбери файл ${format}.`);
       if (selected.size > 1_000_000)
         throw Error(`Размер ${format} не должен превышать 1 МБ.`);
+      if (workbook && sheet.value && assist.checked && localModel.checked)
+        prepareLocalModel?.();
       const bytes = workbook ? null : await selected.arrayBuffer();
       if (!root.isConnected || version !== generation) return;
       if (bytes?.byteLength > 1_000_000)
@@ -262,7 +264,15 @@ export function createCsvImportEditor(
       let text;
       if (workbook)
         text = assist.checked
-          ? await assistedRead(workbook, sheet.value, localModel.checked)
+          ? await assistedRead(
+              workbook,
+              sheet.value,
+              localModel.checked,
+              () => {
+                if (root.isConnected && version === generation)
+                  status.textContent = "Запускается локальная подсказка…";
+              },
+            )
           : await workbook.readSheet(sheet.value);
       else
         try {
@@ -272,6 +282,7 @@ export function createCsvImportEditor(
         }
       const result = await onPreview(text, selectedMode);
       if (!root.isConnected || version !== generation) return;
+      status.textContent = "";
       plan = result;
       if (text.mapping?.length)
         plan = { ...result, columnMapping: text.mapping };
@@ -280,8 +291,10 @@ export function createCsvImportEditor(
       review.querySelector("h3").focus();
       review.scrollIntoView({ block: "start" });
     } catch (problem) {
-      if (root.isConnected && version === generation)
+      if (root.isConnected && version === generation) {
+        status.textContent = "";
         error.textContent = problem.message;
+      }
     } finally {
       pending = false;
       controls();

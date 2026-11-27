@@ -128,9 +128,34 @@ test("assisted Excel import previews header matches and saves only a local draft
   expect(manager.writes()).toEqual([]);
 });
 
-test("owner Excel preview distinguishes an unavailable local model and retries", async ({
+test("owner Excel preview opens the on-demand local model and retries cold startup", async ({
   page,
 }) => {
+  await page.addInitScript(() => {
+    window.localModelLaunches = [];
+    document.addEventListener("click", (event) => {
+      const url = event.target.closest?.("a")?.href;
+      if (url === "uniflow-local-ai://preview") {
+        event.preventDefault();
+        window.localModelLaunches.push({
+          url,
+          activation: navigator.userActivation.isActive,
+        });
+      }
+    });
+    const fetch = window.fetch;
+    let first = true;
+    window.fetch = (url, options) => {
+      if (
+        first &&
+        String(url) === "http://127.0.0.1:4179/schedule/local-ai/columns"
+      ) {
+        first = false;
+        return Promise.reject(new TypeError("Helper is starting"));
+      }
+      return fetch(url, options);
+    };
+  });
   const manager = await mockManager(page);
   await manager.login();
   await expect(page).toHaveURL(/\/schedule\/admin\/$/);
@@ -138,7 +163,7 @@ test("owner Excel preview distinguishes an unavailable local model and retries",
     page.locator('meta[http-equiv="Content-Security-Policy"]'),
   ).toHaveAttribute(
     "content",
-    /connect-src[^;]* http:\/\/127\.0\.0\.1:4173\/schedule\/local-ai\/columns;/,
+    /connect-src[^;]* http:\/\/127\.0\.0\.1:4179\/schedule\/local-ai\/columns;/,
   );
   const dialog = await open(page);
   const header = "Наименование учебной дисциплины";
@@ -165,12 +190,29 @@ test("owner Excel preview distinguishes an unavailable local model and retries",
     name: "Предпросмотр XLSX",
   });
   const error = dialog.locator("#form-error");
+  expect(await page.evaluate(() => window.localModelLaunches)).toEqual([]);
   const replies = [null, [null], ["subject"]];
   const requests = [];
-  await page.route("**/local-ai/columns", async (route) => {
-    requests.push(route.request().postDataJSON());
-    await route.fulfill({ json: { columns: replies.shift() } });
-  });
+  await page.route(
+    "http://127.0.0.1:4179/schedule/local-ai/columns",
+    async (route) => {
+      const cors = {
+        "Access-Control-Allow-Origin": route.request().headers().origin,
+        "Access-Control-Allow-Methods": "POST",
+        "Access-Control-Allow-Headers": "content-type",
+        "Access-Control-Allow-Private-Network": "true",
+      };
+      if (route.request().method() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers: cors });
+        return;
+      }
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({
+        headers: cors,
+        json: { columns: replies.shift() },
+      });
+    },
+  );
   await previewButton.click();
   await expect(error).toContainText("Локальная модель не ответила.");
   await previewButton.click();
@@ -180,6 +222,12 @@ test("owner Excel preview distinguishes an unavailable local model and retries",
     dialog.getByText("«" + header + "» соответствует полю subject"),
   ).toBeVisible();
   expect(requests).toHaveLength(3);
+  expect(await page.evaluate(() => window.localModelLaunches)).toEqual(
+    Array.from({ length: 3 }, () => ({
+      url: "uniflow-local-ai://preview",
+      activation: true,
+    })),
+  );
   for (const request of requests)
     expect(request).toEqual({
       headers: [header],

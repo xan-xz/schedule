@@ -1,5 +1,23 @@
 import { XLSX_COLUMNS } from "./xlsx.mjs";
 
+const endpoint = "http://127.0.0.1:4179/schedule/local-ai/columns";
+const canUseLocalModel = () =>
+  location.hostname === "127.0.0.1" ||
+  location.origin === "https://xan-xz.github.io";
+
+export function launchLocalModel() {
+  if (!canUseLocalModel() || navigator.userActivation?.isActive === false)
+    return;
+  // A custom protocol must run in the preview click's activation, before the
+  // worksheet is read. The model itself starts only when there are labels to map.
+  const link = document.createElement("a");
+  link.href = "uniflow-local-ai://preview";
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
 const normalize = (value) =>
   value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
 const aliases = {
@@ -72,31 +90,36 @@ export async function suggestXlsxColumns(
 }
 
 export async function suggestWithBionic(headers, allowed) {
-  const endpoint =
-    location.hostname === "127.0.0.1"
-      ? new URL("../local-ai/columns", location.href)
-      : location.origin === "https://xan-xz.github.io"
-        ? new URL("http://127.0.0.1:4173/schedule/local-ai/columns")
-        : null;
-  if (!endpoint) throw Error("Локальная модель недоступна на этом адресе.");
+  if (!canUseLocalModel())
+    throw Error("Локальная модель недоступна на этом адресе.");
   const connectError =
-    "Нет связи с локальным помощником. Запустите UniFlow с параметром --local-ai и проверьте разрешение на доступ к локальной сети в настройках браузера.";
+    "Нет связи с локальным помощником. Проверьте установку помощника UniFlow, разрешите браузеру открыть его и повторите предпросмотр. Для сайта также нужен доступ к локальной сети.";
   const modelError =
-    "Локальная модель не ответила. Проверьте, что модель загружена и локальный API в Bionic или LM Studio включён.";
+    "Локальная модель не ответила. Повторите предпросмотр или укажите названия столбцов по шаблону.";
+  const connectDeadline = Date.now() + 30_000;
+  const responseDeadline = connectDeadline + 25_000;
+  const body = JSON.stringify({ headers, allowed });
   let response;
-  try {
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ headers, allowed }),
-      credentials: "omit",
-      redirect: "error",
-      targetAddressSpace: "loopback",
-      signal: AbortSignal.timeout(18000),
-    });
-  } catch {
-    throw Error(connectError);
-  }
+  do {
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        credentials: "omit",
+        redirect: "error",
+        targetAddressSpace: "loopback",
+        signal: AbortSignal.timeout(responseDeadline - Date.now()),
+      });
+    } catch (problem) {
+      if (
+        !(problem instanceof TypeError) ||
+        Date.now() + 750 >= connectDeadline
+      )
+        throw Error(connectError);
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+  } while (!response);
   if (response.status === 503) throw Error(modelError);
   if (!response.ok) throw Error(connectError);
   const result = await response.json().catch(() => null);

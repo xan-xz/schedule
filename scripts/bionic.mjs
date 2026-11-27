@@ -15,7 +15,7 @@ const columns = new Set([
 
 export async function bionicColumns(
   { headers, allowed },
-  { model, fetcher = fetch } = {},
+  { model, fetcher = fetch, prepare } = {},
 ) {
   if (
     !model ||
@@ -34,6 +34,7 @@ export async function bionicColumns(
     return null;
 
   try {
+    await prepare?.();
     const response = await fetcher(
       "http://127.0.0.1:1234/v1/chat/completions",
       {
@@ -98,7 +99,8 @@ export async function serveBionicColumns(request, response, config) {
   const host = `127.0.0.1:${config.port}`;
   const origin = request.headers.origin;
   const cors =
-    origin === `http://${host}` || origin === "https://xan-xz.github.io"
+    /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(origin || "") ||
+    origin === "https://xan-xz.github.io"
       ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" }
       : {};
   function send(status, body) {
@@ -137,6 +139,7 @@ export async function serveBionicColumns(request, response, config) {
     }
     const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const result = await bionicColumns(input, config);
+    await config.beforeReply?.();
     return result
       ? send(200, { columns: result })
       : send(503, { error: "Local model unavailable" });
