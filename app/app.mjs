@@ -441,6 +441,22 @@ function header() {
 function section(title, ...children) {
   return el("section", { class: "section" }, el("h2", {}, title), ...children);
 }
+function reportLink(label, className) {
+  const groupId = S.settings.groupId;
+  const payload = /^[A-Za-z0-9_-]{1,57}$/.test(groupId)
+    ? `report_${groupId}`
+    : "report";
+  return el(
+    "a",
+    {
+      class: className,
+      href: `https://t.me/UniflowSchedule_bot?start=${payload}`,
+      target: "_blank",
+      rel: "noopener noreferrer",
+    },
+    t(label),
+  );
+}
 function empty(text) {
   return el("p", { class: "empty" }, text);
 }
@@ -1541,15 +1557,7 @@ function renderMore() {
     el("p", { class: "notice" }, t("aboutText")),
     el("a", { href: "./teacher/" }, t("teacherSchedule")),
     el("a", { href: "#admin" }, t("ownerAccess")),
-    el(
-      "a",
-      {
-        href: "https://github.com/xan-xz/schedule/issues/new",
-        target: "_blank",
-        rel: "noopener noreferrer",
-      },
-      t("bug"),
-    ),
+    reportLink("bug"),
   );
   return [
     ...(hasFaculties
@@ -1683,8 +1691,16 @@ function render() {
     }
     return;
   }
+  const heading = el("h1", {}, t(S.page));
   $("main").replaceChildren(
-    el("h1", {}, t(S.page)),
+    ["today", "week"].includes(S.page)
+      ? el(
+          "div",
+          { class: "schedule-heading" },
+          heading,
+          reportLink("reportChange", "schedule-report"),
+        )
+      : heading,
     ...{
       today: renderScheduleLayout,
       week: renderScheduleLayout,
