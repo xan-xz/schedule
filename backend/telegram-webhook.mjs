@@ -28,6 +28,9 @@ const bold = (text) => ({ text });
 const periodLabels = { today: "Сегодня", next: "Завтра", week: "Неделя" };
 const facultyButton = () => [button("‹ К факультетам", "faculties:0")];
 const siteButton = (url = site) => ({ text: "Открыть на сайте", url });
+const notificationRow = (action = "notifications") => [
+  button("🔔 Уведомления", action),
+];
 const contacts = {
   ru: {
     title: "Связаться с администратором",
@@ -78,7 +81,7 @@ function menu(lines, rows, more = "Остальные занятия — на с
   return { text, entities, reply_markup: { inline_keyboard: rows } };
 }
 
-function helpMenu() {
+function helpMenu(showNotifications) {
   return menu(
     [
       bold("Как посмотреть расписание"),
@@ -90,8 +93,19 @@ function helpMenu() {
       "Кнопки «Сегодня», «Завтра» и «Неделя» переключают расписание. Чтобы выбрать другую группу, нажми «Сменить группу».",
       "",
       "Можно написать «Какие пары завтра у группы ИТ-21?» или ответить на сообщение с расписанием вопросом «Какая следующая пара?». Бот понимает вопросы на русском и казахском.",
+      ...(showNotifications
+        ? [
+            "",
+            "Чтобы получать сообщения о переносах и отменах, открой «Уведомления» в расписании своей группы.",
+          ]
+        : []),
     ],
-    [[button("Выбрать группу", "faculties:0")], [siteButton()], contactRow()],
+    [
+      [button("Выбрать группу", "faculties:0")],
+      ...(showNotifications ? [notificationRow()] : []),
+      [siteButton()],
+      contactRow(),
+    ],
   );
 }
 
@@ -204,6 +218,7 @@ export async function telegramScheduleMenu(
   data,
   callback = "",
   now = new Date(),
+  { showNotifications = false } = {},
 ) {
   const faculties = facultyChoices(data, PUBLIC_DEFAULT_FACULTY_LABELS.ru);
   const groups = data.groups.filter(isGroupActive);
@@ -281,6 +296,13 @@ export async function telegramScheduleMenu(
               ? [button("Подгруппа", "group:" + first)]
               : []),
           ],
+          ...(showNotifications
+            ? [
+                notificationRow(
+                  "notify:" + first + ":" + subgroupKeys[subgroupIndex],
+                ),
+              ]
+            : []),
           [siteButton(url.href)],
           contactRow(),
         ]);
@@ -308,8 +330,122 @@ export async function telegramScheduleMenu(
           ]
         : []),
     ],
-    [...(rows.length ? rows : [[siteButton()]]), contactRow()],
+    [
+      ...(rows.length ? rows : [[siteButton()]]),
+      ...(showNotifications ? [notificationRow()] : []),
+      contactRow(),
+    ],
   );
+}
+
+const notificationTarget = /^(notify|notifyon):([a-f0-9]{20}):([a-f0-9]{20})$/;
+
+function describeScope(group, subgroup) {
+  const suffix = group.subgroups.length
+    ? subgroup === "all"
+      ? " · все подгруппы"
+      : " · подгруппа " + clip(subgroup, 24)
+    : "";
+  return clip(group.name) + suffix;
+}
+
+async function studentNotifications({
+  notifications,
+  publishedData,
+  chatId,
+  updateId,
+  action,
+  target,
+}) {
+  const heading = bold("🔔 Уведомления о парах");
+  const choose = [button("Выбрать группу", "faculties:0")];
+  if (!notifications)
+    return menu([heading, "", "Уведомления пока недоступны."], [choose]);
+  if (action === "notifyoff" || action === "unsubscribe") {
+    const current = await notifications.unsubscribe({ chatId, updateId });
+    if (current)
+      return menu(
+        [heading, "", "Настройки уже изменились. Открой уведомления ещё раз."],
+        [notificationRow()],
+      );
+    return menu([heading, "", "Уведомления отключены."], [choose]);
+  }
+
+  const data = await publishedData();
+  const groups = data.groups.filter(isGroupActive);
+  const selected = target && (await byKey(groups, target[2]));
+  const subgroup =
+    selected &&
+    (
+      await byKey(
+        ["all", ...selected.subgroups].map((id) => ({ id })),
+        target[3],
+      )
+    )?.id;
+  const selectedScope = subgroup && describeScope(selected, subgroup);
+  if (action === "notifyon" && selectedScope)
+    await notifications.subscribe({
+      chatId,
+      groupId: selected.id,
+      subgroup,
+      updateId,
+    });
+
+  const active = await notifications.get({ chatId });
+  const activeGroup = groups.find((group) => group.id === active?.groupId);
+  const activeScope =
+    activeGroup &&
+    ["all", ...activeGroup.subgroups].includes(active.subgroup) &&
+    describeScope(activeGroup, active.subgroup);
+  const lines = [heading, ""];
+  if (activeScope) lines.push("Подписка включена: " + activeScope + ".");
+  else if (active)
+    lines.push("Группа или подгруппа из подписки больше не опубликована.");
+  else lines.push("Подписка выключена.");
+
+  const rows = [];
+  if (selectedScope) {
+    const same =
+      active?.groupId === selected.id && active.subgroup === subgroup;
+    if (!same) {
+      lines.push(
+        "",
+        "Выбранное расписание: " + selectedScope + ".",
+        active
+          ? "Новая подписка заменит текущую."
+          : "Можно подписаться на одну группу.",
+      );
+      rows.push([
+        button(
+          "Подписаться на эту группу",
+          "notifyon:" + target[2] + ":" + target[3],
+        ),
+      ]);
+    }
+  } else if (target) {
+    lines.push("", "Выбранная группа или подгруппа больше недоступна.");
+  } else {
+    lines.push(
+      "",
+      "Чтобы выбрать подписку, открой расписание группы и нажми «Уведомления».",
+    );
+  }
+  lines.push(
+    "",
+    "Бот сообщит, когда перенос или отмену пары опубликуют в расписании.",
+  );
+  if (active) rows.push([button("Отключить уведомления", "notifyoff")]);
+  rows.push(
+    selectedScope
+      ? [
+          button(
+            "‹ К расписанию",
+            "time:" + target[2] + ":" + target[3] + ":today",
+          ),
+        ]
+      : choose,
+  );
+  return menu(lines, rows);
 }
 
 function scheduleQuestionMenu(data, message, now) {
@@ -398,6 +534,7 @@ export function createTelegramWebhook({
   env,
   fetcher = fetch,
   now = () => new Date(),
+  notifications,
 }) {
   async function post(url, body, headers = {}) {
     const response = await fetcher(url, {
@@ -420,6 +557,25 @@ export function createTelegramWebhook({
     }
     return result;
   }
+  async function publishedData() {
+    const project = new URL(env.get("SUPABASE_URL"));
+    const publishable =
+      env.get("UNIFLOW_TELEGRAM_PUBLISHABLE_KEY") ||
+      env.get("SUPABASE_ANON_KEY");
+    if (
+      !/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(project.origin) ||
+      !publishable
+    )
+      throw Error("Telegram integration is unconfigured");
+    const state = await post(
+      project.origin + "/functions/v1/uniflow-api",
+      { action: "state", subgroup: "all" },
+      { apikey: publishable },
+    );
+    if (state.user?.role !== "guest" || !Array.isArray(state.data?.groups))
+      throw Error("Published schedule is unavailable");
+    return state.data;
+  }
   return async (request) => {
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const secret = env.get("TELEGRAM_WEBHOOK_SECRET");
@@ -437,7 +593,7 @@ export function createTelegramWebhook({
       chat?.type !== "private" ||
       !Number.isSafeInteger(chat.id) ||
       chat.id <= 0 ||
-      chat.id !== (callback?.from || message.from)?.id
+      chat.id !== (callback ? callback.from : message.from)?.id
     )
       return new Response(null, { status: 204 });
     if (
@@ -446,12 +602,21 @@ export function createTelegramWebhook({
         callback.id.length > 128 ||
         !Number.isSafeInteger(message.message_id) ||
         message.message_id <= 0 ||
-        !/^[a-z0-9:]{1,64}$/.test(callback.data || ""))
+        typeof callback.data !== "string" ||
+        !/^[a-z0-9:]{1,64}$/.test(callback.data))
     )
       return new Response(null, { status: 204 });
-    const command = /^\/(start|help|schedule|contact|support)(?:@\w+)?(?:\s|$)/i
-      .exec(message.text || "")?.[1]
-      .toLowerCase();
+    const command =
+      /^\/(start|help|schedule|contact|support|notifications|subscribe|unsubscribe)(?:@\w+)?(?:\s|$)/i
+        .exec(message.text || "")?.[1]
+        .toLowerCase();
+    const target = notificationTarget.exec(callback?.data || "");
+    const notificationAction = callback
+      ? target?.[1] ||
+        (["notifications", "notifyoff"].includes(callback.data) &&
+          callback.data)
+      : ["notifications", "subscribe", "unsubscribe"].includes(command) &&
+        command;
     const at = now();
     const question =
       !callback && !command && parseScheduleQuestion(message.text, at);
@@ -476,28 +641,24 @@ export function createTelegramWebhook({
           env.get("UNIFLOW_TELEGRAM_ADMIN_USERNAME"),
           callback?.data === "contact:kk" ? "kk" : "ru",
         );
+      } else if (notificationAction) {
+        settings = await studentNotifications({
+          notifications,
+          publishedData,
+          chatId: chat.id,
+          updateId: update.update_id,
+          action: notificationAction,
+          target,
+        });
       } else if (!callback && command === "help") {
-        settings = helpMenu();
+        settings = helpMenu(Boolean(notifications));
       } else {
-        const project = new URL(env.get("SUPABASE_URL"));
-        const publishable =
-          env.get("UNIFLOW_TELEGRAM_PUBLISHABLE_KEY") ||
-          env.get("SUPABASE_ANON_KEY");
-        if (
-          !/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(project.origin) ||
-          !publishable
-        )
-          throw Error("Telegram integration is unconfigured");
-        const state = await post(
-          project.origin + "/functions/v1/uniflow-api",
-          { action: "state", subgroup: "all" },
-          { apikey: publishable },
-        );
-        if (state.user?.role !== "guest" || !Array.isArray(state.data?.groups))
-          throw Error("Published schedule is unavailable");
+        const data = await publishedData();
         settings = question
-          ? scheduleQuestionMenu(state.data, message, at)
-          : await telegramScheduleMenu(state.data, callback?.data, at);
+          ? scheduleQuestionMenu(data, message, at)
+          : await telegramScheduleMenu(data, callback?.data, at, {
+              showNotifications: Boolean(notifications),
+            });
         if (!settings) return new Response(null, { status: 204 });
       }
       await telegram(callback ? "editMessageText" : "sendMessage", {
