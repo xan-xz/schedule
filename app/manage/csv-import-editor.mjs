@@ -36,8 +36,15 @@ export function createCsvImportEditor(
   sheetField.hidden = true;
   const assist = el("input", { type: "checkbox" });
   const assistField = field("Подсказать соответствия столбцов", assist);
+  const localModel = el("input", { type: "checkbox" });
+  const localModelField = field(
+    "Использовать локальную модель Bionic",
+    localModel,
+  );
   assistField.hidden = true;
+  localModelField.hidden = true;
   assist.addEventListener("change", invalidate);
+  localModel.addEventListener("change", invalidate);
   const mode = select(
     facultyImport
       ? [["replace-scope", "Заменить расписание групп из файла"]]
@@ -72,6 +79,8 @@ export function createCsvImportEditor(
     file.disabled = mode.disabled = preview.disabled = pending || applied;
     sheet.disabled = pending || applied;
     assist.disabled = pending || applied;
+    localModel.disabled = pending || applied;
+    localModelField.hidden = !workbook || !assist.checked;
     preview.textContent =
       workbookReader && !workbook ? "Прочитать XLSX" : `Предпросмотр ${format}`;
     apply.disabled = pending || !hasChanges();
@@ -253,7 +262,7 @@ export function createCsvImportEditor(
       let text;
       if (workbook)
         text = assist.checked
-          ? await assistedRead(workbook, sheet.value)
+          ? await assistedRead(workbook, sheet.value, localModel.checked)
           : await workbook.readSheet(sheet.value);
       else
         try {
@@ -347,7 +356,7 @@ export function createCsvImportEditor(
       : []),
     field(`Файл ${format}`, file),
     sheetField,
-    ...(assistedRead ? [assistField] : []),
+    ...(assistedRead ? [assistField, localModelField] : []),
     field("Режим импорта", mode),
     el(
       "div",

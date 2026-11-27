@@ -72,12 +72,19 @@ export async function suggestXlsxColumns(
 }
 
 export async function suggestWithBionic(headers, allowed) {
-  if (location.hostname !== "127.0.0.1") return null;
+  const endpoint =
+    location.hostname === "127.0.0.1"
+      ? new URL("../local-ai/columns", location.href)
+      : location.origin === "https://xan-xz.github.io"
+        ? new URL("http://127.0.0.1:4173/schedule/local-ai/columns")
+        : null;
+  if (!endpoint) return null;
   try {
-    const response = await fetch("../local-ai/columns", {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ headers, allowed }),
+      credentials: "omit",
       signal: AbortSignal.timeout(18000),
     });
     if (!response.ok) return null;

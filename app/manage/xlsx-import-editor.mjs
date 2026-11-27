@@ -14,13 +14,13 @@ import {
 export function createXlsxImportEditor(options) {
   return createCsvImportEditor(options, {
     workbookReader: readScheduleWorkbook,
-    assistedRead: (workbook, id) =>
+    assistedRead: (workbook, id, useLocalModel) =>
       workbook.readSheet(id, {
         normalizeDay: normalizeXlsxDay,
         mapHeaders: (headers) =>
           suggestXlsxColumns(headers, {
             faculty: !!options.scope.facultyId,
-            suggest: suggestWithBionic,
+            suggest: useLocalModel ? suggestWithBionic : undefined,
           }),
       }),
     template: () =>

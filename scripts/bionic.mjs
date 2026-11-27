@@ -95,18 +95,35 @@ export async function bionicColumns(
 }
 
 export async function serveBionicColumns(request, response, config) {
-  const origin = `http://127.0.0.1:${config.port}`;
+  const host = `127.0.0.1:${config.port}`;
+  const origin = request.headers.origin;
+  const cors =
+    origin === `http://${host}` || origin === "https://xan-xz.github.io"
+      ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" }
+      : {};
   function send(status, body) {
     response.writeHead(status, {
+      ...cors,
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
     });
     response.end(JSON.stringify(body));
   }
+  if (!cors.Vary || request.headers.host !== host)
+    return send(403, { error: "Local AI request denied" });
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, {
+      ...cors,
+      "Access-Control-Allow-Methods": "POST",
+      "Access-Control-Allow-Headers": "content-type",
+      "Access-Control-Allow-Private-Network": "true",
+      "Cache-Control": "no-store",
+    });
+    response.end();
+    return;
+  }
   if (
     request.method !== "POST" ||
-    request.headers.host !== `127.0.0.1:${config.port}` ||
-    request.headers.origin !== origin ||
     request.headers["content-type"] !== "application/json"
   )
     return send(403, { error: "Local AI request denied" });
