@@ -10,6 +10,6 @@
 
 ## Telegram
 
-Обработчик telegram-webhook читает опубликованное расписание через гостевой API UniFlow. В личном чате команда /start открывает последовательный выбор факультета, группы и подгруппы. Кнопки «Сегодня», «Завтра» и «Неделя» перечитывают публикацию. Ссылка «Открыть сайт» ведёт на выбранную группу и подгруппу. [Telegram Bot API](https://core.telegram.org/bots/api).
+Обработчик telegram-webhook читает опубликованное расписание через гостевой API UniFlow. В личном чате команды /start и /schedule открывают выбор факультета и группы, а /help показывает подсказку. Если в группе есть подгруппы, бот предлагает выбрать одну или посмотреть расписание всей группы. Кнопки «Сегодня», «Завтра» и «Неделя» перечитывают публикацию. Кнопка «Открыть на сайте» ведёт на выбранную группу и подгруппу. [Telegram Bot API](https://core.telegram.org/bots/api).
 
 Для подключения рабочего бота разверните обновлённый uniflow-api и telegram-webhook. Храните TELEGRAM_BOT_TOKEN и TELEGRAM_WEBHOOK_SECRET в Supabase Edge Secrets. Приложение использует публичный ключ проекта из UNIFLOW_TELEGRAM_PUBLISHABLE_KEY или SUPABASE_ANON_KEY. Для webhook проверка JWT шлюзом отключается, поскольку сам обработчик проверяет заголовок X-Telegram-Bot-Api-Secret-Token. При регистрации через setWebhook задайте тот же secret_token и включите message и callback_query. [Конфигурация Edge Functions](https://supabase.com/docs/guides/functions/function-configuration) · [Регистрация Telegram webhook](https://core.telegram.org/bots/api#setwebhook).

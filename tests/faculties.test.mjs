@@ -111,8 +111,35 @@ test("one faculty workbook creates and assigns groups, survives draft restoratio
     callback(subgroups, "Г"),
     now,
   );
+  assert.equal(
+    callback(subgroups, "‹ К группам"),
+    callback(first, faculty.name),
+  );
+  assert.equal(
+    callback(result, "Сменить группу"),
+    callback(first, faculty.name),
+  );
   assert.match(result.text, /10:00–10:50 · Философия/);
   assert.doesNotMatch(result.text, /08:00/);
+  assert.deepEqual(
+    result.entities.map(({ offset, length }) =>
+      result.text.slice(offset, offset + length),
+    ),
+    ["📅 Сегодня · Ф-102", "Понедельник, 23 ноября", "10:00–10:50 · Философия"],
+  );
+  assert.equal(
+    records(result).find((item) => item.style === "primary")?.text,
+    "✓ Сегодня",
+  );
+  const week = await telegramScheduleMenu(
+    data,
+    callback(result, "Неделя"),
+    now,
+  );
+  assert.equal(
+    records(week).find((item) => item.style === "primary")?.text,
+    "✓ Неделя",
+  );
   assert.ok(
     records(result).some((item) => item.url?.includes("subgroup=%D0%93")),
   );
@@ -173,13 +200,13 @@ test("Telegram webhook handles only verified private updates and reads the publi
       );
     },
   });
-  const request = (header, type = "private") =>
+  const request = (header, type = "private", text = "/start") =>
     new Request("https://fixture.invalid/telegram-webhook", {
       method: "POST",
       headers: { "X-Telegram-Bot-Api-Secret-Token": header },
       body: JSON.stringify({
         update_id: 1,
-        message: { chat: { id: 123, type }, from: { id: 123 }, text: "/start" },
+        message: { chat: { id: 123, type }, from: { id: 123 }, text },
       }),
     });
   assert.equal((await handler(request("wrong"))).status, 403);
@@ -191,5 +218,17 @@ test("Telegram webhook handles only verified private updates and reads the publi
     body: { action: "state", subgroup: "all" },
   });
   assert.equal(calls[1].path, "sendMessage");
+  assert.equal(
+    calls[1].body.entities[0].length,
+    "📅 Расписание UniFlow".length,
+  );
   assert.ok(callback(calls[1].body, "Без факультета"));
+  assert.equal(
+    (await handler(request(secret, "private", "/HELP"))).status,
+    204,
+  );
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].path, "sendMessage");
+  assert.match(calls[2].body.text, /^Как посмотреть расписание/);
+  assert.equal(callback(calls[2].body, "Выбрать группу"), "faculties:0");
 });

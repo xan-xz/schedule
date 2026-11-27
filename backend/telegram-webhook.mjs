@@ -14,17 +14,46 @@ const key = async (value) => (await sha(value)).slice(0, 20);
 const clip = (value, length = 90) =>
   Array.from(String(value)).slice(0, length).join("");
 const button = (text, callback_data) => ({ text: clip(text), callback_data });
-const menu = (text, rows) => ({
-  text,
-  reply_markup: { inline_keyboard: rows },
-});
-const facultyButton = () => [button("Выбрать факультет", "faculties:0")];
+const bold = (text) => ({ text });
+const periodLabels = { today: "Сегодня", next: "Завтра", week: "Неделя" };
+const facultyButton = () => [button("‹ К факультетам", "faculties:0")];
+const siteButton = (url = site) => ({ text: "Открыть на сайте", url });
 const dateLabel = new Intl.DateTimeFormat("ru", {
   timeZone: "UTC",
   weekday: "long",
   day: "numeric",
-  month: "short",
+  month: "long",
 });
+
+function menu(lines, rows) {
+  let text = "";
+  const entities = [];
+  for (const line of lines) {
+    const value = typeof line === "string" ? line : line.text;
+    const offset = text.length ? text.length + 1 : 0;
+    if (offset + value.length > 3800) {
+      text = text.replace(/\n+$/, "") + "\n\nОстальные занятия — на сайте.";
+      break;
+    }
+    if (typeof line !== "string")
+      entities.push({ type: "bold", offset, length: value.length });
+    text += (offset ? "\n" : "") + value;
+  }
+  return { text, entities, reply_markup: { inline_keyboard: rows } };
+}
+
+function helpMenu() {
+  return menu(
+    [
+      bold("Как посмотреть расписание"),
+      "",
+      "Выбери факультет, группу и подгруппу. Если твоей группы нет в списках факультетов, загляни в «Без факультета».",
+      "",
+      "Кнопки «Сегодня», «Завтра» и «Неделя» переключают расписание. Чтобы выбрать другую группу, нажми «Сменить группу».",
+    ],
+    [[button("Выбрать группу", "faculties:0")], [siteButton()]],
+  );
+}
 
 async function listPage(records, index, action, option) {
   const max = Math.max(0, Math.ceil(records.length / pageSize) - 1);
@@ -35,8 +64,8 @@ async function listPage(records, index, action, option) {
       .map(async (record) => [await option(record)]),
   );
   const nav = [];
-  if (page > 0) nav.push(button("Назад", action + (page - 1)));
-  if (page < max) nav.push(button("Дальше", action + (page + 1)));
+  if (page > 0) nav.push(button("‹ Назад", action + (page - 1)));
+  if (page < max) nav.push(button("Дальше ›", action + (page + 1)));
   if (nav.length) rows.push(nav);
   return rows;
 }
@@ -59,37 +88,49 @@ function timetable(data, group, subgroup, period, now) {
       new Map(data[kind].map((row) => [row.id, row.name])),
     ]),
   );
-  const lines = [
-    clip(group.name),
-    ...(subgroup === "all" ? [] : ["Подгруппа " + clip(subgroup)]),
-  ];
+  const lines = [bold("📅 " + periodLabels[period] + " · " + clip(group.name))];
+  if (group.subgroups.length)
+    lines.push(
+      subgroup === "all" ? "Все подгруппы" : "Подгруппа " + clip(subgroup),
+    );
   for (let i = 0; i < (period === "week" ? 7 : 1); i++) {
     const date = addDays(start, i);
-    lines.push("", dateLabel.format(new Date(date + "T12:00:00Z")));
+    const day = dateLabel.format(new Date(date + "T12:00:00Z"));
+    lines.push("", bold(day[0].toUpperCase() + day.slice(1)));
     const lessons = lessonsForDate(data, date, { groupId: group.id, subgroup });
     if (!lessons.length) lines.push("Занятий нет.");
-    for (const lesson of lessons)
+    for (const [index, lesson] of lessons.entries()) {
+      // On the day view, leave space between lesson details.
+      if (index && period !== "week") lines.push("");
       lines.push(
-        [
-          lesson.start + "–" + lesson.end,
-          clip(names.subjects.get(lesson.subjectId) || "Занятие"),
-          lesson.cancelled
-            ? "Отменено"
-            : lesson.exception
-              ? "Перенос / замена"
-              : "",
-          lesson.roomId && clip(names.rooms.get(lesson.roomId) || "", 40),
-          lesson.teacherId &&
-            clip(names.teachers.get(lesson.teacherId) || "", 60),
-        ]
-          .filter(Boolean)
-          .join(" · "),
+        bold(
+          lesson.start +
+            "–" +
+            lesson.end +
+            " · " +
+            clip(names.subjects.get(lesson.subjectId) || "Занятие"),
+        ),
       );
+      const room = names.rooms.get(lesson.roomId);
+      const teacher = names.teachers.get(lesson.teacherId);
+      const status = lesson.cancelled
+        ? "Отменено"
+        : lesson.exception
+          ? "Перенос или замена"
+          : "";
+      const details = [
+        status,
+        subgroup === "all" &&
+          lesson.subgroup &&
+          lesson.subgroup !== "all" &&
+          "Подгруппа " + clip(lesson.subgroup, 24),
+        room && "📍 " + clip(room, 40),
+        teacher && clip(teacher, 60),
+      ].filter(Boolean);
+      if (details.length) lines.push(details.join(" · "));
+    }
   }
-  const message = lines.join("\n");
-  if (message.length <= 3900) return message;
-  const boundary = message.lastIndexOf("\n", 3800);
-  return message.slice(0, boundary) + "\n\nПолное расписание — на сайте.";
+  return lines;
 }
 
 export async function telegramScheduleMenu(
@@ -113,10 +154,10 @@ export async function telegramScheduleMenu(
         "faculty:" + first + ":",
         async (group) => button(group.name, "group:" + (await key(group.id))),
       );
-      return menu(clip(faculty.name) + "\nВыбери группу.", [
-        ...rows,
-        facultyButton(),
-      ]);
+      return menu(
+        [bold(clip(faculty.name)), "", "Выбери свою группу."],
+        [...rows, facultyButton()],
+      );
     }
   }
   if (["group", "time"].includes(action)) {
@@ -124,34 +165,56 @@ export async function telegramScheduleMenu(
     if (group) {
       const subgroups = ["all", ...group.subgroups];
       const subgroupKeys = await Promise.all(subgroups.map(key));
-      if (action === "group")
-        return menu(clip(group.name) + "\nВыбери подгруппу.", [
-          ...subgroups.map((subgroup, i) => [
-            button(
-              subgroup === "all" ? "Все подгруппы" : subgroup,
-              "time:" + first + ":" + subgroupKeys[i] + ":today",
-            ),
-          ]),
-          facultyButton(),
-        ]);
-      const subgroup = subgroups[subgroupKeys.indexOf(second)];
-      if (subgroup && ["today", "next", "week"].includes(third)) {
+      const facultyId = groupFaculty(group);
+      const groupIndex = groups
+        .filter((item) => groupFaculty(item) === facultyId)
+        .findIndex((item) => item.id === group.id);
+      const groupsPage =
+        "faculty:" +
+        (await key(facultyId)) +
+        ":" +
+        Math.floor(groupIndex / pageSize);
+      if (action === "group" && subgroups.length > 1)
+        return menu(
+          [bold("Группа " + clip(group.name)), "", "Какая у тебя подгруппа?"],
+          [
+            ...subgroups.map((subgroup, i) => [
+              button(
+                subgroup === "all" ? "Все подгруппы" : subgroup,
+                "time:" + first + ":" + subgroupKeys[i] + ":today",
+              ),
+            ]),
+            [button("‹ К группам", groupsPage)],
+          ],
+        );
+      const period = action === "group" ? "today" : third;
+      const subgroupIndex =
+        action === "group" ? 0 : subgroupKeys.indexOf(second);
+      const subgroup = subgroups[subgroupIndex];
+      if (subgroup && Object.hasOwn(periodLabels, period)) {
         const url = new URL(site);
         url.searchParams.set("g", group.id);
         url.searchParams.set("subgroup", subgroup);
-        return menu(timetable(data, group, subgroup, third, now), [
+        return menu(timetable(data, group, subgroup, period, now), [
+          Object.entries(periodLabels).map(([option, label]) => ({
+            ...button(
+              option === period ? "✓ " + label : label,
+              "time:" +
+                first +
+                ":" +
+                subgroupKeys[subgroupIndex] +
+                ":" +
+                option,
+            ),
+            ...(option === period ? { style: "primary" } : {}),
+          })),
           [
-            ["today", "Сегодня"],
-            ["next", "Завтра"],
-            ["week", "Неделя"],
-          ].map(([period, label]) =>
-            button(label, "time:" + first + ":" + second + ":" + period),
-          ),
-          [
-            button("Подгруппа", "group:" + first),
-            { text: "Открыть сайт", url: url.href },
+            button("Сменить группу", groupsPage),
+            ...(subgroups.length > 1
+              ? [button("Подгруппа", "group:" + first)]
+              : []),
           ],
-          facultyButton(),
+          [siteButton(url.href)],
         ]);
       }
     }
@@ -164,10 +227,14 @@ export async function telegramScheduleMenu(
       button(faculty.name, "faculty:" + (await key(faculty.id)) + ":0"),
   );
   return menu(
-    rows.length
-      ? "Расписание UniFlow\nВыбери факультет."
-      : "Расписание UniFlow пока не опубликовано.",
-    rows,
+    [
+      bold("📅 Расписание UniFlow"),
+      "",
+      rows.length
+        ? "Привет! Выбери факультет, чтобы найти расписание своей группы."
+        : "Расписание пока не опубликовано. Загляни чуть позже.",
+    ],
+    rows.length ? rows : [[siteButton()]],
   );
 }
 
@@ -254,11 +321,10 @@ export function createTelegramWebhook({
         !/^[a-z0-9:]{1,64}$/.test(callback.data || ""))
     )
       return new Response(null, { status: 204 });
-    if (
-      !callback &&
-      !/^\/(?:start|help|schedule)(?:@\w+)?(?:\s|$)/i.test(message.text || "")
-    )
-      return new Response(null, { status: 204 });
+    const command = /^\/(start|help|schedule)(?:@\w+)?(?:\s|$)/i
+      .exec(message.text || "")?.[1]
+      .toLowerCase();
+    if (!callback && !command) return new Response(null, { status: 204 });
     try {
       const token = env.get("TELEGRAM_BOT_TOKEN");
       const project = new URL(env.get("SUPABASE_URL"));
@@ -277,18 +343,23 @@ export function createTelegramWebhook({
         await telegram("answerCallbackQuery", {
           callback_query_id: callback.id,
         }).catch(() => {});
-      const state = await post(
-        project.origin + "/functions/v1/uniflow-api",
-        { action: "state", subgroup: "all" },
-        { apikey: publishable },
-      );
-      if (state.user?.role !== "guest" || !Array.isArray(state.data?.groups))
-        throw Error("Published schedule is unavailable");
-      const settings = await telegramScheduleMenu(
-        state.data,
-        callback?.data,
-        now(),
-      );
+      let settings;
+      if (!callback && command === "help") {
+        settings = helpMenu();
+      } else {
+        const state = await post(
+          project.origin + "/functions/v1/uniflow-api",
+          { action: "state", subgroup: "all" },
+          { apikey: publishable },
+        );
+        if (state.user?.role !== "guest" || !Array.isArray(state.data?.groups))
+          throw Error("Published schedule is unavailable");
+        settings = await telegramScheduleMenu(
+          state.data,
+          callback?.data,
+          now(),
+        );
+      }
       await telegram(callback ? "editMessageText" : "sendMessage", {
         chat_id: chat.id,
         ...(callback ? { message_id: message.message_id } : {}),
