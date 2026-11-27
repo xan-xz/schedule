@@ -46,17 +46,6 @@ const relativeDays = [
   /^(?:завтра|ертең)(?:гі)?$/u,
   /^(?:послезавтра|бүрсігүні)$/u,
 ];
-const dateFormats = Object.fromEntries(
-  ["ru", "kk"].map((language) => [
-    language,
-    new Intl.DateTimeFormat(language, {
-      timeZone: "UTC",
-      day: "numeric",
-      month: "long",
-    }),
-  ]),
-);
-
 const copies = {
   ru: {
     day: "Расписание",
@@ -120,8 +109,10 @@ const label = (value, maximum = 90) =>
   )
     .slice(0, maximum)
     .join("");
-const dateText = (date, language) =>
-  dateFormats[language].format(new Date(`${date}T12:00:00Z`));
+function dateText(date, language) {
+  const [, month, day] = date.split("-");
+  return `${Number(day)} ${months[Number(month) - 1][language === "kk" ? 1 : 0]}`;
+}
 
 function requestedDate(text, words, today) {
   const year = today.slice(0, 4);

@@ -93,6 +93,23 @@ test("Russian and Kazakh questions resolve local academic dates", () => {
   assert.equal(parseScheduleQuestion("/start", now), null);
 });
 
+test("Telegram formats Kazakh dates without runtime locale data", () => {
+  const next = answerScheduleQuestion(
+    data,
+    "ИТ-21 тобының келесі сабағы қашан?",
+    { now },
+  );
+  assert.match(next.lines.join("\n"), /Келесі сабақтар · ИТ-21/);
+  assert.match(next.lines.join("\n"), /27 қараша, 08:45–09:50/);
+  const changes = answerScheduleQuestion(
+    data,
+    "Осы аптада ИТ-21 тобында не өзгерді?",
+    { now },
+  );
+  assert.match(changes.lines.join("\n"), /27 қараша, 11:00–11:50/);
+  assert.match(changes.lines.join("\n"), /28 қараша, 12:00–12:50/);
+});
+
 test("answers stay within group, subgroup, lesson type and date", () => {
   const next = answerScheduleQuestion(
     data,
